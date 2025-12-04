@@ -1,10 +1,14 @@
 // Shared types for Omada WLAN Manager
 
+// Supported languages
+export type Language = 'es' | 'en';
+
 // Configuration stored in electron-store
 export interface AppConfig {
   url: string;
   username: string;
   password: string;
+  language: Language;
 }
 
 // Access Point data from Omada API

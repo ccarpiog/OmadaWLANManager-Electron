@@ -10,7 +10,8 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const defaultConfig: AppConfig = {
   url: '',
   username: '',
-  password: ''
+  password: '',
+  language: 'es'
 };
 
 /**
@@ -24,7 +25,8 @@ export function loadConfig(): AppConfig {
       return {
         url: config.url || '',
         username: config.username || '',
-        password: config.password || ''
+        password: config.password || '',
+        language: config.language || 'es'
       };
     }
   } catch (error) {
