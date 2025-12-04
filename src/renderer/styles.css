@@ -217,6 +217,30 @@ body {
   border-bottom: 1px solid var(--border-color);
 }
 
+.panel-filter {
+  padding: 8px 8px 0 8px;
+}
+
+.filter-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: border-color var(--transition);
+}
+
+.filter-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.filter-input::placeholder {
+  color: var(--text-muted);
+}
+
 .panel-content {
   flex: 1;
   overflow-y: auto;

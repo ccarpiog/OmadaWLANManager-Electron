@@ -21,6 +21,8 @@ let wlanGroups: WlanGroup[] = [];
 let selectedAp: AccessPoint | null = null;
 let selectedWlan: WlanGroup | null = null;
 let isConnected = false;
+let apFilterText = '';
+let wlanFilterText = '';
 
 // DOM Elements
 const statusIndicator = document.getElementById('statusIndicator') as HTMLElement;
@@ -29,6 +31,8 @@ const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement;
 const settingsBtn = document.getElementById('settingsBtn') as HTMLButtonElement;
 const apList = document.getElementById('apList') as HTMLElement;
 const wlanList = document.getElementById('wlanList') as HTMLElement;
+const apFilterInput = document.getElementById('apFilter') as HTMLInputElement;
+const wlanFilterInput = document.getElementById('wlanFilter') as HTMLInputElement;
 const selectionInfo = document.getElementById('selectionInfo') as HTMLElement;
 const applyBtn = document.getElementById('applyBtn') as HTMLButtonElement;
 
@@ -57,6 +61,7 @@ function setStatus(status: 'disconnected' | 'connecting' | 'connected' | 'error'
   switch (status) {
     case 'disconnected':
       statusText.textContent = 'Desconectado';
+      isConnected = false;
       break;
     case 'connecting':
       statusIndicator.classList.add('connecting');
@@ -64,7 +69,9 @@ function setStatus(status: 'disconnected' | 'connecting' | 'connected' | 'error'
       break;
     case 'connected':
       statusIndicator.classList.add('connected');
-      statusText.textContent = 'Conectado';
+      // Show server URL (extract hostname from URL)
+      const serverDisplay = message ? new URL(message).host : 'Conectado';
+      statusText.textContent = serverDisplay;
       isConnected = true;
       break;
     case 'error':
@@ -80,6 +87,11 @@ function setStatus(status: 'disconnected' | 'connecting' | 'connected' | 'error'
 // ============================================================================
 
 function renderApList() {
+  const filteredAps = accessPoints.filter(ap =>
+    ap.name.toLowerCase().includes(apFilterText.toLowerCase()) ||
+    (ap.wlanGroup && ap.wlanGroup.toLowerCase().includes(apFilterText.toLowerCase()))
+  );
+
   if (accessPoints.length === 0) {
     apList.innerHTML = `
       <div class="empty-state">
@@ -89,7 +101,16 @@ function renderApList() {
     return;
   }
 
-  apList.innerHTML = accessPoints.map(ap => {
+  if (filteredAps.length === 0) {
+    apList.innerHTML = `
+      <div class="empty-state">
+        <p>No hay resultados para "${escapeHtml(apFilterText)}"</p>
+      </div>
+    `;
+    return;
+  }
+
+  apList.innerHTML = filteredAps.map(ap => {
     const isOnline = ap.statusCategory === 1 || ap.statusCategory === 2;
     const isSelected = selectedAp?.mac === ap.mac;
 
@@ -113,7 +134,8 @@ function renderApList() {
       const mac = item.getAttribute('data-mac');
       const ap = accessPoints.find(a => a.mac === mac);
       if (ap) {
-        selectedAp = ap;
+        // Toggle selection: unselect if already selected
+        selectedAp = selectedAp?.mac === ap.mac ? null : ap;
         renderApList();
         updateSelectionInfo();
       }
@@ -122,6 +144,11 @@ function renderApList() {
 }
 
 function renderWlanList() {
+  const filteredWlans = wlanGroups.filter(wlan =>
+    wlan.wlanName.toLowerCase().includes(wlanFilterText.toLowerCase()) ||
+    wlan.ssidList.some(s => s.ssidName.toLowerCase().includes(wlanFilterText.toLowerCase()))
+  );
+
   if (wlanGroups.length === 0) {
     wlanList.innerHTML = `
       <div class="empty-state">
@@ -131,7 +158,16 @@ function renderWlanList() {
     return;
   }
 
-  wlanList.innerHTML = wlanGroups.map(wlan => {
+  if (filteredWlans.length === 0) {
+    wlanList.innerHTML = `
+      <div class="empty-state">
+        <p>No hay resultados para "${escapeHtml(wlanFilterText)}"</p>
+      </div>
+    `;
+    return;
+  }
+
+  wlanList.innerHTML = filteredWlans.map(wlan => {
     const isSelected = selectedWlan?.wlanId === wlan.wlanId;
     const ssids = wlan.ssidList.map(s => s.ssidName);
     const ssidPreview = ssids.length > 3
@@ -157,7 +193,8 @@ function renderWlanList() {
       const wlanId = item.getAttribute('data-wlan-id');
       const wlan = wlanGroups.find(w => w.wlanId === wlanId);
       if (wlan) {
-        selectedWlan = wlan;
+        // Toggle selection: unselect if already selected
+        selectedWlan = selectedWlan?.wlanId === wlan.wlanId ? null : wlan;
         renderWlanList();
         updateSelectionInfo();
       }
@@ -212,18 +249,48 @@ async function connect() {
     const result = await window.omadaAPI.connect();
 
     if (result.success) {
-      setStatus('connected');
+      const config = await window.omadaAPI.loadConfig();
+      setStatus('connected', config.url);
+      connectBtn.textContent = 'Desconectar';
       await loadData();
     } else {
       setStatus('error', result.error);
+      connectBtn.textContent = 'Conectar';
       showEmptyStates();
     }
   } catch (error) {
     setStatus('error', 'Error de conexión');
+    connectBtn.textContent = 'Conectar';
     showEmptyStates();
   } finally {
     connectBtn.disabled = false;
-    connectBtn.textContent = 'Conectar';
+  }
+}
+
+function disconnect() {
+  isConnected = false;
+  setStatus('disconnected');
+  connectBtn.textContent = 'Conectar';
+
+  // Clear data
+  accessPoints = [];
+  wlanGroups = [];
+  selectedAp = null;
+  selectedWlan = null;
+  apFilterText = '';
+  wlanFilterText = '';
+  apFilterInput.value = '';
+  wlanFilterInput.value = '';
+
+  showEmptyStates();
+  updateSelectionInfo();
+}
+
+function toggleConnection() {
+  if (isConnected) {
+    disconnect();
+  } else {
+    connect();
   }
 }
 
@@ -384,8 +451,19 @@ function escapeHtml(text: string): string {
 // Event Listeners
 // ============================================================================
 
-connectBtn.addEventListener('click', connect);
+connectBtn.addEventListener('click', toggleConnection);
 settingsBtn.addEventListener('click', openSettings);
+
+// Filter inputs
+apFilterInput.addEventListener('input', () => {
+  apFilterText = apFilterInput.value;
+  renderApList();
+});
+
+wlanFilterInput.addEventListener('input', () => {
+  wlanFilterText = wlanFilterInput.value;
+  renderWlanList();
+});
 closeSettingsBtn.addEventListener('click', closeSettings);
 cancelSettingsBtn.addEventListener('click', closeSettings);
 saveSettingsBtn.addEventListener('click', saveSettings);
