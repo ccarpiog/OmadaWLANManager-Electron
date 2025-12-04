@@ -1,0 +1,67 @@
+{
+  "name": "omada-wlan-manager",
+  "version": "1.0.0",
+  "description": "Desktop application for managing TP-Link Omada Controller WLAN assignments",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "npm run build && electron .",
+    "build": "tsc && npm run copy-static",
+    "copy-static": "node -e \"const fs=require('fs');fs.cpSync('src/renderer/index.html','dist/renderer/index.html');fs.cpSync('src/renderer/styles.css','dist/renderer/styles.css');\"",
+    "watch": "tsc -w",
+    "start": "electron .",
+    "package": "npm run build && electron-builder",
+    "package:mac": "npm run build && electron-builder --mac",
+    "package:win": "npm run build && electron-builder --win",
+    "package:linux": "npm run build && electron-builder --linux"
+  },
+  "keywords": [
+    "omada",
+    "tp-link",
+    "wlan",
+    "network",
+    "wifi"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "dmg-builder": "^24.13.3",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "typescript": "^5.3.0"
+  },
+  "build": {
+    "appId": "com.omada.wlan-manager",
+    "productName": "Omada WLAN Manager",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.utilities"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "assets/icon.png",
+      "category": "Utility"
+    }
+  }
+}

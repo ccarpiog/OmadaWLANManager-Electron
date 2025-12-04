@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Omada WLAN Manager</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Title Bar (for macOS hidden title bar style) -->
+    <header class="title-bar">
+      <div class="title-bar-drag"></div>
+      <div class="status-section">
+        <span class="status-indicator" id="statusIndicator"></span>
+        <span class="status-text" id="statusText">Desconectado</span>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-icon" id="settingsBtn" title="Ajustes">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+        <button class="btn btn-primary" id="connectBtn">Conectar</button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Access Points Panel -->
+      <section class="panel">
+        <h2 class="panel-title">Access Points</h2>
+        <div class="panel-content" id="apList">
+          <div class="empty-state">
+            <p>Conecta al controlador para ver los access points</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- WLAN Groups Panel -->
+      <section class="panel">
+        <h2 class="panel-title">Grupos WLAN</h2>
+        <div class="panel-content" id="wlanList">
+          <div class="empty-state">
+            <p>Conecta al controlador para ver los grupos WLAN</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Action Bar -->
+    <footer class="action-bar">
+      <div class="selection-info" id="selectionInfo">
+        <span class="selection-placeholder">Selecciona un AP y un grupo WLAN</span>
+      </div>
+      <button class="btn btn-success" id="applyBtn" disabled>Aplicar cambio</button>
+    </footer>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Ajustes de conexión</h2>
+        <button class="btn btn-icon modal-close" id="closeSettingsBtn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="urlInput">URL del controlador</label>
+          <input type="url" id="urlInput" placeholder="https://192.168.1.1:8043">
+        </div>
+        <div class="form-group">
+          <label for="usernameInput">Usuario</label>
+          <input type="text" id="usernameInput" placeholder="admin@example.com">
+        </div>
+        <div class="form-group">
+          <label for="passwordInput">Contraseña</label>
+          <input type="password" id="passwordInput" placeholder="••••••••">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelSettingsBtn">Cancelar</button>
+        <button class="btn btn-primary" id="saveSettingsBtn">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation Modal -->
+  <div class="modal-overlay" id="confirmModal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Confirmar cambio</h2>
+      </div>
+      <div class="modal-body">
+        <p id="confirmMessage"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelConfirmBtn">Cancelar</button>
+        <button class="btn btn-primary" id="confirmConfirmBtn">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
