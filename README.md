@@ -15,7 +15,7 @@ A modern desktop application for managing TP-Link Omada Controller WLAN group as
 
 - Node.js 18+
 - npm or yarn
-- TP-Link Omada Controller (tested with controller version 5.x)
+- TP-Link Omada Controller (tested with controller versions 5.x and 6.1.0.19)
 
 ## Installation
 

@@ -10,6 +10,7 @@ export class OmadaController {
   private username: string;
   private password: string;
   private omadacId: string | null = null;
+  private siteId: string | null = null;
   private csrfToken: string | null = null;
   private cookies: string[] = [];
 
@@ -50,6 +51,10 @@ export class OmadaController {
       }
 
       this.csrfToken = loginResponse.result.token;
+
+      // Step 3: Resolve the site id (newer controllers don't expose "Default")
+      await this.resolveSiteId();
+
       return true;
     } catch (error) {
       console.error('Connection error:', error);
@@ -58,15 +63,38 @@ export class OmadaController {
   }
 
   /**
+   * Resolve the site id for the logged-in user.
+   * Newer controllers do not expose the site as the literal "Default" — the
+   * site is addressed by a generated id, so we look it up after login.
+   */
+  private async resolveSiteId(): Promise<void> {
+    const response = await this.request<{ data: Array<{ id: string; name: string }> }>(
+      `/${this.omadacId}/api/v2/sites?currentPage=1&currentPageSize=100`,
+      'GET'
+    );
+
+    if (response.errorCode !== 0) {
+      throw new Error(response.msg || 'No se pudo obtener la lista de sitios');
+    }
+
+    const sites = response.result?.data ?? [];
+    if (sites.length === 0) {
+      throw new Error('El usuario no tiene acceso a ningún sitio');
+    }
+
+    this.siteId = sites[0].id;
+  }
+
+  /**
    * Get all access points from the controller
    */
   async getAccessPoints(): Promise<AccessPoint[]> {
-    if (!this.omadacId || !this.csrfToken) {
+    if (!this.omadacId || !this.csrfToken || !this.siteId) {
       throw new Error('No conectado al controlador');
     }
 
     const response = await this.request<AccessPoint[]>(
-      `/${this.omadacId}/api/v2/sites/Default/devices`,
+      `/${this.omadacId}/api/v2/sites/${this.siteId}/devices`,
       'GET'
     );
 
@@ -85,13 +113,13 @@ export class OmadaController {
    * Get all WLAN groups from the controller
    */
   async getWlanGroups(): Promise<WlanGroup[]> {
-    if (!this.omadacId || !this.csrfToken) {
+    if (!this.omadacId || !this.csrfToken || !this.siteId) {
       throw new Error('No conectado al controlador');
     }
 
     // The API returns { result: { ssids: [...] } } not { result: [...] }
     const response = await this.request<{ ssids: WlanGroup[] }>(
-      `/${this.omadacId}/api/v2/sites/Default/setting/ssids`,
+      `/${this.omadacId}/api/v2/sites/${this.siteId}/setting/ssids`,
       'GET'
     );
 
@@ -109,12 +137,12 @@ export class OmadaController {
    * Assign a WLAN group to an access point
    */
   async setApWlanGroup(mac: string, wlanId: string): Promise<boolean> {
-    if (!this.omadacId || !this.csrfToken) {
+    if (!this.omadacId || !this.csrfToken || !this.siteId) {
       throw new Error('No conectado al controlador');
     }
 
     const response = await this.request(
-      `/${this.omadacId}/api/v2/sites/Default/eaps/${mac}`,
+      `/${this.omadacId}/api/v2/sites/${this.siteId}/eaps/${mac}`,
       'PATCH',
       { wlanId }
     );
