@@ -24,8 +24,12 @@ function createWindow(): void {
     show: false
   });
 
-  // Load the renderer HTML
-  mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  // Load the renderer HTML; on failure, log and show the window so the
+  // problem is visible instead of the app silently running with no window
+  mainWindow.loadFile(path.join(__dirname, '../renderer/index.html')).catch((error) => {
+    console.error('Failed to load renderer HTML:', error);
+    mainWindow?.show();
+  });
 
   // Show window when ready to prevent visual flash
   mainWindow.once('ready-to-show', () => {
@@ -38,9 +42,10 @@ function createWindow(): void {
   });
 
   // Security: Prevent navigation to external URLs
+  // (file:// URLs have origin "null", so compare the protocol instead)
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const parsedUrl = new URL(url);
-    if (parsedUrl.origin !== 'file://') {
+    if (parsedUrl.protocol !== 'file:') {
       event.preventDefault();
     }
   });

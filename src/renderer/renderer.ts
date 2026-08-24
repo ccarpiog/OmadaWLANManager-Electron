@@ -41,6 +41,7 @@ interface Translations {
   password: string;
   language: string;
   fillUrlAndUser: string;
+  passwordRequired: string;
   saveError: string;
   confirmChange: string;
   confirmAssign: string;
@@ -84,6 +85,7 @@ const translations: Record<Language, Translations> = {
     password: 'Contraseña',
     language: 'Idioma',
     fillUrlAndUser: 'Por favor, completa la URL y el usuario',
+    passwordRequired: 'Por favor, introduce la contraseña',
     saveError: 'Error al guardar la configuración',
     confirmChange: 'Confirmar cambio',
     confirmAssign: '¿Asignar "{wlan}" al AP "{ap}"?',
@@ -125,6 +127,7 @@ const translations: Record<Language, Translations> = {
     password: 'Password',
     language: 'Language',
     fillUrlAndUser: 'Please fill in the URL and username',
+    passwordRequired: 'Please enter the password',
     saveError: 'Error saving configuration',
     confirmChange: 'Confirm change',
     confirmAssign: 'Assign "{wlan}" to AP "{ap}"?',
@@ -180,7 +183,6 @@ let selectedWlan: WlanGroup | null = null;
 let isConnected = false;
 let apFilterText = '';
 let wlanFilterText = '';
-let currentServerUrl = '';
 
 // DOM Elements
 const statusIndicator = document.getElementById('statusIndicator') as HTMLElement;
@@ -293,21 +295,29 @@ function setStatus(status: 'disconnected' | 'connecting' | 'connected' | 'error'
       statusIndicator.classList.add('connecting');
       statusText.textContent = t('connecting');
       break;
-    case 'connected':
+    case 'connected': {
       statusIndicator.classList.add('connected');
-      // Show server URL (extract hostname from URL)
-      const serverDisplay = message ? new URL(message).host : t('connected');
+      // Show server URL (extract hostname from URL, falling back to the raw
+      // string if it is not a parseable URL)
+      let serverDisplay = t('connected');
+      if (message) {
+        try {
+          serverDisplay = new URL(message).host;
+        } catch {
+          serverDisplay = message;
+        }
+      }
       statusText.textContent = serverDisplay;
-      currentServerUrl = message || '';
       isConnected = true;
       break;
+    }
     case 'error':
       statusIndicator.classList.add('error');
       statusText.textContent = message || t('error');
       isConnected = false;
       break;
   }
-}
+} // End of function setStatus()
 
 // ============================================================================
 // List Rendering
@@ -468,7 +478,13 @@ function updateSelectionInfo() {
 // Connection
 // ============================================================================
 
-async function connect() {
+/**
+ * Connects to the Omada controller and loads its data. If any step fails
+ * (including loadData(), which is allowed to throw), the whole UI state is
+ * reset consistently and the main-process controller is released.
+ * @returns {Promise<void>}
+ */
+async function connect(): Promise<void> {
   setStatus('connecting');
   connectBtn.disabled = true;
   connectBtn.textContent = t('connecting');
@@ -484,23 +500,35 @@ async function connect() {
     } else {
       setStatus('error', result.error);
       connectBtn.textContent = t('connect');
-      showEmptyStates();
+      clearData();
+      // Release the main-process controller so stale sessions cannot linger
+      try {
+        await window.omadaAPI.disconnect();
+      } catch (disconnectError) {
+        console.error('Error disconnecting after connection failure:', disconnectError);
+      }
     }
   } catch (error) {
+    console.error('Error connecting:', error);
     setStatus('error', t('connectionError'));
     connectBtn.textContent = t('connect');
-    showEmptyStates();
+    clearData();
+    // Release the main-process controller so stale sessions cannot linger
+    try {
+      await window.omadaAPI.disconnect();
+    } catch (disconnectError) {
+      console.error('Error disconnecting after connection failure:', disconnectError);
+    }
   } finally {
     connectBtn.disabled = false;
   }
-}
+} // End of function connect()
 
-function disconnect() {
-  isConnected = false;
-  setStatus('disconnected');
-  connectBtn.textContent = t('connect');
-
-  // Clear data
+/**
+ * Clears all loaded AP/WLAN data, selections, and filters, then re-renders
+ * the empty states and the selection info (which disables the Apply button).
+ */
+function clearData(): void {
   accessPoints = [];
   wlanGroups = [];
   selectedAp = null;
@@ -509,11 +537,28 @@ function disconnect() {
   wlanFilterText = '';
   apFilterInput.value = '';
   wlanFilterInput.value = '';
-  currentServerUrl = '';
 
   showEmptyStates();
   updateSelectionInfo();
-}
+} // End of function clearData()
+
+/**
+ * Disconnects from the controller: releases the main-process controller via
+ * IPC and always clears the UI state, even if the IPC call fails.
+ * @returns {Promise<void>}
+ */
+async function disconnect(): Promise<void> {
+  try {
+    await window.omadaAPI.disconnect();
+  } catch (error) {
+    console.error('Error disconnecting:', error);
+  } finally {
+    isConnected = false;
+    setStatus('disconnected');
+    connectBtn.textContent = t('connect');
+    clearData();
+  }
+} // End of function disconnect()
 
 function toggleConnection() {
   if (isConnected) {
@@ -523,28 +568,29 @@ function toggleConnection() {
   }
 }
 
-async function loadData() {
-  try {
-    const [aps, wlans] = await Promise.all([
-      window.omadaAPI.getAccessPoints(),
-      window.omadaAPI.getWlanGroups()
-    ]);
+/**
+ * Loads access points and WLAN groups from the controller and renders them.
+ * Errors are intentionally not caught here: the caller handles failures so
+ * the whole UI state is reset consistently (see connect()).
+ * @returns {Promise<void>}
+ */
+async function loadData(): Promise<void> {
+  const [aps, wlans] = await Promise.all([
+    window.omadaAPI.getAccessPoints(),
+    window.omadaAPI.getWlanGroups()
+  ]);
 
-    accessPoints = aps;
-    wlanGroups = wlans;
+  accessPoints = aps;
+  wlanGroups = wlans;
 
-    // Reset selection
-    selectedAp = null;
-    selectedWlan = null;
+  // Reset selection
+  selectedAp = null;
+  selectedWlan = null;
 
-    renderApList();
-    renderWlanList();
-    updateSelectionInfo();
-  } catch (error) {
-    console.error('Error loading data:', error);
-    setStatus('error', t('connectionError'));
-  }
-}
+  renderApList();
+  renderWlanList();
+  updateSelectionInfo();
+} // End of function loadData()
 
 function showEmptyStates() {
   apList.innerHTML = `
@@ -577,18 +623,40 @@ function closeSettings() {
   settingsModal.classList.remove('visible');
 }
 
-async function saveSettings() {
-  const config = {
-    url: urlInput.value.trim(),
-    username: usernameInput.value.trim(),
-    password: passwordInput.value,
-    language: languageSelect.value as Language
-  };
+/**
+ * Validates the settings form and saves the configuration. A blank password
+ * keeps the previously stored one when editing an existing config; for a new
+ * configuration (no stored password) it is a validation error.
+ * @returns {Promise<void>}
+ */
+async function saveSettings(): Promise<void> {
+  const url = urlInput.value.trim();
+  const username = usernameInput.value.trim();
+  let password = passwordInput.value;
 
-  if (!config.url || !config.username) {
+  if (!url || !username) {
     alert(t('fillUrlAndUser'));
     return;
   }
+
+  if (!password) {
+    const existingConfig = await window.omadaAPI.loadConfig();
+    if (existingConfig.password) {
+      // Blank field while editing: keep the stored password
+      password = existingConfig.password;
+    } else {
+      // No stored password either: refuse to save an unusable config
+      alert(t('passwordRequired'));
+      return;
+    }
+  }
+
+  const config = {
+    url,
+    username,
+    password,
+    language: languageSelect.value as Language
+  };
 
   const saved = await window.omadaAPI.saveConfig(config);
 
@@ -603,38 +671,61 @@ async function saveSettings() {
   } else {
     alert(t('saveError'));
   }
-}
+} // End of function saveSettings()
 
 // ============================================================================
 // Confirm Modal
 // ============================================================================
 
+/**
+ * Shows the confirm modal with the given message and resolves with the user's
+ * choice. Confirm, Cancel, and Escape all route through a single finish()
+ * function that hides the modal, removes every listener (including the Escape
+ * one), and resolves exactly once — so no stale listeners or pending promises
+ * can leak.
+ * @param {string} message - The question to display in the modal.
+ * @returns {Promise<boolean>} True if the user confirmed, false otherwise.
+ */
 function showConfirm(message: string): Promise<boolean> {
   return new Promise(resolve => {
     confirmMessage.textContent = message;
     confirmModal.classList.add('visible');
 
-    const handleConfirm = () => {
-      confirmModal.classList.remove('visible');
-      cleanup();
-      resolve(true);
-    };
+    let finished = false;
 
-    const handleCancel = () => {
+    /**
+     * Hides the modal, removes all listeners, and resolves exactly once.
+     * @param {boolean} result - The value to resolve the promise with.
+     */
+    const finish = (result: boolean): void => {
+      if (finished) return;
+      finished = true;
       confirmModal.classList.remove('visible');
-      cleanup();
-      resolve(false);
-    };
-
-    const cleanup = () => {
       confirmConfirmBtn.removeEventListener('click', handleConfirm);
       cancelConfirmBtn.removeEventListener('click', handleCancel);
+      document.removeEventListener('keydown', handleEscape);
+      resolve(result);
+    };
+
+    /** Confirm button handler: finishes with true. */
+    const handleConfirm = (): void => finish(true);
+
+    /** Cancel button handler: finishes with false. */
+    const handleCancel = (): void => finish(false);
+
+    /**
+     * Escape key handler: routes through the cancel path.
+     * @param {KeyboardEvent} e - The keydown event.
+     */
+    const handleEscape = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') handleCancel();
     };
 
     confirmConfirmBtn.addEventListener('click', handleConfirm);
     cancelConfirmBtn.addEventListener('click', handleCancel);
+    document.addEventListener('keydown', handleEscape);
   });
-}
+} // End of function showConfirm()
 
 // ============================================================================
 // Apply Change
@@ -710,11 +801,12 @@ settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) closeSettings();
 });
 
-// Close modal on Escape key
+// Close the settings modal on Escape key. The confirm modal is NOT handled
+// here: showConfirm() installs its own Escape listener that routes through
+// its cancel path, so the pending promise is always resolved.
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeSettings();
-    confirmModal.classList.remove('visible');
   }
 });
 
