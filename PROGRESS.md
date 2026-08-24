@@ -12,7 +12,7 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 | 4 | Renderer/IPC/cert hardening: 1.9, 2.2, 2.3a (origin compare), 2.6, 3.14 | **done** |
 | 5 | Packaging & platform: 1.2, 3.5, 3.15 | **done** |
 | 6 | UX improvements: 3.1, 3.2, 3.7, 3.8 (+OMADA_CONNECT i18n error codes) | **done** |
-| 7 | Connection flow & multi-site: 1.11, 3.12 | pending |
+| 7 | Connection flow & multi-site: 1.11, 3.12 | **done** |
 
 **Deferred (need user input or live controller):**
 - 1.10 status-category mapping — needs verification against a live controller.
@@ -73,14 +73,26 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 - Acceptance: `npm run build` exit 0 (after each round); greps clean (no `alert(`, no inline styles, no `.style.` writes, no Spanish in `src/main/index.ts`).
 - Codex review: `.claude/reviews/phase6-aggregate.md` — first pass found 2 P1 races + 4 P2s (fixed in a worker round); a focused Codex verification pass then confirmed 4/6 closed and re-flagged disconnect serialization + a settings-open race, closed in a second worker round (orchestrator spot-verified). Intentionally untranslated: technical error `detail`, product name, input placeholders, language autonyms.
 
+### Phase 7 — connection flow & multi-site (2026-08-24) — FINAL PHASE
+- Items 1.11, 3.12 implemented in `src/main/omada-api.ts`, `src/main/index.ts`, `src/main/config.ts`, `src/main/preload.ts`, `src/shared/types.ts`, `src/renderer/renderer.ts`, `index.html`, `styles.css`; details per-item in `todo.md`.
+- Key mechanics: `OmadaController.connect(preferredSiteId?)` loads ALL authorized sites (paginated, 100/page, 50-page defensive cap, deduped by id) and never picks silently — auto-select only with exactly one site or a still-authorized stored `config.siteId` (dropped when the URL changes); otherwise `OMADA_CONNECT` parks the controller in a pending `{controller, generation, nonce}` record (NOT installed) and returns `needsSiteSelection` + sites + a 16-byte hex nonce; the renderer's site-selection modal (DOM-built, focus trap, inert background, Escape/Cancel → disconnected) completes via `OMADA_SELECT_SITE` (sender assert, id + nonce format guards, exact pending-record match) which installs the controller and persists the site. Main-process serialization via `connectGeneration`: stale attempts are logged out and reported `connectionSuperseded` (renderer resets local UI only — no IPC); `OMADA_DISCONNECT` takes an optional ownership nonce; pending record cleared+released on newer connect, disconnect, and quit. New i18n keys: `siteSelectionTitle`, `siteSelectionMessage`, `siteSelectError`, `connectionSuperseded` (es+en).
+- Acceptance: `npm run build` exit 0 (after each round); invariant greps clean (no inline styles/innerHTML, 8/8 handlers assert sender, preload sandbox-safe, no Spanish in main).
+- Codex review: `.claude/reviews/phase7-aggregate.md` — 3 P2s (superseded-attempt cleanup disconnecting the newer controller; OMADA_SELECT_SITE not bound to a pending selection; site pagination), all fixed in a worker round per the review's own recommended designs; orchestrator spot-verified the pending-record mechanics.
+- Not tested against a live controller (single- or multi-site) — see Open risks.
+
+## Plan status: COMPLETE
+
+All 7 phases are done, committed, and pushed. Remaining todo.md items are ALL in the Deferred list below — each needs user input or a live controller before work can start. There is no next phase to run; a future `/goahead` should tell the user the plan is complete and ask which deferred item (if any) to tackle.
+
 ## Open risks
 
 - Verify-proc cert bypass is hostname-scoped, not origin-scoped (Electron API limitation, see phase 4 notes); fully closed only by deferred item 2.3b (TOFU pinning).
-- Phase 4's sandbox + IPC hardening has not had a live GUI smoke test (`npm start`).
+- No live GUI smoke test has been run for phases 4–7 (`npm start`): sandbox + IPC hardening, the phase-6 UX rework, and the multi-site selection flow are verified statically/by build only. Recommended first thing next session, plus a real connect against a controller (the multi-site path additionally needs a multi-site controller, and item 1.10 needs live status values).
+- Packaging (`npm run package:*`) has never been run end-to-end after the phase-5 config changes.
 
 ## Next action
 
-Run Phase 7 (FINAL phase): spawn one worker for connection flow & multi-site — todo.md items 1.11 and 3.12. Worker reads those items in `todo.md` for full instructions. Constraints to carry: strict CSP / no inline styles; DOM via createElement; sandboxed preload (type-only imports); every ipcMain.handle keeps `assertTrustedIpcSender` + payload guards; new user-facing strings in BOTH es and en tables; async UI work must respect the phase-6 `sessionGeneration` + `isOperationInProgress()` model. Then verify build, Codex-review aggregate, commit, push. After phase 7 the plan is complete — remaining todo.md items (1.10, 2.3b, 3.3, 3.4, 3.10) are all in the Deferred list awaiting user input.
+None — the plan is complete (see "Plan status" above). If the user wants more: (1) run the live smoke tests listed under Open risks; (2) pick from the Deferred list (1.10 status mapping — needs live controller; 2.3b TOFU cert pinning — needs a UX decision; 3.3 Electron upgrade; 3.4 esbuild bundling; 3.10 ESLint/tests/CI). Ask, don't assume.
 
 ## Key paths
 
@@ -92,4 +104,4 @@ Run Phase 7 (FINAL phase): spawn one worker for connection flow & multi-site —
 
 ## Git state
 
-- Phase 4 committed as 37450f1, phase 5 committed on top (SHA in `git log`), both pushed to origin/main (2026-08-24).
+- Phases 4 (37450f1), 5 (a7f2e30), 6 (9b685b2), and 7 (final commit on main, SHA in `git log`) all pushed to origin/main (2026-08-24). Tree clean after the phase-7 commit.

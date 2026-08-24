@@ -60,15 +60,41 @@ export interface OmadaApiResponse<T> {
 }
 
 // Error codes a connection attempt can fail with; the renderer maps them to
-// i18n strings (never hardcoded user-facing text in the main process)
-export type ConnectionErrorCode = 'configIncomplete' | 'connectFailed' | 'connectError';
+// i18n strings (never hardcoded user-facing text in the main process).
+// 'connectionSuperseded': the attempt was discarded because a newer connect or
+// a disconnect started while it was in flight (main-process serialization).
+// 'siteUnavailable': a site selection targeted an id that is not in the
+// authorized-site list, or arrived with no pending controller.
+export type ConnectionErrorCode =
+  | 'configIncomplete'
+  | 'connectFailed'
+  | 'connectError'
+  | 'connectionSuperseded'
+  | 'siteUnavailable';
+
+// One site of a (possibly multi-site) controller, as offered to the renderer
+// for explicit selection. `name` is display-only; `id` addresses the site.
+export interface SiteInfo {
+  id: string;
+  name: string;
+}
 
 // Connection result. `detail` optionally carries the underlying technical
 // message (e.g. an HTTP error from the API client) for display/diagnostics.
+// When authentication succeeds but the controller manages several sites and
+// none could be picked automatically, `success` is false with no `error`,
+// `needsSiteSelection` is true, `sites` lists the authorized sites, and
+// `selectionNonce` carries an opaque one-time token; the renderer then
+// answers with a selectSite() call that echoes the nonce back verbatim (it
+// never interprets it), tying the selection to this exact pending connect in
+// the main process.
 export interface ConnectionResult {
   success: boolean;
   error?: ConnectionErrorCode;
   detail?: string;
+  needsSiteSelection?: boolean;
+  sites?: SiteInfo[];
+  selectionNonce?: string;
 }
 
 // Data loaded from controller
@@ -88,6 +114,7 @@ export const IPC_CHANNELS = {
   OMADA_GET_APS: 'omada:get-aps',
   OMADA_GET_WLANS: 'omada:get-wlans',
   OMADA_SET_WLAN: 'omada:set-wlan',
+  OMADA_SELECT_SITE: 'omada:select-site',
   OMADA_DISCONNECT: 'omada:disconnect',
 } as const;
 

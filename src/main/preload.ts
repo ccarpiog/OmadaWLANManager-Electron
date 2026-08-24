@@ -23,6 +23,7 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
   OMADA_GET_APS: 'omada:get-aps',
   OMADA_GET_WLANS: 'omada:get-wlans',
   OMADA_SET_WLAN: 'omada:set-wlan',
+  OMADA_SELECT_SITE: 'omada:select-site',
   OMADA_DISCONNECT: 'omada:disconnect',
 };
 
@@ -62,8 +63,19 @@ contextBridge.exposeInMainWorld('omadaAPI', {
     return ipcRenderer.invoke(IPC_CHANNELS.OMADA_SET_WLAN, mac, wlanId);
   },
 
-  disconnect: (): Promise<void> => {
-    return ipcRenderer.invoke(IPC_CHANNELS.OMADA_DISCONNECT);
+  // Complete a connection to a multi-site controller: the renderer sends the
+  // site id the user chose from the list a connect() result carried, plus the
+  // opaque selection nonce that same result carried (echoed back verbatim —
+  // the renderer never interprets it)
+  selectSite: (siteId: string, selectionNonce: string): Promise<ConnectionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.OMADA_SELECT_SITE, siteId, selectionNonce);
+  },
+
+  // Disconnect. Without an argument this is the unconditional user-initiated
+  // disconnect; with a selection nonce it only aborts the pending site
+  // selection owning that nonce (a stale caller's call is a no-op in main)
+  disconnect: (selectionNonce?: string): Promise<void> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.OMADA_DISCONNECT, selectionNonce);
   }
 });
 
@@ -76,7 +88,8 @@ export interface OmadaAPI {
   getAccessPoints(): Promise<AccessPoint[]>;
   getWlanGroups(): Promise<WlanGroup[]>;
   setApWlanGroup(mac: string, wlanId: string): Promise<boolean>;
-  disconnect(): Promise<void>;
+  selectSite(siteId: string, selectionNonce: string): Promise<ConnectionResult>;
+  disconnect(selectionNonce?: string): Promise<void>;
 }
 
 declare global {

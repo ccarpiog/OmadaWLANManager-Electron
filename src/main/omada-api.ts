@@ -1,5 +1,17 @@
 import { net } from 'electron';
-import { AccessPoint, WlanGroup, Ssid, OmadaApiResponse } from '../shared/types';
+import { AccessPoint, WlanGroup, Ssid, OmadaApiResponse, SiteInfo } from '../shared/types';
+
+/**
+ * Outcome of a connect() call. Authentication has already succeeded when this
+ * is returned (failures throw instead). `siteSelected` is false when the
+ * controller manages several sites and neither the preferred id nor an
+ * automatic pick applied — the caller must then offer `sites` to the user and
+ * complete the connection with selectSite().
+ */
+export interface ConnectOutcome {
+  siteSelected: boolean;
+  sites: SiteInfo[];
+}
 
 // Request hardening limits
 const REQUEST_TIMEOUT_MS = 15000; // Abort any request that takes longer than this
@@ -9,6 +21,13 @@ const ERROR_BODY_EXCERPT_CHARS = 200; // Max body characters quoted in HTTP erro
 // Omada errorCode values that mean the session is no longer authenticated
 // (-1200 = "login required"; extend this set if other codes show up)
 const AUTH_ERROR_CODES = new Set<number>([-1200]);
+
+// Pagination limits for the authorized-site listing. Each request asks for
+// SITES_PAGE_SIZE entries; MAX_SITE_PAGES caps the walk defensively (50
+// pages x 100 sites = 5000 sites) so a broken or malicious controller can
+// never keep the client looping forever. Hitting the cap logs a warning.
+const SITES_PAGE_SIZE = 100;
+const MAX_SITE_PAGES = 50;
 
 /**
  * Omada Controller API Client
@@ -20,6 +39,9 @@ export class OmadaController {
   private password: string;
   private omadacId: string | null = null;
   private siteId: string | null = null;
+  // Sites the logged-in account is authorized to see (filled by connect());
+  // selectSite() only ever accepts an id from this list
+  private availableSites: SiteInfo[] = [];
   private csrfToken: string | null = null;
   private cookies: Map<string, string> = new Map();
   // Shared in-flight re-login: concurrent session-expired requests all
@@ -34,10 +56,16 @@ export class OmadaController {
   }
 
   /**
-   * Connect to the Omada controller and authenticate
-   * @returns True when authentication and site resolution succeed.
+   * Connect to the Omada controller and authenticate, then resolve the site.
+   * Site selection is explicit — the first site is never silently picked:
+   * exactly one authorized site is auto-selected; with several, the
+   * `preferredSiteId` (the id stored in the config) is used only when it is
+   * still in the authorized-site list, and otherwise the outcome asks the
+   * caller to have the user choose (see ConnectOutcome / selectSite()).
+   * @param preferredSiteId Previously chosen site id to reuse, if any.
+   * @returns The connect outcome (authentication failures throw instead).
    */
-  async connect(): Promise<boolean> {
+  async connect(preferredSiteId?: string): Promise<ConnectOutcome> {
     try {
       // Step 1: Get controller info to retrieve omadacId
       const infoResponse = await this.request<{ omadacId: string }>('/api/info', 'GET');
@@ -65,15 +93,45 @@ export class OmadaController {
 
       this.csrfToken = loginResponse.result.token;
 
-      // Step 3: Resolve the site id (newer controllers don't expose "Default")
-      await this.resolveSiteId();
+      // Step 3: Load the authorized sites (newer controllers don't expose
+      // "Default" — sites are addressed by generated ids)
+      this.availableSites = await this.loadSites();
 
-      return true;
+      // Step 4: Pick the site. Auto-select ONLY when exactly one site
+      // exists; with several, reuse the preferred (stored) id only when it
+      // is still authorized, and otherwise defer to the user
+      if (this.availableSites.length === 1) {
+        this.siteId = this.availableSites[0].id;
+      } else if (
+        preferredSiteId &&
+        this.availableSites.some((site) => site.id === preferredSiteId)
+      ) {
+        this.siteId = preferredSiteId;
+      } else {
+        this.siteId = null;
+      }
+
+      return { siteSelected: this.siteId !== null, sites: this.availableSites };
     } catch (error) {
       console.error('Connection error:', error);
       throw error;
     }
   } // End of function connect()
+
+  /**
+   * Select one of the authorized sites by id. Only ids present in the list
+   * loaded by connect() are accepted — the id is later interpolated into
+   * request paths, so the exact-match check doubles as an injection guard.
+   * @param siteId Id of the site to select.
+   * @returns True when the id belongs to the authorized-site list.
+   */
+  selectSite(siteId: string): boolean {
+    if (!this.availableSites.some((site) => site.id === siteId)) {
+      return false;
+    }
+    this.siteId = siteId;
+    return true;
+  } // End of function selectSite()
 
   /**
    * Log out from the controller (best-effort) and clear all local session
@@ -93,61 +151,108 @@ export class OmadaController {
   } // End of function logout()
 
   /**
-   * Clear all local authentication state: cookies, CSRF token, and site id.
-   * Used by logout() and by a failed re-login so no half-valid session
-   * survives (the public methods' guards then report "not connected").
+   * Clear all local authentication state: cookies, CSRF token, site id, and
+   * the authorized-site list. Used by logout() and by a failed re-login so no
+   * half-valid session survives (the public methods' guards then report "not
+   * connected").
    */
   private clearSessionState(): void {
     this.cookies.clear();
     this.csrfToken = null;
     this.siteId = null;
+    this.availableSites = [];
   } // End of function clearSessionState()
 
   /**
-   * Resolve the site id for the logged-in user.
+   * Load the sites the logged-in user is authorized to see, walking every
+   * page of the paginated listing (one page holds at most SITES_PAGE_SIZE
+   * sites). The walk stops on a short/empty page, on reaching the total the
+   * response metadata reports, or — defensively — at MAX_SITE_PAGES, in
+   * which case a console warning notes the truncation.
    * Newer controllers do not expose the site as the literal "Default" — the
-   * site is addressed by a generated id, so we look it up after login.
+   * site is addressed by a generated id, so we look the list up after login.
+   * Ids are strictly validated and the combined list is deduplicated by id;
+   * a missing/empty name falls back to the id (display-only field).
+   * @returns The validated, deduplicated, non-empty list of authorized sites.
    */
-  private async resolveSiteId(): Promise<void> {
-    const response = await this.request<unknown>(
-      `/${this.omadacId}/api/v2/sites?currentPage=1&currentPageSize=100`,
-      'GET'
-    );
+  private async loadSites(): Promise<SiteInfo[]> {
+    const sites: SiteInfo[] = [];
+    const seenIds = new Set<string>();
+    let page = 1;
+    let fetchedEntries = 0; // Raw entries fetched (pre-deduplication)
 
-    if (response.errorCode !== 0) {
-      throw new Error(response.msg || 'No se pudo obtener la lista de sitios');
-    }
+    for (;;) {
+      const response = await this.request<unknown>(
+        `/${this.omadacId}/api/v2/sites?currentPage=${page}&currentPageSize=${SITES_PAGE_SIZE}`,
+        'GET'
+      );
 
-    // Runtime validation: result.data must be an array of objects with a
-    // string id, otherwise the controller speaks a shape we don't support
-    const result = response.result;
-    const data = result !== null && typeof result === 'object'
-      ? (result as Record<string, unknown>).data
-      : undefined;
-    if (!Array.isArray(data)) {
-      throw new Error('Unsupported API response (sites)');
-    }
+      if (response.errorCode !== 0) {
+        throw new Error(response.msg || 'No se pudo obtener la lista de sitios');
+      }
 
-    const sites: Array<{ id: string }> = [];
-    for (const entry of data) {
-      if (entry === null || typeof entry !== 'object') {
+      // Runtime validation: result.data must be an array of objects with a
+      // string id, otherwise the controller speaks a shape we don't support
+      const result = response.result;
+      const data = result !== null && typeof result === 'object'
+        ? (result as Record<string, unknown>).data
+        : undefined;
+      if (!Array.isArray(data)) {
         throw new Error('Unsupported API response (sites)');
       }
-      const id = (entry as Record<string, unknown>).id;
-      if (typeof id !== 'string' || id === '') {
-        // The id is the site's required identifier; a missing one means the
-        // controller speaks a shape we don't support
-        throw new Error('Unsupported API response (sites)');
+
+      for (const entry of data) {
+        if (entry === null || typeof entry !== 'object') {
+          throw new Error('Unsupported API response (sites)');
+        }
+        const site = entry as Record<string, unknown>;
+        if (typeof site.id !== 'string' || site.id === '') {
+          // The id is the site's required identifier; a missing one means the
+          // controller speaks a shape we don't support
+          throw new Error('Unsupported API response (sites)');
+        }
+        if (seenIds.has(site.id)) {
+          continue; // Deduplicate: keep the first occurrence of each id
+        }
+        seenIds.add(site.id);
+        sites.push({
+          id: site.id,
+          // The name is display-only: normalize a missing one to the id
+          name: typeof site.name === 'string' && site.name !== '' ? site.name : site.id
+        });
+      } // End of the loop that validates each site entry of the page
+
+      fetchedEntries += data.length;
+
+      // Total-entry metadata, honored only when it is a sane number (the
+      // field the Omada v2 paged responses use is `totalRows`)
+      const rawTotal = (result as Record<string, unknown>).totalRows;
+      const totalRows = typeof rawTotal === 'number' && Number.isFinite(rawTotal) && rawTotal >= 0
+        ? rawTotal
+        : null;
+
+      // A short (or empty) page, or reaching the reported total, ends the
+      // walk; totals are compared against raw fetched entries so duplicate
+      // entries can never cause extra requests
+      if (data.length < SITES_PAGE_SIZE || (totalRows !== null && fetchedEntries >= totalRows)) {
+        break;
       }
-      sites.push({ id });
-    } // End of the loop that validates each site entry
+      if (page >= MAX_SITE_PAGES) {
+        // Defensive cap: never loop forever on a broken/malicious controller
+        console.warn(
+          `Site listing truncated at ${MAX_SITE_PAGES} pages (${fetchedEntries} entries fetched); later sites are not offered`
+        );
+        break;
+      }
+      page++;
+    } // End of the loop that walks the site-listing pages
 
     if (sites.length === 0) {
       throw new Error('El usuario no tiene acceso a ningún sitio');
     }
 
-    this.siteId = sites[0].id;
-  } // End of function resolveSiteId()
+    return sites;
+  } // End of function loadSites()
 
   /**
    * Get all access points from the controller

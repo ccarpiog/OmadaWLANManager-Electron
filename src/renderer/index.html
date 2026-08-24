@@ -122,6 +122,23 @@
     </div>
   </div>
 
+  <!-- Site Selection Modal (multi-site controllers: the user picks which
+       site to manage; renderer.ts fills the list with one button per site) -->
+  <div class="modal-overlay" id="siteModal" role="dialog" aria-modal="true" aria-labelledby="siteModalHeading">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2 id="siteModalHeading"></h2>
+      </div>
+      <div class="modal-body">
+        <p id="siteModalMessage"></p>
+        <div class="site-list" id="siteList"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelSiteBtn"></button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast notifications (non-blocking replacement for alert()) -->
   <div class="toast-container" id="toastContainer" role="status" aria-live="polite"></div>
 

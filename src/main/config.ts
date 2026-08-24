@@ -33,7 +33,15 @@ interface StoredConfig {
   language: Language;
   encryptedPassword?: string;
   password?: string;
+  // Site chosen by the user on a multi-site controller. Reused on the next
+  // connect only when it is still in the authorized-site list (the membership
+  // check lives in OmadaController.connect()); dropped when the URL changes.
+  siteId?: string;
 }
+
+// Length cap for a stored site id (Omada ids are short generated strings; the
+// cap only rejects absurd values coming from a hand-edited config file)
+const MAX_SITE_ID_LENGTH = 128;
 
 // In-memory cache of the parsed config. Populated lazily on first read and
 // updated on every save, so hot paths (like TLS certificate verification)
@@ -98,6 +106,9 @@ function validateStoredConfig(parsed: unknown): StoredConfig {
   }
   if (typeof raw.password === 'string' && raw.password) {
     config.password = raw.password;
+  }
+  if (typeof raw.siteId === 'string' && raw.siteId && raw.siteId.length <= MAX_SITE_ID_LENGTH) {
+    config.siteId = raw.siteId;
   }
   return config;
 } // End of function validateStoredConfig()
@@ -264,6 +275,31 @@ export function getConfiguredUrl(): string {
 }
 
 /**
+ * Returns the site id the user previously chose on a multi-site controller.
+ * @returns {string} The stored site id, or '' when none is stored.
+ */
+export function getStoredSiteId(): string {
+  return getCachedConfig().siteId || '';
+}
+
+/**
+ * Persists the site id the user just chose on a multi-site controller, so the
+ * next connect can reuse it without asking again. A write failure is logged
+ * but not surfaced: the selection already took effect on the live controller
+ * instance, it just will not be remembered across restarts.
+ * @param {string} siteId - The chosen site id (already validated by the caller).
+ */
+export function saveStoredSiteId(siteId: string): void {
+  const newConfig: StoredConfig = { ...getCachedConfig(), siteId };
+  try {
+    writeConfigFile(newConfig);
+    cachedConfig = newConfig;
+  } catch (error) {
+    console.error('Error persisting the selected site id:', error);
+  }
+} // End of function saveStoredSiteId()
+
+/**
  * Validates and normalizes a controller URL: it must parse, use HTTPS (plain
  * HTTP would send credentials unencrypted), and carry no embedded credentials
  * or fragment; a trailing slash is stripped. The renderer applies the same
@@ -359,6 +395,11 @@ export function saveConfig(payload: ConfigSavePayload): ConfigSaveResult {
   }
   if (plainPassword) {
     newConfig.password = plainPassword;
+  }
+  // Keep the previously chosen site only while the controller URL is
+  // unchanged: a different controller has different site ids anyway
+  if (current.siteId && current.url === normalizedUrl) {
+    newConfig.siteId = current.siteId;
   }
 
   try {

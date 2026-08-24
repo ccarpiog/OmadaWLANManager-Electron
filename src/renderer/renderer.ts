@@ -58,6 +58,10 @@ interface Translations {
   configIncomplete: string;
   connectFailed: string;
   configureHint: string;
+  siteSelectionTitle: string;
+  siteSelectionMessage: string;
+  siteSelectError: string;
+  connectionSuperseded: string;
 }
 
 const translations: Record<Language, Translations> = {
@@ -112,6 +116,10 @@ const translations: Record<Language, Translations> = {
     configIncomplete: 'Configuración incompleta. Por favor, configura la conexión.',
     connectFailed: 'No se pudo conectar al controlador.',
     configureHint: 'Configura la conexión en Ajustes para empezar',
+    siteSelectionTitle: 'Seleccionar sitio',
+    siteSelectionMessage: 'Este controlador gestiona varios sitios. Elige cuál quieres administrar:',
+    siteSelectError: 'No se pudo seleccionar el sitio',
+    connectionSuperseded: 'Conexión descartada: se inició un intento más reciente',
   },
   en: {
     disconnected: 'Disconnected',
@@ -164,6 +172,10 @@ const translations: Record<Language, Translations> = {
     configIncomplete: 'Configuration incomplete. Please set up the connection.',
     connectFailed: 'Could not connect to the controller.',
     configureHint: 'Set up the connection in Settings to get started',
+    siteSelectionTitle: 'Select site',
+    siteSelectionMessage: 'This controller manages several sites. Choose which one to manage:',
+    siteSelectError: 'Could not select the site',
+    connectionSuperseded: 'Connection discarded: a newer attempt was started',
   },
 };
 
@@ -209,6 +221,13 @@ interface WlanGroup {
   wlanId: string;
   wlanName: string;
   ssidList: { ssidName: string }[];
+}
+
+// One authorized site of a multi-site controller, as sent by the main
+// process for the user to choose from (see shared/types.ts SiteInfo)
+interface SiteInfo {
+  id: string;
+  name: string;
 }
 
 // State
@@ -306,6 +325,13 @@ const confirmMessage = document.getElementById('confirmMessage') as HTMLElement;
 const cancelConfirmBtn = document.getElementById('cancelConfirmBtn') as HTMLButtonElement;
 const confirmConfirmBtn = document.getElementById('confirmConfirmBtn') as HTMLButtonElement;
 
+// Site Selection Modal (multi-site controllers)
+const siteModal = document.getElementById('siteModal') as HTMLElement;
+const siteModalTitle = document.getElementById('siteModalHeading') as HTMLElement;
+const siteModalMessage = document.getElementById('siteModalMessage') as HTMLElement;
+const siteListContainer = document.getElementById('siteList') as HTMLElement;
+const cancelSiteBtn = document.getElementById('cancelSiteBtn') as HTMLButtonElement;
+
 // ============================================================================
 // Internationalization
 // ============================================================================
@@ -354,6 +380,12 @@ function applyTranslations() {
   confirmModalTitle.textContent = t('confirmChange');
   cancelConfirmBtn.textContent = t('cancel');
   confirmConfirmBtn.textContent = t('confirm');
+
+  // Site selection modal (its option buttons are built per-open from the
+  // controller's site names, see showSiteSelection())
+  siteModalTitle.textContent = t('siteSelectionTitle');
+  siteModalMessage.textContent = t('siteSelectionMessage');
+  cancelSiteBtn.textContent = t('cancel');
 
   // Status text (depends on state)
   if (!isConnected) {
@@ -455,6 +487,7 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'info')
 // process enforces the same patterns (src/main/index.ts — keep both in sync).
 const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
 const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * Validates a MAC address format (six hex pairs separated by ':' or '-').
@@ -472,6 +505,15 @@ function isValidMac(mac: unknown): mac is string {
  */
 function isValidWlanId(id: unknown): id is string {
   return typeof id === 'string' && WLAN_ID_REGEX.test(id);
+}
+
+/**
+ * Validates a site id format (alphanumeric Omada object id, plus '_'/'-').
+ * @param {unknown} id - Candidate site id.
+ * @returns {id is string} True when the value is a well-formed site id string.
+ */
+function isValidSiteId(id: unknown): id is string {
+  return typeof id === 'string' && SITE_ID_REGEX.test(id);
 }
 
 // ============================================================================
@@ -839,6 +881,12 @@ function connectionErrorMessage(result: { error?: string; detail?: string }): st
     case 'connectFailed':
       message = t('connectFailed');
       break;
+    case 'connectionSuperseded':
+      message = t('connectionSuperseded');
+      break;
+    case 'siteUnavailable':
+      message = t('siteSelectError');
+      break;
     default:
       message = t('connectionError');
       break;
@@ -870,6 +918,9 @@ async function connect(): Promise<void> {
   isConnecting = true;
   setStatus('connecting');
   connectBtn.disabled = true;
+  // Settings must stay closed while a connection is in flight: a settings
+  // save mid-connect could start a competing attempt (see openSettings())
+  settingsBtn.disabled = true;
   connectBtn.textContent = t('connecting');
 
   try {
@@ -879,46 +930,158 @@ async function connect(): Promise<void> {
     if (generation !== sessionGeneration) return;
 
     if (result.success) {
-      const config = await window.omadaAPI.loadConfig();
-      // Stale result: a newer session owns the UI now
-      if (generation !== sessionGeneration) return;
-      setStatus('connected', config.url);
-      connectBtn.textContent = t('disconnect');
-      await loadData();
+      await commitConnectedUi(generation);
+    } else if (result.error === 'connectionSuperseded') {
+      // Stale attempt: a newer main-process flow (connect or disconnect)
+      // owns the session now. Reset only the local UI — invoking a
+      // disconnect here could log out the controller that newer flow owns
+      resetConnectionUi(connectionErrorMessage(result));
+    } else if (result.needsSiteSelection) {
+      // Multi-site controller with no valid stored choice: let the user pick
+      await runSiteSelection(result.sites, result.selectionNonce, generation);
     } else {
-      setStatus('error', connectionErrorMessage(result));
-      connectBtn.textContent = t('connect');
-      clearData();
-      // Release the main-process controller so stale sessions cannot linger
-      try {
-        await window.omadaAPI.disconnect();
-      } catch (disconnectError) {
-        console.error('Error disconnecting after connection failure:', disconnectError);
-      }
+      await abortConnection(generation, connectionErrorMessage(result));
     }
   } catch (error) {
     console.error('Error connecting:', error);
     // A stale failure must neither flip the newer session's UI nor release
-    // a controller that the newer session may own
+    // a controller that the newer session may own (abortConnection()
+    // re-checks the generation itself, but never reach it when stale)
     if (generation !== sessionGeneration) return;
-    setStatus('error', t('connectionError'));
-    connectBtn.textContent = t('connect');
-    clearData();
-    // Release the main-process controller so stale sessions cannot linger
-    try {
-      await window.omadaAPI.disconnect();
-    } catch (disconnectError) {
-      console.error('Error disconnecting after connection failure:', disconnectError);
-    }
+    await abortConnection(generation, t('connectionError'));
   } finally {
     isConnecting = false;
-    // Only the current session owner may re-enable the button; when stale,
+    // Only the current session owner may re-enable the buttons; when stale,
     // the superseding operation manages the button lifecycle itself
     if (generation === sessionGeneration) {
       connectBtn.disabled = false;
+      settingsBtn.disabled = false;
     }
   }
 } // End of function connect()
+
+/**
+ * Commits the connected UI (status text, button label) and loads the
+ * controller data. Part of connect(): errors thrown here — including by
+ * loadData() — are handled by connect()'s catch so the whole UI state stays
+ * consistent. Every post-await commit is generation-checked.
+ * @param {number} generation - The session generation captured by connect().
+ * @returns {Promise<void>}
+ */
+async function commitConnectedUi(generation: number): Promise<void> {
+  const config = await window.omadaAPI.loadConfig();
+  // Stale result: a newer session owns the UI now
+  if (generation !== sessionGeneration) return;
+  setStatus('connected', config.url);
+  connectBtn.textContent = t('disconnect');
+  await loadData();
+} // End of function commitConnectedUi()
+
+/**
+ * Resets the local connection UI to a non-connected state: error status (or
+ * plain disconnected when no message is given), Connect button label, and
+ * cleared data. Purely local — it performs no IPC, so it is the right
+ * cleanup for results the main process reported as superseded, where
+ * releasing anything could hit a controller a newer flow owns.
+ * @param {string | null} errorMessage - Localized error to show in the status
+ *   bar, or null for a plain return to the disconnected state.
+ */
+function resetConnectionUi(errorMessage: string | null): void {
+  if (errorMessage !== null) {
+    setStatus('error', errorMessage);
+  } else {
+    setStatus('disconnected');
+  }
+  connectBtn.textContent = t('connect');
+  clearData();
+} // End of function resetConnectionUi()
+
+/**
+ * Resets the UI after a failed or user-aborted connection attempt and
+ * releases the main-process controller so stale sessions cannot linger.
+ * Generation-checked as a whole: a stale call must neither flip the newer
+ * session's UI nor release a controller the newer session may own. When a
+ * selection nonce is given, the release is ownership-scoped: the main
+ * process only aborts the pending site selection owning that exact nonce
+ * (a superseded nonce makes the call a harmless no-op there). Superseded
+ * connect results never reach this function at all — they reset the UI via
+ * resetConnectionUi() without any IPC.
+ * @param {number} generation - The session generation captured by connect().
+ * @param {string | null} errorMessage - Localized error to show in the status
+ *   bar, or null for a plain return to the disconnected state (user cancel).
+ * @param {string} [selectionNonce] - Opaque nonce of the pending site
+ *   selection to abort; omitted for an unconditional disconnect.
+ * @returns {Promise<void>}
+ */
+async function abortConnection(generation: number, errorMessage: string | null, selectionNonce?: string): Promise<void> {
+  if (generation !== sessionGeneration) return;
+  resetConnectionUi(errorMessage);
+  try {
+    await window.omadaAPI.disconnect(selectionNonce);
+  } catch (disconnectError) {
+    console.error('Error disconnecting after connection failure:', disconnectError);
+  }
+} // End of function abortConnection()
+
+/**
+ * Runs the multi-site selection step of connect(): validates the site list
+ * and the opaque selection nonce received over IPC (ids must be well-formed —
+ * they cross the boundary again as the selection; the nonce is echoed back
+ * verbatim and never interpreted beyond being a non-empty string), shows the
+ * site modal, and completes the connection with the chosen site (or aborts it
+ * on cancel/failure — an abort scoped to this pending selection via the
+ * nonce, so it can never log out a session a newer flow owns). Part of
+ * connect(), so isConnecting stays true throughout and every post-await
+ * commit is generation-checked.
+ * @param {unknown} rawSites - The `sites` field of the connect result.
+ * @param {unknown} rawNonce - The `selectionNonce` field of the connect
+ *   result (opaque; passed back to the main process, never interpreted).
+ * @param {number} generation - The session generation captured by connect().
+ * @returns {Promise<void>}
+ */
+async function runSiteSelection(rawSites: unknown, rawNonce: unknown, generation: number): Promise<void> {
+  // Boundary validation: keep only entries with a well-formed id and a
+  // string name (the id goes back over IPC as the user's selection)
+  const sites: SiteInfo[] = Array.isArray(rawSites)
+    ? rawSites.filter((site): site is SiteInfo =>
+        site !== null &&
+        typeof site === 'object' &&
+        isValidSiteId((site as { id?: unknown }).id) &&
+        typeof (site as { name?: unknown }).name === 'string'
+      )
+    : [];
+
+  // The nonce is opaque: only its presence and type are checked, never its
+  // content — the main process is the sole interpreter
+  const selectionNonce = typeof rawNonce === 'string' && rawNonce.length > 0 ? rawNonce : null;
+
+  if (sites.length === 0 || selectionNonce === null) {
+    // Nothing valid to offer (or no nonce to answer with): treat it as a
+    // failed connection. Without a nonce the abort falls back to the
+    // unconditional disconnect, which also clears any pending selection
+    await abortConnection(generation, t('siteSelectError'), selectionNonce ?? undefined);
+    return;
+  }
+
+  const chosenSiteId = await showSiteSelection(sites);
+  if (generation !== sessionGeneration) return;
+
+  if (chosenSiteId === null) {
+    // User cancelled: not an error — back to the disconnected state (the
+    // nonce-scoped abort releases only this pending selection)
+    await abortConnection(generation, null, selectionNonce);
+    return;
+  }
+
+  const result = await window.omadaAPI.selectSite(chosenSiteId, selectionNonce);
+  if (generation !== sessionGeneration) return;
+
+  if (result.success) {
+    await commitConnectedUi(generation);
+  } else {
+    await abortConnection(generation, connectionErrorMessage(result), selectionNonce);
+  }
+} // End of function runSiteSelection()
 
 /**
  * Clears all loaded AP/WLAN data, selections, and filters, then re-renders
@@ -1163,7 +1326,9 @@ function createFocusTrap(modal: HTMLElement): (e: KeyboardEvent) => void {
  */
 function updateBackgroundInert(): void {
   const anyModalOpen =
-    settingsModal.classList.contains('visible') || confirmModal.classList.contains('visible');
+    settingsModal.classList.contains('visible') ||
+    confirmModal.classList.contains('visible') ||
+    siteModal.classList.contains('visible');
   if (anyModalOpen) {
     appContainer.setAttribute('inert', '');
   } else {
@@ -1196,6 +1361,10 @@ let isSettingsOpening = false;
  * @returns {Promise<void>}
  */
 async function openSettings(): Promise<void> {
+  // While a connection attempt is in flight the Settings button is disabled;
+  // this guard is the belt-and-braces for any other invocation path (a save
+  // mid-connect could otherwise start a competing attempt)
+  if (isConnecting) return;
   if (isSettingsOpening || settingsModal.classList.contains('visible')) return;
   // Reserve the modal and remember the opener before any await: re-entry is
   // now a no-op, and the opener can never be a modal-internal element
@@ -1433,6 +1602,103 @@ function showConfirm(message: string): Promise<boolean> {
     confirmConfirmBtn.focus();
   });
 } // End of function showConfirm()
+
+// ============================================================================
+// Site Selection Modal
+// ============================================================================
+
+/**
+ * Shows the site-selection modal for a multi-site controller and resolves
+ * with the id of the site the user chose, or null on cancel/Escape. One
+ * button per site is built with DOM APIs (createElement/textContent/dataset —
+ * site names from the controller can never be interpreted as markup). Every
+ * close path routes through a single finish() that hides the modal, removes
+ * all listeners, lifts the background inertness, restores focus to the
+ * opener, and resolves exactly once — same structure as showConfirm().
+ * @param {SiteInfo[]} sites - The (validated) authorized sites to offer.
+ * @returns {Promise<string | null>} The chosen site id, or null on cancel.
+ */
+function showSiteSelection(sites: SiteInfo[]): Promise<string | null> {
+  return new Promise(resolve => {
+    // Build one option button per site
+    const siteButtons = sites.map(site => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn site-option';
+      button.dataset.siteId = site.id;
+      button.textContent = site.name;
+      return button;
+    });
+    siteListContainer.replaceChildren(...siteButtons);
+
+    // Remember the opener to restore focus later, and build the Tab focus
+    // trap that keeps focus inside the modal
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusTrap = createFocusTrap(siteModal);
+    siteModal.classList.add('visible');
+    updateBackgroundInert();
+
+    let finished = false;
+
+    /**
+     * Hides the modal, removes all listeners, clears the option buttons,
+     * lifts the background inertness, restores focus to the opener, and
+     * resolves exactly once.
+     * @param {string | null} result - The chosen site id, or null on cancel.
+     */
+    const finish = (result: string | null): void => {
+      if (finished) return;
+      finished = true;
+      siteModal.classList.remove('visible');
+      siteListContainer.removeEventListener('click', handleSiteClick);
+      cancelSiteBtn.removeEventListener('click', handleCancel);
+      document.removeEventListener('keydown', handleEscape);
+      document.removeEventListener('keydown', focusTrap);
+      // Drop the transient option buttons (and their listeners with them)
+      siteListContainer.replaceChildren();
+      // Lift the background inertness BEFORE refocusing the opener (focus
+      // cannot enter an inert subtree)
+      updateBackgroundInert();
+      opener?.focus();
+      resolve(result);
+    }; // End of function finish()
+
+    /**
+     * Delegated click handler for the site option buttons: finishes with the
+     * clicked site's id.
+     * @param {MouseEvent} e - The click event.
+     */
+    const handleSiteClick = (e: MouseEvent): void => {
+      const target = e.target instanceof Element ? e.target.closest('.site-option') : null;
+      if (target instanceof HTMLElement && target.dataset.siteId) {
+        finish(target.dataset.siteId);
+      }
+    };
+
+    /** Cancel button handler: finishes with null. */
+    const handleCancel = (): void => finish(null);
+
+    /**
+     * Escape key handler: routes through the cancel path.
+     * @param {KeyboardEvent} e - The keydown event.
+     */
+    const handleEscape = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') handleCancel();
+    };
+
+    siteListContainer.addEventListener('click', handleSiteClick);
+    cancelSiteBtn.addEventListener('click', handleCancel);
+    document.addEventListener('keydown', handleEscape);
+    document.addEventListener('keydown', focusTrap);
+
+    // Move keyboard focus onto the first site option (Escape cancels)
+    if (siteButtons.length > 0) {
+      siteButtons[0].focus();
+    } else {
+      cancelSiteBtn.focus();
+    }
+  });
+} // End of function showSiteSelection()
 
 // ============================================================================
 // Apply Change

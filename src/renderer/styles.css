@@ -544,6 +544,39 @@ body.platform-darwin .title-bar {
   border-color: var(--accent-color);
 }
 
+/* Site selection modal: vertical stack of one button per authorized site.
+   The list scrolls on controllers with many sites so the modal footer
+   (Cancel) always stays reachable */
+.site-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.site-option {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.site-option:hover:not(:disabled) {
+  border-color: var(--accent-color);
+  background: var(--bg-tertiary);
+}
+
+.site-option:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+
 /* Loading state */
 .loading {
   display: flex;

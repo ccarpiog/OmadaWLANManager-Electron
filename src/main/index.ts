@@ -1,13 +1,37 @@
 import { app, BrowserWindow, ipcMain, IpcMainInvokeEvent, session } from 'electron';
+import { randomBytes } from 'crypto';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { getConfiguredUrl, getConnectionCredentials, getRendererConfig, saveConfig } from './config';
+import { getConfiguredUrl, getConnectionCredentials, getRendererConfig, getStoredSiteId, saveConfig, saveStoredSiteId } from './config';
 import { OmadaController } from './omada-api';
 import { ConfigSavePayload, ConfigSaveResult, IPC_CHANNELS, ConnectionResult, RendererConfig } from '../shared/types';
 
 // Global reference to prevent garbage collection
 let mainWindow: BrowserWindow | null = null;
 let omadaController: OmadaController | null = null;
+
+// Serializes connection attempts in the main process (todo.md 3.12): every
+// OMADA_CONNECT bumps this counter and captures its value; when the value has
+// moved on after the (awaited) authentication — because a newer connect or a
+// disconnect started meanwhile — the finished attempt is discarded instead of
+// installing its controller. OMADA_DISCONNECT and the quit path bump it too,
+// so an in-flight connect can never resurrect a session the user just closed.
+let connectGeneration = 0;
+
+// A connect that authenticated but still needs the user to pick a site parks
+// its controller here instead of installing it globally. The record ties the
+// eventual OMADA_SELECT_SITE call to this exact pending connect: `generation`
+// is the connect generation the attempt captured, and `nonce` is an opaque
+// one-time token the renderer must echo back verbatim. The controller is
+// installed globally only after the selection succeeds; the record is cleared
+// (and its controller released) on disconnect, on supersession by a newer
+// connect, on cancellation (nonce-scoped disconnect), and on quit.
+interface PendingSiteSelection {
+  controller: OmadaController;
+  generation: number;
+  nonce: string;
+}
+let pendingSiteSelection: PendingSiteSelection | null = null;
 
 // ============================================================================
 // IPC boundary validation
@@ -21,6 +45,10 @@ const RENDERER_HTML_PATH = path.normalize(path.join(__dirname, '../renderer/inde
 // applies the same patterns (src/renderer/renderer.ts — keep both in sync)
 const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
 const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+// Format guard for the opaque site-selection nonce: exactly 32 lowercase hex
+// characters (16 random bytes — see createSelectionNonce())
+const SELECTION_NONCE_REGEX = /^[0-9a-f]{32}$/;
 
 // Length caps for strings arriving over IPC (defense against absurd payloads)
 const MAX_URL_LENGTH = 2048;
@@ -245,14 +273,27 @@ app.on('window-all-closed', () => {
 // unreachable controller cannot block quitting), then re-enters app.quit()
 let quitLogoutStarted = false;
 app.on('before-quit', (event) => {
-  if (omadaController && !quitLogoutStarted) {
+  // Invalidate any in-flight connect attempt (see connectGeneration)
+  connectGeneration++;
+  // Take ownership of a parked pending-selection controller too: it holds a
+  // live server session that deserves the same bounded logout on quit
+  const pending = pendingSiteSelection;
+  pendingSiteSelection = null;
+  if ((omadaController || pending) && !quitLogoutStarted) {
     quitLogoutStarted = true;
     event.preventDefault();
     const controller = omadaController;
     omadaController = null;
-    // Do not let the logout request delay quitting for more than 3 seconds
+    const logouts: Promise<void>[] = [];
+    if (controller) {
+      logouts.push(controller.logout());
+    }
+    if (pending) {
+      logouts.push(pending.controller.logout());
+    }
+    // Do not let the logout requests delay quitting for more than 3 seconds
     const deadline = new Promise<void>((resolve) => setTimeout(resolve, 3000));
-    Promise.race([controller.logout(), deadline]).finally(() => {
+    Promise.race([Promise.allSettled(logouts).then(() => undefined), deadline]).finally(() => {
       app.quit();
     });
   }
@@ -289,34 +330,153 @@ ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (event, payload: unknown): Promis
   }
 }); // End of the CONFIG_SAVE handler
 
+/**
+ * Best-effort release of a controller instance that lost its right to be the
+ * global one (superseded attempt, replaced predecessor, failed connect).
+ * logout() swallows network errors itself; this guard only exists so an
+ * unexpected rejection can never surface as an unhandled promise.
+ * @param {OmadaController} controller - The controller to log out and drop.
+ */
+function releaseController(controller: OmadaController): void {
+  controller.logout().catch((error) => {
+    console.warn('Error releasing a controller session:', error);
+  });
+}
+
+/**
+ * Creates the opaque one-time nonce that ties a pending site selection to the
+ * OMADA_CONNECT attempt that produced it: 16 random bytes, hex-encoded (32
+ * lowercase hex characters — see SELECTION_NONCE_REGEX).
+ * @returns {string} The freshly generated nonce.
+ */
+function createSelectionNonce(): string {
+  return randomBytes(16).toString('hex');
+}
+
+/**
+ * Discards the pending site-selection record, if any, releasing its parked
+ * controller (best-effort logout). Called when a newer connect supersedes the
+ * pending attempt, on an unconditional disconnect, and as a safety net on
+ * quit — once discarded, any later OMADA_SELECT_SITE or nonce-scoped
+ * disconnect call for that record is rejected as stale.
+ */
+function discardPendingSiteSelection(): void {
+  if (pendingSiteSelection) {
+    const pending = pendingSiteSelection;
+    pendingSiteSelection = null;
+    releaseController(pending.controller);
+  }
+}
+
 // Connect to Omada controller (the password is decrypted here in the main
 // process; the renderer is never involved in credential handling). Failures
 // are reported as stable error codes — never user-facing text — which the
 // renderer maps to its es/en i18n strings; `detail` carries the underlying
 // technical message when one exists.
+// Serialization (todo.md 3.12): the controller is created in a LOCAL variable
+// and installed globally only after authentication succeeds; an attempt whose
+// generation went stale while awaiting (a newer connect or a disconnect
+// started) is logged out and discarded, so a slow first attempt can never
+// clobber the session a later flow owns.
+// Multi-site (todo.md 1.11): the stored site id is offered to connect(); when
+// no site could be picked (several sites, no valid stored choice) the handler
+// parks the controller as a pending site selection — NOT installed globally —
+// and returns needsSiteSelection plus the authorized-site list and an opaque
+// nonce; the renderer completes the connection through OMADA_SELECT_SITE,
+// which requires that nonce while the record is still current.
 ipcMain.handle(IPC_CHANNELS.OMADA_CONNECT, async (event): Promise<ConnectionResult> => {
   assertTrustedIpcSender(event);
+  const generation = ++connectGeneration;
+  // A newer connect supersedes any site selection still pending from an
+  // earlier attempt: discard it (and release its parked controller) now
+  discardPendingSiteSelection();
   const config = getConnectionCredentials();
 
   if (!config.url || !config.username || !config.password) {
     return { success: false, error: 'configIncomplete' };
   }
 
+  const controller = new OmadaController(config.url, config.username, config.password);
   try {
-    omadaController = new OmadaController(config.url, config.username, config.password);
-    const connected = await omadaController.connect();
+    const outcome = await controller.connect(getStoredSiteId());
 
-    if (connected) {
-      return { success: true };
-    } else {
-      return { success: false, error: 'connectFailed' };
+    if (generation !== connectGeneration) {
+      // Superseded while authenticating: discard this attempt entirely
+      releaseController(controller);
+      return { success: false, error: 'connectionSuperseded' };
     }
+
+    // This attempt owns the session now: release any previously installed
+    // controller so repeated connects (e.g. reconnect after a settings save)
+    // cannot leak sessions
+    const previous = omadaController;
+    omadaController = null;
+    if (previous) {
+      releaseController(previous);
+    }
+
+    if (!outcome.siteSelected) {
+      // Park the controller as pending until the user picks a site: the
+      // eventual OMADA_SELECT_SITE call must echo this nonce and succeeds
+      // only while this exact record is still the current one
+      const nonce = createSelectionNonce();
+      pendingSiteSelection = { controller, generation, nonce };
+      return { success: false, needsSiteSelection: true, sites: outcome.sites, selectionNonce: nonce };
+    }
+
+    omadaController = controller;
+    return { success: true };
   } catch (error) {
     console.error('Error connecting to the Omada controller:', error);
+    // The login may have partially succeeded before the failure: log the
+    // local controller out best-effort (it was never installed globally)
+    releaseController(controller);
+    if (generation !== connectGeneration) {
+      return { success: false, error: 'connectionSuperseded' };
+    }
     const detail = error instanceof Error ? error.message : String(error);
     return { success: false, error: 'connectError', detail };
   }
 }); // End of the OMADA_CONNECT handler
+
+// Select a site on a multi-site controller, completing the specific pending
+// connection that returned needsSiteSelection. The id is format-checked here
+// and then exact-matched against the authorized-site list inside the pending
+// controller; the call must also echo the opaque nonce of the CURRENT pending
+// record — a call without a pending selection, with a non-matching nonce, or
+// after a newer connect/disconnect superseded the record is rejected, so a
+// delayed or out-of-order selection can never mutate a session it does not
+// own. The controller is installed globally only here, after the selection
+// succeeds; the chosen id is persisted so the next connect reuses it silently.
+ipcMain.handle(IPC_CHANNELS.OMADA_SELECT_SITE, async (event, siteId: unknown, nonce: unknown): Promise<ConnectionResult> => {
+  assertTrustedIpcSender(event);
+  if (typeof siteId !== 'string' || !SITE_ID_REGEX.test(siteId)) {
+    throw new Error('IPC call rejected: invalid site id format');
+  }
+  if (typeof nonce !== 'string' || !SELECTION_NONCE_REGEX.test(nonce)) {
+    throw new Error('IPC call rejected: invalid selection nonce format');
+  }
+  const pending = pendingSiteSelection;
+  if (!pending || pending.nonce !== nonce || pending.generation !== connectGeneration) {
+    // No selection is pending, or the caller does not own the current one
+    return { success: false, error: 'siteUnavailable' };
+  }
+  if (!pending.controller.selectSite(siteId)) {
+    return { success: false, error: 'siteUnavailable' };
+  }
+  // Selection complete: consume the pending record and install its controller
+  // globally. `previous` is null by construction (the connect that parked the
+  // record released its predecessor, and any later connect or disconnect
+  // would have invalidated the record) — released defensively regardless
+  pendingSiteSelection = null;
+  const previous = omadaController;
+  omadaController = pending.controller;
+  if (previous) {
+    releaseController(previous);
+  }
+  saveStoredSiteId(siteId);
+  return { success: true };
+}); // End of the OMADA_SELECT_SITE handler
 
 // Get access points
 ipcMain.handle(IPC_CHANNELS.OMADA_GET_APS, async (event) => {
@@ -352,13 +512,40 @@ ipcMain.handle(IPC_CHANNELS.OMADA_SET_WLAN, async (event, mac: unknown, wlanId: 
   return omadaController.setApWlanGroup(mac, wlanId);
 }); // End of the OMADA_SET_WLAN handler
 
-// Disconnect from controller (best-effort server-side logout, then drop
-// the controller reference; logout() swallows network errors itself)
-ipcMain.handle(IPC_CHANNELS.OMADA_DISCONNECT, async (event): Promise<void> => {
+// Disconnect from controller (best-effort server-side logout, then drop the
+// controller reference; logout() swallows network errors itself). Two modes:
+// - No argument: unconditional user-initiated disconnect — invalidates any
+//   in-flight connect, discards a pending site selection, and logs out the
+//   installed controller.
+// - With a selection nonce: ownership-scoped abort of a pending site
+//   selection — it acts only while the caller owns the CURRENT pending
+//   record, so a stale flow's cleanup can never log out a session that a
+//   newer connect installed or parked after superseding it.
+ipcMain.handle(IPC_CHANNELS.OMADA_DISCONNECT, async (event, nonce: unknown): Promise<void> => {
   assertTrustedIpcSender(event);
+  if (nonce !== undefined && (typeof nonce !== 'string' || !SELECTION_NONCE_REGEX.test(nonce))) {
+    throw new Error('IPC call rejected: invalid selection nonce format');
+  }
+  if (nonce !== undefined) {
+    const pending = pendingSiteSelection;
+    if (!pending || pending.nonce !== nonce || pending.generation !== connectGeneration) {
+      // Stale caller: it owns nothing that is installed or pending — no-op
+      return;
+    }
+    // Abort the owned pending selection: invalidate the generation (so the
+    // record can never be resurrected) and log its parked controller out
+    connectGeneration++;
+    pendingSiteSelection = null;
+    await pending.controller.logout();
+    return;
+  }
+  // Invalidate any in-flight connect attempt: were one to finish after this
+  // disconnect, it must be discarded, not installed (see connectGeneration)
+  connectGeneration++;
+  discardPendingSiteSelection();
   if (omadaController) {
     const controller = omadaController;
     omadaController = null;
     await controller.logout();
   }
-});
+}); // End of the OMADA_DISCONNECT handler

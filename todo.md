@@ -93,10 +93,11 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **What:** In the Omada API, statusCategory 0 = disconnected, 1 = connected, 2 = pending (adopting), 3 = heartbeat missed, 4 = isolated. Treating "pending" as online is questionable; "heartbeat missed" shown as plain offline also loses information.
 - **Fix:** Verify the categories against the controller and show distinct states (at minimum a different color for pending/heartbeat-missed). *Needs verification against a live controller before changing.*
 
-### 🟡 1.11 Multi-site controllers: first site is silently picked
+### ✅ 1.11 Multi-site controllers: first site is silently picked
 - **Where:** `src/main/omada-api.ts` — `resolveSiteId()` (~line 85): `this.siteId = sites[0].id`.
 - **What:** If the account can see several sites, the app silently manages whichever site the API lists first — the user gets no choice and no indication which site they're editing. (Pagination is capped at 100 sites; fine in practice.)
 - **Fix:** Add `siteId` to config and expose a site selector when `sites.length > 1`; reuse the stored id only if it is still in the authorized-site list; auto-select only when exactly one site exists.
+- **Done:** `OmadaController.connect(preferredSiteId?)` now loads the authorized sites (`loadSites()`, ids strict / names normalized to the id) and never picks silently: it auto-selects only when exactly one site exists, reuses the stored `config.siteId` only when still in the authorized list, and otherwise returns `needsSiteSelection` + the site list through `OMADA_CONNECT`; the renderer shows a site-selection modal (`showSiteSelection()` — one button per site, focus trap/inert/Escape like the other modals, cancel returns to disconnected) and completes via the new `OMADA_SELECT_SITE` handler (sender-asserted, `SITE_ID_REGEX` format guard, exact-match against the authorized list in `selectSite()`), which persists the choice via `saveStoredSiteId()` (dropped by `saveConfig()` when the URL changes) so the next connect reuses it without asking.
 
 ---
 
@@ -201,10 +202,11 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 ### 🟢 3.11 Dev environment note (Dropbox)
 - `node_modules/.bin` is currently **empty** — Dropbox sync strips npm's symlinks, so `npm run build` fails with `tsc: command not found` until `npm install` is re-run. Consider moving the working copy outside Dropbox or excluding `node_modules` from sync; re-run `npm install` after any sync-related breakage. (Type-check verified clean today via `node node_modules/typescript/bin/tsc --noEmit`.)
 
-### 🟢 3.12 Serialize connection attempts
+### ✅ 3.12 Serialize connection attempts
 - **Where:** `src/main/index.ts` `OMADA_CONNECT`; `src/renderer/renderer.ts` `connect()`/`saveSettings()`.
 - **Why:** Settings stay usable while connecting; saving can start a second connect while the first is in flight. The second IPC call overwrites the global `omadaController`, so the first flow's `loadData()` can hit a not-yet-authenticated controller.
 - **Fix:** Serialize attempts in the main process (create the controller in a local variable, assign globally only after successful auth, discard stale generations); disable Settings/Save during connect.
+- **Done:** main-process side (the missing part — phase 6's renderer flags already serialized the renderer's own operations, and `isOperationInProgress()` already blocked Save during connect): `OMADA_CONNECT` now builds the controller in a LOCAL variable, bumps/captures a `connectGeneration` counter, and installs the controller globally only after `connect()` succeeds AND the generation is still current — a stale attempt (newer connect or disconnect meanwhile, `OMADA_DISCONNECT`/`before-quit` bump the counter too) is logged out and reported as `connectionSuperseded` (new i18n-mapped error code), and any replaced predecessor is released via `releaseController()`; renderer side, the Settings button is additionally disabled while `connect()` is in flight (re-enabled generation-checked in its `finally`) and `openSettings()` guards on `isConnecting`.
 
 ### ✅ 3.13 Runtime validation of API responses
 - **Where:** `src/main/omada-api.ts` — results are trusted via TypeScript casts and immediately dereferenced (`name.localeCompare`, `ssidList.map`).
