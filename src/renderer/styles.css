@@ -380,6 +380,12 @@ body {
   color: var(--text-muted);
 }
 
+/* Muted placeholder text inside the selection detail (replaces the former
+   inline style attribute, so the CSP can use style-src 'self') */
+.selection-detail .muted-text {
+  color: var(--text-muted);
+}
+
 /* Modals */
 .modal-overlay {
   position: fixed;

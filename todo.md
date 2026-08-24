@@ -81,10 +81,11 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Fix:** Add a `logout()` method calling `POST /{omadacId}/api/v2/logout` and invoke it from the disconnect handler (and on app quit); clear cookies, token, and site id in the controller instance.
 - **Done:** `OmadaController.logout()` POSTs `/{omadacId}/api/v2/logout` best-effort (network errors are logged and swallowed) and clears cookies, CSRF token, and site id; the `OMADA_DISCONNECT` handler awaits it before dropping the reference, and a `before-quit` handler in `index.ts` runs it on app quit (bounded to 3 s via `Promise.race`, then re-enters `app.quit()`).
 
-### 🟡 1.9 Unescaped values interpolated into HTML attributes
+### ✅ 1.9 Unescaped values interpolated into HTML attributes
 - **Where:** `src/renderer/renderer.ts` — `renderApList()` (`data-mac="${ap.mac}"`, ~line 346) and `renderWlanList()` (`data-wlan-id="${wlan.wlanId}"`, ~line 406).
 - **What:** Text content is escaped via `escapeHtml()`, but attribute values are not (and `escapeHtml()` doesn't escape quotes anyway). Data comes from the controller API, so a compromised/malicious controller could inject markup. CSP (`script-src 'self'`) blocks script execution, but HTML/attribute injection is still possible.
 - **Fix:** Stop building HTML strings for list items: create elements with `document.createElement`, set labels via `textContent`, assign ids via `element.dataset`. Additionally validate MAC/WLAN-id formats in both renderer and main.
+- **Done:** all rendering now uses DOM APIs — `createApListItem()`/`createWlanListItem()`/`createEmptyState()` build nodes with `document.createElement`, labels via `textContent`, ids via `element.dataset`, and `renderApList()`/`renderWlanList()`/`updateSelectionInfo()`/`showEmptyStates()` insert them with `replaceChildren()` (no `innerHTML` left; `escapeHtml()` deleted); MAC/WLAN-id formats are validated on both sides of the boundary: `isValidMac()`/`isValidWlanId()` in the renderer (entries filtered on `loadData()`, re-checked in `applyChange()`) and `MAC_REGEX`/`WLAN_ID_REGEX` in the main-process `OMADA_SET_WLAN` handler (see 2.6).
 
 ### 🟡 1.10 Online status mapping may mislabel APs
 - **Where:** `src/renderer/renderer.ts` — `renderApList()` (~line 341): `isOnline = statusCategory === 1 || statusCategory === 2`.
@@ -106,15 +107,17 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Fix:** Encrypt the password with Electron `safeStorage` (Keychain-backed on macOS) and store only the blob; migrate the old plaintext value once on first load. Note: this breaks config compatibility with the Python version — decide whether that still matters.
 - **Done:** the password is stored as a base64 `safeStorage` blob (`encryptedPassword`) and decrypted only in the main process (`getDecryptedPassword()` in `config.ts`); a legacy plaintext `password` field is migrated once on first load (encrypted, file rewritten, plaintext dropped — `migrateLegacyPassword()`), and when `safeStorage.isEncryptionAvailable()` is false the plaintext is kept with a console warning (documented fallback) instead of crashing.
 
-### 🟡 2.2 `sandbox: false` is no longer necessary
+### ✅ 2.2 `sandbox: false` is no longer necessary
 - **Where:** `src/main/index.ts` — `webPreferences.sandbox: false` with the comment "Required for preload to work properly with contextBridge".
 - **What:** The comment is inaccurate — since Electron 20, sandboxed preload scripts can use `contextBridge` + `ipcRenderer.invoke` fine. Disabling the sandbox needlessly enlarges the attack surface (and amplifies 1.9).
 - **Fix:** Set `sandbox: true`, keep `contextIsolation: true` / `nodeIntegration: false`, and verify the preload still works.
+- **Done:** `sandbox: true` set (contextIsolation/nodeIntegration untouched); `preload.ts` was made sandbox-compatible by removing its one runtime dependency on a project file — the `IPC_CHANNELS` value import from `shared/types` (a sandboxed preload's polyfilled `require()` cannot load project files) is now a local copy compile-time-checked against the shared table via `typeof SHARED_IPC_CHANNELS`, and every other import is `import type`; the compiled `dist/main/preload.js` only `require`s `electron`, which the sandbox provides.
 
-### 🟡 2.3 Certificate trust is all-or-nothing for the configured host
+### ✅ 2.3 Certificate trust is all-or-nothing for the configured host *(part a done; part b deferred)*
 - **Where:** `src/main/index.ts` — `setCertificateVerifyProc` (accepts *any* cert for the configured hostname, ignoring fingerprint/port) and the `certificate-error` handler (`url.startsWith(configUrl)` — a prefix match, so `https://192.168.1.1` also matches `https://192.168.1.100`, and `https://controller` matches `https://controller.attacker.example`).
 - **What:** Necessary for self-signed certs, but it silently accepts a MITM cert too — an interceptor can capture the login credentials and alter API responses.
 - **Fix:** (a) In `certificate-error`, compare parsed origins (`new URL(configUrl).origin === new URL(url).origin`) instead of `startsWith` — or remove the handler once (b) is done. (b) Trust-on-first-use pinning: store `request.certificate.fingerprint256` after explicit first-use confirmation and return `-3` on any mismatch.
+- **Done (a):** the `certificate-error` handler now compares parsed origins (`new URL(configUrl).origin === new URL(url).origin`) inside try/catch (a malformed URL falls through to rejection); the `setCertificateVerifyProc` hostname check is kept (its `request` object exposes no port, so origin-level scoping is impossible there) but narrowed after Codex review: the bypass now also requires the verification failure to be a self-signed class (`isSelfSignedVerificationResult()` — authority-invalid, name-mismatch, or expired; revoked/weak-signature certs are never bypassed). **(b) trust-on-first-use pinning remains deferred** — it needs a UX decision on the first-use confirmation dialog (tracked in PROGRESS.md's deferred list).
 
 ### ✅ 2.4 Config file read synchronously on every TLS verification
 - **Where:** `src/main/index.ts` — `setCertificateVerifyProc` calls `getConfigValue('url')`, which does `fs.readFileSync` + `JSON.parse` of the config file on **every** HTTPS request the app makes.
@@ -127,10 +130,11 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Fix:** Have the load IPC return `{url, username, language, hasPassword}`; add a separate main-process-only path that updates the password when the user actually types a new one (pairs with 1.14). Login stays entirely in the main process.
 - **Done:** `CONFIG_LOAD` (and preload `loadConfig()`) returns the sanitized `RendererConfig` `{url, username, language, hasPassword}` built by `getRendererConfig()`; the settings dialog leaves the password input empty with an i18n'd `passwordUnchanged` placeholder ("(sin cambios)"/"(unchanged)") when `hasPassword` is true, and connect/auto-connect decrypt the password exclusively in the main process (`getConnectionCredentials()`).
 
-### 🟡 2.6 IPC handlers trust sender and argument shapes
+### ✅ 2.6 IPC handlers trust sender and argument shapes
 - **Where:** `src/main/index.ts` — all `ipcMain.handle` calls (~lines 108–168).
 - **What:** TypeScript annotations don't validate data arriving over IPC at runtime. A compromised renderer could overwrite config with arbitrary values or pass forged MAC/WLAN ids.
 - **Fix:** Validate `event.senderFrame.url` is the packaged `file:` URL; add runtime guards for each payload (types, string lengths, MAC/id formats, HTTPS-only URL).
+- **Done:** every `ipcMain.handle` now calls `assertTrustedIpcSender()` first — `isTrustedIpcSender()` requires a sender frame whose URL is `file:` and, decoded via `fileURLToPath()`, resolves to exactly the packaged `dist/renderer/index.html` (path comparison avoids percent-encoding false negatives); `CONFIG_SAVE` shape-checks its payload with `isValidConfigSavePayload()` (object, non-empty string url/username with 2048/256 length caps, language enum, optional string password capped at 512) returning `saveFailed` on violation, and `OMADA_SET_WLAN` throws on MAC/WLAN ids not matching `MAC_REGEX`/`WLAN_ID_REGEX` (same patterns as the renderer); the HTTPS-only URL rule stays enforced in `saveConfig()` → `normalizeControllerUrl()`.
 
 ### ✅ 2.7 Config file permissions and non-atomic writes
 - **Where:** `src/main/config.ts` — `saveConfig()` / `loadConfig()`.
@@ -201,9 +205,10 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Fix:** Add small runtime validators (strings, arrays, optional fields); normalize absent names/SSID lists or fail with an explicit "unsupported API response" error.
 - **Done:** added `validateAccessPoints()` and `validateWlanGroups()`, plus site-list validation in `resolveSiteId()`: they throw an explicit `Unsupported API response (devices/WLANs/sites)` error when the payload isn't the expected array, when an entry isn't an object, or when a required identifier (`mac`, `wlanId`, site `id`) is missing, and normalize only optional display fields (missing names to the MAC or `''`, missing SSID lists to `[]`).
 
-### 🟢 3.14 Tighten the CSP
+### ✅ 3.14 Tighten the CSP
 - **Where:** `src/renderer/index.html` (~line 6) allows `style-src 'unsafe-inline'` solely because `updateSelectionInfo()` emits inline `style` attributes.
 - **Fix:** Replace the inline muted-color styles with a CSS class, then use `style-src 'self'`; add `object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'`.
+- **Done:** the muted spans in `updateSelectionInfo()` now use the new `.selection-detail .muted-text` class in `styles.css` (the DOM rewrite from 1.9 removed every inline `style` attribute — none remain anywhere in HTML or TS), and the CSP is now `default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'` (`img-src ... data:` added after Codex review so the `data:` SVG select arrow in `styles.css` keeps rendering).
 
 ### 🟢 3.15 Scope macOS title-bar styling to macOS
 - **Where:** `src/main/index.ts` (~line 23) `titleBarStyle: 'hiddenInset'`; `src/renderer/styles.css` (~lines 63–83) fixed 80 px traffic-light padding.

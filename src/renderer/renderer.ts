@@ -326,159 +326,248 @@ function setStatus(status: 'disconnected' | 'connecting' | 'connected' | 'error'
 } // End of function setStatus()
 
 // ============================================================================
+// Boundary Validation
+// ============================================================================
+
+// Format guards for identifiers crossing the IPC boundary (from the
+// controller via the main process, and back when applying a change). The main
+// process enforces the same patterns (src/main/index.ts — keep both in sync).
+const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
+const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Validates a MAC address format (six hex pairs separated by ':' or '-').
+ * @param {unknown} mac - Candidate MAC address.
+ * @returns {mac is string} True when the value is a well-formed MAC string.
+ */
+function isValidMac(mac: unknown): mac is string {
+  return typeof mac === 'string' && MAC_REGEX.test(mac);
+}
+
+/**
+ * Validates a WLAN group id format (alphanumeric Omada object id, plus '_'/'-').
+ * @param {unknown} id - Candidate WLAN group id.
+ * @returns {id is string} True when the value is a well-formed WLAN id string.
+ */
+function isValidWlanId(id: unknown): id is string {
+  return typeof id === 'string' && WLAN_ID_REGEX.test(id);
+}
+
+// ============================================================================
 // List Rendering
 // ============================================================================
 
-function renderApList() {
+/**
+ * Creates an empty-state block (a muted message) for a list panel. Built with
+ * DOM APIs, never HTML strings.
+ * @param {string} message - The message to display.
+ * @returns {HTMLElement} The empty-state element.
+ */
+function createEmptyState(message: string): HTMLElement {
+  const container = document.createElement('div');
+  container.className = 'empty-state';
+  const paragraph = document.createElement('p');
+  paragraph.textContent = message;
+  container.appendChild(paragraph);
+  return container;
+}
+
+/**
+ * Builds one AP list item entirely with DOM APIs (createElement/textContent/
+ * dataset — no HTML strings), so values coming from the controller can never
+ * be interpreted as markup. The click handler toggles the AP selection.
+ * @param {AccessPoint} ap - The access point to render.
+ * @returns {HTMLElement} The list-item element with its click handler attached.
+ */
+function createApListItem(ap: AccessPoint): HTMLElement {
+  const isOnline = ap.statusCategory === 1 || ap.statusCategory === 2;
+  const isSelected = selectedAp?.mac === ap.mac;
+
+  const item = document.createElement('div');
+  item.className = isSelected ? 'list-item selected' : 'list-item';
+  item.dataset.mac = ap.mac;
+
+  const radio = document.createElement('div');
+  radio.className = 'item-radio';
+
+  const content = document.createElement('div');
+  content.className = 'item-content';
+
+  const header = document.createElement('div');
+  header.className = 'item-header';
+
+  const status = document.createElement('span');
+  status.className = isOnline ? 'item-status online' : 'item-status offline';
+  status.textContent = '●';
+
+  const name = document.createElement('span');
+  name.className = 'item-name';
+  name.textContent = ap.name;
+
+  const subtitle = document.createElement('div');
+  subtitle.className = 'item-subtitle';
+  subtitle.textContent = `${t('wlanLabel')}: ${ap.wlanGroup || t('unassigned')}`;
+
+  header.appendChild(status);
+  header.appendChild(name);
+  content.appendChild(header);
+  content.appendChild(subtitle);
+  item.appendChild(radio);
+  item.appendChild(content);
+
+  item.addEventListener('click', () => {
+    // Toggle selection: unselect if already selected
+    selectedAp = selectedAp?.mac === ap.mac ? null : ap;
+    renderApList();
+    updateSelectionInfo();
+  });
+
+  return item;
+} // End of function createApListItem()
+
+/**
+ * Builds one WLAN group list item entirely with DOM APIs (createElement/
+ * textContent/dataset — no HTML strings). The click handler toggles the WLAN
+ * group selection.
+ * @param {WlanGroup} wlan - The WLAN group to render.
+ * @returns {HTMLElement} The list-item element with its click handler attached.
+ */
+function createWlanListItem(wlan: WlanGroup): HTMLElement {
+  const isSelected = selectedWlan?.wlanId === wlan.wlanId;
+  const ssids = wlan.ssidList.map(s => s.ssidName);
+  const ssidPreview = ssids.length > 3
+    ? `${ssids.slice(0, 3).join(', ')} +${ssids.length - 3} ${t('more')}`
+    : ssids.join(', ');
+
+  const item = document.createElement('div');
+  item.className = isSelected ? 'list-item selected' : 'list-item';
+  item.dataset.wlanId = wlan.wlanId;
+
+  const radio = document.createElement('div');
+  radio.className = 'item-radio';
+
+  const content = document.createElement('div');
+  content.className = 'item-content';
+
+  const header = document.createElement('div');
+  header.className = 'item-header';
+
+  const name = document.createElement('span');
+  name.className = 'item-name';
+  name.textContent = wlan.wlanName;
+
+  const subtitle = document.createElement('div');
+  subtitle.className = 'item-subtitle';
+  subtitle.textContent = ssidPreview || t('noSsids');
+
+  header.appendChild(name);
+  content.appendChild(header);
+  content.appendChild(subtitle);
+  item.appendChild(radio);
+  item.appendChild(content);
+
+  item.addEventListener('click', () => {
+    // Toggle selection: unselect if already selected
+    selectedWlan = selectedWlan?.wlanId === wlan.wlanId ? null : wlan;
+    renderWlanList();
+    updateSelectionInfo();
+  });
+
+  return item;
+} // End of function createWlanListItem()
+
+/**
+ * Renders the access-point list (applying the current filter) using DOM APIs.
+ */
+function renderApList(): void {
   const filteredAps = accessPoints.filter(ap =>
     ap.name.toLowerCase().includes(apFilterText.toLowerCase()) ||
     (ap.wlanGroup && ap.wlanGroup.toLowerCase().includes(apFilterText.toLowerCase()))
   );
 
   if (accessPoints.length === 0) {
-    apList.innerHTML = `
-      <div class="empty-state">
-        <p>${t('noAccessPoints')}</p>
-      </div>
-    `;
+    apList.replaceChildren(createEmptyState(t('noAccessPoints')));
     return;
   }
 
   if (filteredAps.length === 0) {
-    apList.innerHTML = `
-      <div class="empty-state">
-        <p>${t('noResultsFor')} "${escapeHtml(apFilterText)}"</p>
-      </div>
-    `;
+    apList.replaceChildren(createEmptyState(`${t('noResultsFor')} "${apFilterText}"`));
     return;
   }
 
-  apList.innerHTML = filteredAps.map(ap => {
-    const isOnline = ap.statusCategory === 1 || ap.statusCategory === 2;
-    const isSelected = selectedAp?.mac === ap.mac;
-    const wlanDisplay = ap.wlanGroup || t('unassigned');
+  apList.replaceChildren(...filteredAps.map(createApListItem));
+} // End of function renderApList()
 
-    return `
-      <div class="list-item ${isSelected ? 'selected' : ''}" data-mac="${ap.mac}">
-        <div class="item-radio"></div>
-        <div class="item-content">
-          <div class="item-header">
-            <span class="item-status ${isOnline ? 'online' : 'offline'}">${isOnline ? '●' : '●'}</span>
-            <span class="item-name">${escapeHtml(ap.name)}</span>
-          </div>
-          <div class="item-subtitle">${t('wlanLabel')}: ${escapeHtml(wlanDisplay)}</div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Add click handlers
-  apList.querySelectorAll('.list-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const mac = item.getAttribute('data-mac');
-      const ap = accessPoints.find(a => a.mac === mac);
-      if (ap) {
-        // Toggle selection: unselect if already selected
-        selectedAp = selectedAp?.mac === ap.mac ? null : ap;
-        renderApList();
-        updateSelectionInfo();
-      }
-    });
-  });
-}
-
-function renderWlanList() {
+/**
+ * Renders the WLAN group list (applying the current filter) using DOM APIs.
+ */
+function renderWlanList(): void {
   const filteredWlans = wlanGroups.filter(wlan =>
     wlan.wlanName.toLowerCase().includes(wlanFilterText.toLowerCase()) ||
     wlan.ssidList.some(s => s.ssidName.toLowerCase().includes(wlanFilterText.toLowerCase()))
   );
 
   if (wlanGroups.length === 0) {
-    wlanList.innerHTML = `
-      <div class="empty-state">
-        <p>${t('noWlanGroups')}</p>
-      </div>
-    `;
+    wlanList.replaceChildren(createEmptyState(t('noWlanGroups')));
     return;
   }
 
   if (filteredWlans.length === 0) {
-    wlanList.innerHTML = `
-      <div class="empty-state">
-        <p>${t('noResultsFor')} "${escapeHtml(wlanFilterText)}"</p>
-      </div>
-    `;
+    wlanList.replaceChildren(createEmptyState(`${t('noResultsFor')} "${wlanFilterText}"`));
     return;
   }
 
-  wlanList.innerHTML = filteredWlans.map(wlan => {
-    const isSelected = selectedWlan?.wlanId === wlan.wlanId;
-    const ssids = wlan.ssidList.map(s => s.ssidName);
-    const ssidPreview = ssids.length > 3
-      ? `${ssids.slice(0, 3).join(', ')} +${ssids.length - 3} ${t('more')}`
-      : ssids.join(', ');
+  wlanList.replaceChildren(...filteredWlans.map(createWlanListItem));
+} // End of function renderWlanList()
 
-    return `
-      <div class="list-item ${isSelected ? 'selected' : ''}" data-wlan-id="${wlan.wlanId}">
-        <div class="item-radio"></div>
-        <div class="item-content">
-          <div class="item-header">
-            <span class="item-name">${escapeHtml(wlan.wlanName)}</span>
-          </div>
-          <div class="item-subtitle">${escapeHtml(ssidPreview) || t('noSsids')}</div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Add click handlers
-  wlanList.querySelectorAll('.list-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const wlanId = item.getAttribute('data-wlan-id');
-      const wlan = wlanGroups.find(w => w.wlanId === wlanId);
-      if (wlan) {
-        // Toggle selection: unselect if already selected
-        selectedWlan = selectedWlan?.wlanId === wlan.wlanId ? null : wlan;
-        renderWlanList();
-        updateSelectionInfo();
-      }
-    });
-  });
-}
-
-function updateSelectionInfo() {
-  if (selectedAp && selectedWlan) {
-    selectionInfo.innerHTML = `
-      <div class="selection-detail">
-        <span class="ap-name">${escapeHtml(selectedAp.name)}</span>
-        <span class="arrow">→</span>
-        <span class="wlan-name">${escapeHtml(selectedWlan.wlanName)}</span>
-      </div>
-    `;
-    applyBtn.disabled = false;
-  } else if (selectedAp) {
-    selectionInfo.innerHTML = `
-      <div class="selection-detail">
-        <span class="ap-name">${escapeHtml(selectedAp.name)}</span>
-        <span class="arrow">→</span>
-        <span style="color: var(--text-muted)">${t('selectWlan')}</span>
-      </div>
-    `;
+/**
+ * Rebuilds the selection info bar with DOM APIs (no HTML strings, no inline
+ * style attributes — muted parts use the .muted-text CSS class, which keeps
+ * the CSP free of style-src 'unsafe-inline') and enables the Apply button
+ * only when both an AP and a WLAN group are selected.
+ */
+function updateSelectionInfo(): void {
+  if (!selectedAp && !selectedWlan) {
+    const placeholder = document.createElement('span');
+    placeholder.className = 'selection-placeholder';
+    placeholder.textContent = t('selectApAndWlan');
+    selectionInfo.replaceChildren(placeholder);
     applyBtn.disabled = true;
-  } else if (selectedWlan) {
-    selectionInfo.innerHTML = `
-      <div class="selection-detail">
-        <span style="color: var(--text-muted)">${t('selectAp')}</span>
-        <span class="arrow">→</span>
-        <span class="wlan-name">${escapeHtml(selectedWlan.wlanName)}</span>
-      </div>
-    `;
-    applyBtn.disabled = true;
-  } else {
-    selectionInfo.innerHTML = `<span class="selection-placeholder">${t('selectApAndWlan')}</span>`;
-    applyBtn.disabled = true;
+    return;
   }
-}
+
+  const detail = document.createElement('div');
+  detail.className = 'selection-detail';
+
+  const apPart = document.createElement('span');
+  if (selectedAp) {
+    apPart.className = 'ap-name';
+    apPart.textContent = selectedAp.name;
+  } else {
+    apPart.className = 'muted-text';
+    apPart.textContent = t('selectAp');
+  }
+
+  const arrow = document.createElement('span');
+  arrow.className = 'arrow';
+  arrow.textContent = '→';
+
+  const wlanPart = document.createElement('span');
+  if (selectedWlan) {
+    wlanPart.className = 'wlan-name';
+    wlanPart.textContent = selectedWlan.wlanName;
+  } else {
+    wlanPart.className = 'muted-text';
+    wlanPart.textContent = t('selectWlan');
+  }
+
+  detail.appendChild(apPart);
+  detail.appendChild(arrow);
+  detail.appendChild(wlanPart);
+  selectionInfo.replaceChildren(detail);
+
+  applyBtn.disabled = !(selectedAp && selectedWlan);
+} // End of function updateSelectionInfo()
 
 // ============================================================================
 // Connection
@@ -586,8 +675,23 @@ async function loadData(): Promise<void> {
     window.omadaAPI.getWlanGroups()
   ]);
 
-  accessPoints = aps;
-  wlanGroups = wlans;
+  // Keep only entries whose identifiers have a valid format: they cross the
+  // IPC boundary again when a change is applied, and a malformed id coming
+  // from a compromised controller must never reach the UI or the main process
+  accessPoints = aps.filter(ap => {
+    if (!isValidMac(ap.mac)) {
+      console.warn('Ignoring access point with invalid MAC format:', ap.mac);
+      return false;
+    }
+    return true;
+  });
+  wlanGroups = wlans.filter(wlan => {
+    if (!isValidWlanId(wlan.wlanId)) {
+      console.warn('Ignoring WLAN group with invalid id format:', wlan.wlanId);
+      return false;
+    }
+    return true;
+  });
 
   // Reset selection
   selectedAp = null;
@@ -598,17 +702,12 @@ async function loadData(): Promise<void> {
   updateSelectionInfo();
 } // End of function loadData()
 
-function showEmptyStates() {
-  apList.innerHTML = `
-    <div class="empty-state">
-      <p>${t('connectToSeeAPs')}</p>
-    </div>
-  `;
-  wlanList.innerHTML = `
-    <div class="empty-state">
-      <p>${t('connectToSeeWLANs')}</p>
-    </div>
-  `;
+/**
+ * Shows the initial "connect to see data" empty states in both panels.
+ */
+function showEmptyStates(): void {
+  apList.replaceChildren(createEmptyState(t('connectToSeeAPs')));
+  wlanList.replaceChildren(createEmptyState(t('connectToSeeWLANs')));
 }
 
 // ============================================================================
@@ -787,8 +886,22 @@ function showConfirm(message: string): Promise<boolean> {
 // Apply Change
 // ============================================================================
 
-async function applyChange() {
+/**
+ * Applies the selected WLAN group to the selected AP after user confirmation.
+ * The identifiers are format-checked before crossing the IPC boundary (the
+ * main process re-validates them too).
+ * @returns {Promise<void>}
+ */
+async function applyChange(): Promise<void> {
   if (!selectedAp || !selectedWlan) return;
+
+  // Belt-and-braces: loadData() already filtered malformed ids, but never
+  // send an invalid MAC or WLAN id over IPC
+  if (!isValidMac(selectedAp.mac) || !isValidWlanId(selectedWlan.wlanId)) {
+    console.error('Refusing to apply change: invalid MAC or WLAN id format');
+    alert(t('changeError'));
+    return;
+  }
 
   const confirmed = await showConfirm(
     tFormat('confirmAssign', { wlan: selectedWlan.wlanName, ap: selectedAp.name })
@@ -817,17 +930,7 @@ async function applyChange() {
     applyBtn.textContent = t('apply');
     updateSelectionInfo();
   }
-}
-
-// ============================================================================
-// Utilities
-// ============================================================================
-
-function escapeHtml(text: string): string {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
+} // End of function applyChange()
 
 // ============================================================================
 // Event Listeners

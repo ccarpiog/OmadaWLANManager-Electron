@@ -9,7 +9,7 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 | 1 | Renderer/main bug fixes: 1.1, 1.4, 1.5, 1.12, 1.13, 1.14 (minimal renderer-side), 1.15, 3.9 | **done** |
 | 2 | API client robustness (`omada-api.ts`): 1.3, 1.6, 1.7, 1.8, 3.13 | **done** |
 | 3 | Config & credential security: 2.1, 2.4, 2.5 (+1.14 final flag mechanism), 2.7, 3.6 | **done** |
-| 4 | Renderer/IPC/cert hardening: 1.9, 2.2, 2.3a (origin compare), 2.6, 3.14 | pending |
+| 4 | Renderer/IPC/cert hardening: 1.9, 2.2, 2.3a (origin compare), 2.6, 3.14 | **done** |
 | 5 | Packaging & platform: 1.2, 3.5, 3.15 | pending |
 | 6 | UX improvements: 3.1, 3.2, 3.7, 3.8 | pending |
 | 7 | Connection flow & multi-site: 1.11, 3.12 | pending |
@@ -54,9 +54,21 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 - Codex review: `.claude/reviews/phase3-aggregate.md` — 1 high (legacy plaintext file perms when safeStorage unavailable), 1 low (corrupt blob reported as usable). Both fixed by orchestrator before commit (`tightenPermissions()` helper; decryptability-based `hasPassword` + save check).
 - Note: `OMADA_CONNECT`'s hardcoded Spanish error strings predate this work and were left as-is (out of scope; candidate for phase 6 polish).
 
+### Phase 4 — renderer/IPC/cert hardening (2026-08-24)
+- Items 1.9, 2.2, 2.3a, 2.6, 3.14 implemented in `src/renderer/renderer.ts`, `src/renderer/index.html`, `src/renderer/styles.css`, `src/main/index.ts`, `src/main/preload.ts`; details per-item in `todo.md`.
+- Key mechanics: list/selection/empty-state DOM built via `createElement`/`textContent`/`dataset` + `replaceChildren` (helpers `createApListItem`/`createWlanListItem`/`createEmptyState`; `escapeHtml` deleted); MAC/WLAN-id regexes enforced renderer- and main-side (kept in sync — see comments); `sandbox: true` with a sandbox-safe preload (no runtime require of project files; `IPC_CHANNELS` local copy typed `typeof SHARED_IPC_CHANNELS` for drift detection); `certificate-error` compares parsed origins in try/catch; every `ipcMain.handle` starts with `assertTrustedIpcSender()` (sender frame must resolve to the packaged index.html) and `CONFIG_SAVE`/`OMADA_SET_WLAN` payloads are shape-guarded; CSP: `default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'`.
+- Acceptance: `npm run build` exit 0 (verified twice, incl. after review fixes); no `innerHTML`/`insertAdjacentHTML`/inline styles in renderer (rg-verified); compiled preload requires only `electron`.
+- Codex review: `.claude/reviews/phase4-aggregate.md` — 1 P2 (verify-proc accepts any port on the configured hostname) + 1 CSP regression (`data:` SVG select arrow blocked). Both addressed by orchestrator before commit: CSP got `img-src 'self' data:`; the verify-proc bypass was narrowed to self-signed failure classes (`isSelfSignedVerificationResult()`). Full origin scoping in the verify proc is IMPOSSIBLE (Electron's request has no port) and the bypass cannot be removed (the API client uses `net.request`, which `certificate-error` does not cover) — residual same-host-other-port risk documented, closes only with deferred 2.3b TOFU pinning.
+- Not GUI-tested: the sandboxed preload was verified statically (compiled output requires only `electron`); a quick `npm start` smoke test is recommended when a display is available.
+
+## Open risks
+
+- Verify-proc cert bypass is hostname-scoped, not origin-scoped (Electron API limitation, see phase 4 notes); fully closed only by deferred item 2.3b (TOFU pinning).
+- Phase 4's sandbox + IPC hardening has not had a live GUI smoke test (`npm start`).
+
 ## Next action
 
-Run Phase 4: spawn one worker for renderer/IPC/cert hardening — todo.md items 1.9 (build list items with `document.createElement`/`textContent`/`dataset` instead of HTML strings; validate MAC/WLAN-id formats in renderer and main), 2.2 (`sandbox: true`, verify preload still works via contextBridge + ipcRenderer.invoke), 2.3a (in `certificate-error` compare parsed origins instead of `startsWith`; keep `setCertificateVerifyProc` hostname check but note 2.3b TOFU pinning stays deferred), 2.6 (validate `event.senderFrame.url` is the packaged file: URL in every `ipcMain.handle`; runtime-guard payload shapes — types, lengths, MAC/id formats), 3.14 (tighten CSP: replace inline styles from `updateSelectionInfo()` with a CSS class, then `style-src 'self'`, add object-src/base-uri/frame-src/form-action 'none'). Then verify build, Codex-review aggregate, commit, push.
+Run Phase 5: spawn one worker for packaging & platform — todo.md items 1.2 ("Windows packaging references a missing icon file", 🔴), 3.5 ("Trim the packaged app", 🟢), 3.15 ("Scope macOS title-bar styling to macOS", 🟢: `titleBarStyle: 'hiddenInset'` + the 80 px traffic-light padding in `styles.css` must apply on darwin only). Worker reads those items in `todo.md` for full instructions. Then verify build, Codex-review aggregate, commit, push. (Note: packaging changes touch `package.json` build config; the worker cannot run a full `electron-builder` package as verification — `npm run build` + config inspection is the acceptance bar unless the user asks for a packaging run.)
 
 ## Key paths
 

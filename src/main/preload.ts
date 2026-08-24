@@ -1,13 +1,30 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import {
+import type {
   ConfigSavePayload,
   ConfigSaveResult,
   ConnectionResult,
   AccessPoint,
   WlanGroup,
-  IPC_CHANNELS,
+  IPC_CHANNELS as SHARED_IPC_CHANNELS,
   RendererConfig
 } from '../shared/types';
+
+// Local copy of the IPC channel names. This preload runs sandboxed
+// (webPreferences.sandbox: true), and a sandboxed preload's polyfilled
+// require() can only load a small set of built-in modules — never local
+// project files — so the values in shared/types.ts cannot be imported at
+// runtime here (all imports above are type-only and erased at compile time).
+// The `typeof SHARED_IPC_CHANNELS` annotation checks this copy against the
+// shared table, so any drift in names or values fails the build.
+const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
+  CONFIG_LOAD: 'config:load',
+  CONFIG_SAVE: 'config:save',
+  OMADA_CONNECT: 'omada:connect',
+  OMADA_GET_APS: 'omada:get-aps',
+  OMADA_GET_WLANS: 'omada:get-wlans',
+  OMADA_SET_WLAN: 'omada:set-wlan',
+  OMADA_DISCONNECT: 'omada:disconnect',
+};
 
 // Expose a safe API to the renderer process
 contextBridge.exposeInMainWorld('omadaAPI', {
