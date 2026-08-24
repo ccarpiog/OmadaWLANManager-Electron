@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron';
 import * as path from 'path';
-import { loadConfig, saveConfig, getConfigValue } from './config';
+import { getConfiguredUrl, getConnectionCredentials, getRendererConfig, saveConfig } from './config';
 import { OmadaController } from './omada-api';
-import { AppConfig, IPC_CHANNELS, ConnectionResult } from '../shared/types';
+import { ConfigSavePayload, ConfigSaveResult, IPC_CHANNELS, ConnectionResult, RendererConfig } from '../shared/types';
 
 // Global reference to prevent garbage collection
 let mainWindow: BrowserWindow | null = null;
@@ -58,8 +58,9 @@ function createWindow(): void {
 
 // Bypass SSL for self-signed certificates (Omada controllers use self-signed certs)
 app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
-  // Only bypass for the configured Omada controller URL
-  const configUrl = getConfigValue('url');
+  // Only bypass for the configured Omada controller URL (read from the
+  // in-memory config cache — no filesystem access here)
+  const configUrl = getConfiguredUrl();
   if (configUrl && url.startsWith(configUrl)) {
     event.preventDefault();
     callback(true);
@@ -72,8 +73,10 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
 app.whenReady().then(() => {
   // Bypass SSL certificate validation only for the configured Omada controller
   // This is required because Omada controllers use self-signed certificates
+  // This callback runs on every TLS verification, so it must read the URL
+  // from the in-memory config cache, never from disk
   session.defaultSession.setCertificateVerifyProc((request, callback) => {
-    const configUrl = getConfigValue('url');
+    const configUrl = getConfiguredUrl();
     if (configUrl) {
       try {
         // Use .hostname (not .host) to compare without port
@@ -128,19 +131,28 @@ app.on('before-quit', (event) => {
 // IPC Handlers
 // ============================================================================
 
-// Load configuration
-ipcMain.handle(IPC_CHANNELS.CONFIG_LOAD, async (): Promise<AppConfig> => {
-  return loadConfig();
+// Load configuration (sanitized: the renderer never receives the password,
+// only a hasPassword flag)
+ipcMain.handle(IPC_CHANNELS.CONFIG_LOAD, async (): Promise<RendererConfig> => {
+  return getRendererConfig();
 });
 
-// Save configuration
-ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (_event, config: AppConfig): Promise<boolean> => {
-  return saveConfig(config);
+// Save configuration. saveConfig() validates/normalizes the URL, enforces
+// the password rules (keep the stored one when absent, reject when none at
+// all), and returns error codes instead of throwing raw errors.
+ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (_event, payload: ConfigSavePayload): Promise<ConfigSaveResult> => {
+  try {
+    return saveConfig(payload);
+  } catch (error) {
+    console.error('Unexpected error saving config:', error);
+    return { success: false, error: 'saveFailed' };
+  }
 });
 
-// Connect to Omada controller
+// Connect to Omada controller (the password is decrypted here in the main
+// process; the renderer is never involved in credential handling)
 ipcMain.handle(IPC_CHANNELS.OMADA_CONNECT, async (): Promise<ConnectionResult> => {
-  const config = loadConfig();
+  const config = getConnectionCredentials();
 
   if (!config.url || !config.username || !config.password) {
     return { success: false, error: 'Configuración incompleta. Por favor, configura la conexión.' };

@@ -55,6 +55,7 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **What:** Saving with a blank password overwrites any previously stored password with an empty string, closes the dialog, and auto-connects into a guaranteed "Configuración incompleta" error.
 - **Fix:** Require a password for new configurations; when editing, treat a blank field as "keep existing password" (send an explicit `passwordChanged` flag rather than the raw value).
 - **Done (minimal, renderer-side only):** `saveSettings()` now shows an i18n'd validation error (`passwordRequired`, es/en) when the password field is blank and no stored password exists, and keeps the stored password when the field is left blank while editing; the `passwordChanged`-flag IPC mechanism is deferred to a later phase (pairs with 2.5).
+- **Done (final):** the renderer now sends an optional `password` field only when the user actually typed one (`ConfigSavePayload`); the main-process `saveConfig()` keeps the previously stored (encrypted) password when the field is absent and rejects a save with no password at all with the `passwordRequired` error code, which the renderer maps to the existing i18n key (renderer-side validation kept as a first line of defense).
 
 ### ✅ 1.15 `loadFile()` promise is unhandled — silent no-window failure
 - **Where:** `src/main/index.ts` — `createWindow()` (~line 28); window is only shown on `ready-to-show`.
@@ -99,10 +100,11 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 
 ## 2. Security hardening
 
-### 🟡 2.1 Password stored in plain text
+### ✅ 2.1 Password stored in plain text
 - **Where:** `src/main/config.ts` — `~/.omada-wlan-manager/config.json`.
 - **What:** Already acknowledged in the README. The controller password sits unencrypted on disk (and gets synced/backed up with the home dir).
 - **Fix:** Encrypt the password with Electron `safeStorage` (Keychain-backed on macOS) and store only the blob; migrate the old plaintext value once on first load. Note: this breaks config compatibility with the Python version — decide whether that still matters.
+- **Done:** the password is stored as a base64 `safeStorage` blob (`encryptedPassword`) and decrypted only in the main process (`getDecryptedPassword()` in `config.ts`); a legacy plaintext `password` field is migrated once on first load (encrypted, file rewritten, plaintext dropped — `migrateLegacyPassword()`), and when `safeStorage.isEncryptionAvailable()` is false the plaintext is kept with a console warning (documented fallback) instead of crashing.
 
 ### 🟡 2.2 `sandbox: false` is no longer necessary
 - **Where:** `src/main/index.ts` — `webPreferences.sandbox: false` with the comment "Required for preload to work properly with contextBridge".
@@ -114,24 +116,27 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **What:** Necessary for self-signed certs, but it silently accepts a MITM cert too — an interceptor can capture the login credentials and alter API responses.
 - **Fix:** (a) In `certificate-error`, compare parsed origins (`new URL(configUrl).origin === new URL(url).origin`) instead of `startsWith` — or remove the handler once (b) is done. (b) Trust-on-first-use pinning: store `request.certificate.fingerprint256` after explicit first-use confirmation and return `-3` on any mismatch.
 
-### 🟡 2.4 Config file read synchronously on every TLS verification
+### ✅ 2.4 Config file read synchronously on every TLS verification
 - **Where:** `src/main/index.ts` — `setCertificateVerifyProc` calls `getConfigValue('url')`, which does `fs.readFileSync` + `JSON.parse` of the config file on **every** HTTPS request the app makes.
 - **Fix:** Cache the config in memory (invalidate on `CONFIG_SAVE`).
+- **Done:** `config.ts` caches the parsed config in memory (`cachedConfig`, loaded lazily via `getCachedConfig()` and replaced after every successful `CONFIG_SAVE`); `setCertificateVerifyProc` and the `certificate-error` handler read the URL through `getConfiguredUrl()`, which never touches the filesystem.
 
-### 🟡 2.5 Plaintext password is shipped to the renderer
+### ✅ 2.5 Plaintext password is shipped to the renderer
 - **Where:** `src/main/index.ts` `CONFIG_LOAD` → `src/main/preload.ts` `loadConfig()` → `src/renderer/renderer.ts` `openSettings()` (password placed into a DOM input).
 - **What:** Any renderer compromise or DOM injection (see 1.9) gains the controller password; context isolation doesn't protect secrets deliberately exposed through the bridge.
 - **Fix:** Have the load IPC return `{url, username, language, hasPassword}`; add a separate main-process-only path that updates the password when the user actually types a new one (pairs with 1.14). Login stays entirely in the main process.
+- **Done:** `CONFIG_LOAD` (and preload `loadConfig()`) returns the sanitized `RendererConfig` `{url, username, language, hasPassword}` built by `getRendererConfig()`; the settings dialog leaves the password input empty with an i18n'd `passwordUnchanged` placeholder ("(sin cambios)"/"(unchanged)") when `hasPassword` is true, and connect/auto-connect decrypt the password exclusively in the main process (`getConnectionCredentials()`).
 
 ### 🟡 2.6 IPC handlers trust sender and argument shapes
 - **Where:** `src/main/index.ts` — all `ipcMain.handle` calls (~lines 108–168).
 - **What:** TypeScript annotations don't validate data arriving over IPC at runtime. A compromised renderer could overwrite config with arbitrary values or pass forged MAC/WLAN ids.
 - **Fix:** Validate `event.senderFrame.url` is the packaged `file:` URL; add runtime guards for each payload (types, string lengths, MAC/id formats, HTTPS-only URL).
 
-### 🟡 2.7 Config file permissions and non-atomic writes
+### ✅ 2.7 Config file permissions and non-atomic writes
 - **Where:** `src/main/config.ts` — `saveConfig()` / `loadConfig()`.
 - **What:** The config file inherits the default umask (may be group/world-readable) and is overwritten in place — a crash mid-write leaves truncated JSON, which `loadConfig()` silently swallows, resetting the app to defaults. Parsed values are trusted via casts.
 - **Fix:** Create the dir with mode `0o700` and the file with `0o600`; write to a temp file in the same directory and rename atomically; validate parsed fields (types + language enum) instead of casting.
+- **Done:** `writeConfigFile()` creates the config dir with mode `0o700`, writes a temp file with mode `0o600` in the same directory and `fs.renameSync`s it over `config.json` (atomic); `validateStoredConfig()` checks every field's type and the language enum (falling back to `'es'`) instead of blind casts, and unparseable JSON is treated as "no config" with a `console.warn` instead of being silently swallowed.
 
 ---
 
@@ -159,9 +164,10 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Where:** `tsconfig.json` emits `.d.ts`, `.d.ts.map`, `.js.map` into `dist/`, and `package.json` `build.files` includes all of `dist/**/*`.
 - **Fix:** Either disable `declaration`/`declarationMap`/`sourceMap` for production builds or exclude `*.map`/`*.d.ts` in `build.files`.
 
-### 🟢 3.6 Validate and normalize the controller URL on save (require HTTPS)
+### ✅ 3.6 Validate and normalize the controller URL on save (require HTTPS)
 - **Where:** `src/renderer/renderer.ts` — `saveSettings()`; also validate in the main-process `CONFIG_SAVE` handler (the renderer's `type="url"` input enforces nothing since there is no form submission).
 - **Fix:** Parse with `new URL(...)`; require `protocol === 'https:'` (plain `http://` would send credentials unencrypted); reject embedded credentials/fragments; strip the trailing slash; show an i18n'd error if invalid. Prevents bug 1.5 at the source.
+- **Done:** `validateControllerUrl()` (renderer) and `normalizeControllerUrl()` (main, enforced inside `saveConfig()`) both parse with `new URL(...)`, require `protocol === 'https:'`, reject embedded credentials/fragments, and strip a trailing slash; an invalid URL shows the new `invalidUrl` i18n key (es and en) in the renderer, and the main-process `CONFIG_SAVE` handler returns `{success: false, error: 'invalidUrl'}` instead of throwing.
 
 ### 🟢 3.7 Keyboard/UX niceties in the settings modal
 - Enter submits only from the password field; make URL and username fields submit too (or wrap fields in a `<form>` and handle `submit`).

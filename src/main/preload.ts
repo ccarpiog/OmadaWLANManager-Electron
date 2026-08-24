@@ -1,14 +1,24 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { AppConfig, ConnectionResult, AccessPoint, WlanGroup, IPC_CHANNELS } from '../shared/types';
+import {
+  ConfigSavePayload,
+  ConfigSaveResult,
+  ConnectionResult,
+  AccessPoint,
+  WlanGroup,
+  IPC_CHANNELS,
+  RendererConfig
+} from '../shared/types';
 
 // Expose a safe API to the renderer process
 contextBridge.exposeInMainWorld('omadaAPI', {
-  // Configuration
-  loadConfig: (): Promise<AppConfig> => {
+  // Configuration. loadConfig() returns a sanitized view: the stored
+  // password never crosses the bridge, only a hasPassword flag. saveConfig()
+  // sends a password only when the user typed a new one (renderer → main).
+  loadConfig: (): Promise<RendererConfig> => {
     return ipcRenderer.invoke(IPC_CHANNELS.CONFIG_LOAD);
   },
 
-  saveConfig: (config: AppConfig): Promise<boolean> => {
+  saveConfig: (config: ConfigSavePayload): Promise<ConfigSaveResult> => {
     return ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SAVE, config);
   },
 
@@ -36,8 +46,8 @@ contextBridge.exposeInMainWorld('omadaAPI', {
 
 // Type declaration for the exposed API (for TypeScript support in renderer)
 export interface OmadaAPI {
-  loadConfig(): Promise<AppConfig>;
-  saveConfig(config: AppConfig): Promise<boolean>;
+  loadConfig(): Promise<RendererConfig>;
+  saveConfig(config: ConfigSavePayload): Promise<ConfigSaveResult>;
   connect(): Promise<ConnectionResult>;
   getAccessPoints(): Promise<AccessPoint[]>;
   getWlanGroups(): Promise<WlanGroup[]>;

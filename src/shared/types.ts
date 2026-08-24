@@ -3,12 +3,32 @@
 // Supported languages
 export type Language = 'es' | 'en';
 
-// Configuration stored in electron-store
-export interface AppConfig {
+// Sanitized configuration exposed to the renderer. The password itself never
+// leaves the main process — the renderer only learns whether one is stored.
+export interface RendererConfig {
   url: string;
   username: string;
-  password: string;
   language: Language;
+  hasPassword: boolean;
+}
+
+// Payload the renderer sends when saving settings. `password` is present only
+// when the user typed a new one; when absent, the main process keeps the
+// previously stored (encrypted) password.
+export interface ConfigSavePayload {
+  url: string;
+  username: string;
+  language: Language;
+  password?: string;
+}
+
+// Error codes a config save can fail with; the renderer maps them to i18n keys
+export type ConfigSaveError = 'invalidUrl' | 'passwordRequired' | 'saveFailed';
+
+// Result of a config save
+export interface ConfigSaveResult {
+  success: boolean;
+  error?: ConfigSaveError;
 }
 
 // Access Point data from Omada API

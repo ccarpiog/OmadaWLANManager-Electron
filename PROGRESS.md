@@ -8,7 +8,7 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 |---|---|---|
 | 1 | Renderer/main bug fixes: 1.1, 1.4, 1.5, 1.12, 1.13, 1.14 (minimal renderer-side), 1.15, 3.9 | **done** |
 | 2 | API client robustness (`omada-api.ts`): 1.3, 1.6, 1.7, 1.8, 3.13 | **done** |
-| 3 | Config & credential security: 2.1, 2.4, 2.5 (+1.14 final flag mechanism), 2.7, 3.6 | pending |
+| 3 | Config & credential security: 2.1, 2.4, 2.5 (+1.14 final flag mechanism), 2.7, 3.6 | **done** |
 | 4 | Renderer/IPC/cert hardening: 1.9, 2.2, 2.3a (origin compare), 2.6, 3.14 | pending |
 | 5 | Packaging & platform: 1.2, 3.5, 3.15 | pending |
 | 6 | UX improvements: 3.1, 3.2, 3.7, 3.8 | pending |
@@ -47,9 +47,16 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 - Acceptance: `npm run build` exit 0 (after fixes). Orchestrator spot-read of the relogin path.
 - Codex review: `.claude/reviews/phase2-aggregate.md` — 4 findings (1 high: relogin race; 2 medium; 1 low), ALL fixed in a second worker round before commit.
 
+### Phase 3 — config & credential security (2026-08-24)
+- Items 2.1, 2.4, 2.5, 1.14-final, 2.7, 3.6 implemented; `src/main/config.ts` rewritten around an in-memory cache. Details per-item in `todo.md`.
+- Key mechanics: password stored as base64 `safeStorage` blob (`encryptedPassword`), decrypted only in main via `getConnectionCredentials()`; one-time plaintext migration with documented plaintext fallback (+ permission tightening) when encryption is unavailable; TLS callbacks read `getConfiguredUrl()` from cache; `CONFIG_LOAD` returns `{url, username, language, hasPassword}` (hasPassword = blob actually decryptable); renderer omits the password field when blank & stored, main keeps the stored blob and rejects blank-new with `passwordRequired`; atomic writes (temp+rename, dir 0o700 / file 0o600); URL normalized/validated https-only in both renderer (`validateControllerUrl()`) and main (`normalizeControllerUrl()`); new i18n keys `passwordUnchanged`, `invalidUrl`, `saveError` (es+en); `AppConfig` replaced by `RendererConfig`/`ConfigSavePayload`/`ConfigSaveResult` in `src/shared/types.ts`.
+- Acceptance: `npm run build` exit 0; no `readFileSync` in `index.ts`; password never received by renderer (rg-verified).
+- Codex review: `.claude/reviews/phase3-aggregate.md` — 1 high (legacy plaintext file perms when safeStorage unavailable), 1 low (corrupt blob reported as usable). Both fixed by orchestrator before commit (`tightenPermissions()` helper; decryptability-based `hasPassword` + save check).
+- Note: `OMADA_CONNECT`'s hardcoded Spanish error strings predate this work and were left as-is (out of scope; candidate for phase 6 polish).
+
 ## Next action
 
-Run Phase 3: spawn one worker for config & credential security — todo.md items 2.1 (encrypt password with Electron `safeStorage`, store only the blob, one-time migration of plaintext; breaks Python-version config compat per Decisions), 2.4 (cache config in memory, invalidate on `CONFIG_SAVE`, stop `readFileSync` on every TLS verification), 2.5 (CONFIG_LOAD returns `{url, username, language, hasPassword}` — never the password; password stays main-process-only), 1.14-final (renderer sends an explicit password-changed flag / omits password when unchanged, main keeps the stored one), 2.7 (config dir 0o700, file 0o600, atomic temp-file+rename writes, validate parsed fields instead of casting), 3.6 (validate/normalize controller URL on save in BOTH renderer and main: require https:, reject credentials/fragments, strip trailing slash, i18n'd error es+en). Then verify build, Codex-review aggregate, commit, push.
+Run Phase 4: spawn one worker for renderer/IPC/cert hardening — todo.md items 1.9 (build list items with `document.createElement`/`textContent`/`dataset` instead of HTML strings; validate MAC/WLAN-id formats in renderer and main), 2.2 (`sandbox: true`, verify preload still works via contextBridge + ipcRenderer.invoke), 2.3a (in `certificate-error` compare parsed origins instead of `startsWith`; keep `setCertificateVerifyProc` hostname check but note 2.3b TOFU pinning stays deferred), 2.6 (validate `event.senderFrame.url` is the packaged file: URL in every `ipcMain.handle`; runtime-guard payload shapes — types, lengths, MAC/id formats), 3.14 (tighten CSP: replace inline styles from `updateSelectionInfo()` with a CSS class, then `style-src 'self'`, add object-src/base-uri/frame-src/form-action 'none'). Then verify build, Codex-review aggregate, commit, push.
 
 ## Key paths
 

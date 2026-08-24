@@ -42,6 +42,8 @@ interface Translations {
   language: string;
   fillUrlAndUser: string;
   passwordRequired: string;
+  passwordUnchanged: string;
+  invalidUrl: string;
   saveError: string;
   confirmChange: string;
   confirmAssign: string;
@@ -86,6 +88,8 @@ const translations: Record<Language, Translations> = {
     language: 'Idioma',
     fillUrlAndUser: 'Por favor, completa la URL y el usuario',
     passwordRequired: 'Por favor, introduce la contraseña',
+    passwordUnchanged: '(sin cambios)',
+    invalidUrl: 'URL no válida: debe empezar por https:// y no contener credenciales ni fragmentos',
     saveError: 'Error al guardar la configuración',
     confirmChange: 'Confirmar cambio',
     confirmAssign: '¿Asignar "{wlan}" al AP "{ap}"?',
@@ -128,6 +132,8 @@ const translations: Record<Language, Translations> = {
     language: 'Language',
     fillUrlAndUser: 'Please fill in the URL and username',
     passwordRequired: 'Please enter the password',
+    passwordUnchanged: '(unchanged)',
+    invalidUrl: 'Invalid URL: it must start with https:// and contain no credentials or fragments',
     saveError: 'Error saving configuration',
     confirmChange: 'Confirm change',
     confirmAssign: 'Assign "{wlan}" to AP "{ap}"?',
@@ -609,65 +615,115 @@ function showEmptyStates() {
 // Settings Modal
 // ============================================================================
 
-async function openSettings() {
+/**
+ * Opens the settings modal populated from the stored config. The password
+ * never reaches the renderer: the field is always shown empty, with an
+ * "(unchanged)" placeholder when a password is already stored (leaving it
+ * blank keeps the stored one, see saveSettings()).
+ * @returns {Promise<void>}
+ */
+async function openSettings(): Promise<void> {
   const config = await window.omadaAPI.loadConfig();
   urlInput.value = config.url;
   usernameInput.value = config.username;
-  passwordInput.value = config.password;
+  passwordInput.value = '';
+  passwordInput.placeholder = config.hasPassword ? t('passwordUnchanged') : '';
   languageSelect.value = config.language || 'es';
   settingsModal.classList.add('visible');
   urlInput.focus();
-}
+} // End of function openSettings()
 
 function closeSettings() {
   settingsModal.classList.remove('visible');
 }
 
 /**
- * Validates the settings form and saves the configuration. A blank password
- * keeps the previously stored one when editing an existing config; for a new
- * configuration (no stored password) it is a validation error.
+ * Validates and normalizes the controller URL. Mirrors the main-process rules
+ * (normalizeControllerUrl() in src/main/config.ts — keep both in sync): it
+ * must parse, use HTTPS, and carry no embedded credentials or fragment; a
+ * trailing slash is stripped.
+ * @param {string} raw - The URL as typed by the user.
+ * @returns {string | null} The normalized URL, or null when invalid.
+ */
+function validateControllerUrl(raw: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:') {
+    return null;
+  }
+  if (parsed.username || parsed.password || parsed.hash) {
+    return null;
+  }
+  let normalized = parsed.toString();
+  if (normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+} // End of function validateControllerUrl()
+
+/**
+ * Validates the settings form and saves the configuration. The password is
+ * sent to the main process ONLY when the user typed one: a blank field keeps
+ * the previously stored (encrypted) password, and is a validation error when
+ * no password is stored yet (the main process enforces both rules too). The
+ * URL is validated/normalized here and again in the main process.
  * @returns {Promise<void>}
  */
 async function saveSettings(): Promise<void> {
   const url = urlInput.value.trim();
   const username = usernameInput.value.trim();
-  let password = passwordInput.value;
+  const typedPassword = passwordInput.value;
 
   if (!url || !username) {
     alert(t('fillUrlAndUser'));
     return;
   }
 
-  if (!password) {
+  const normalizedUrl = validateControllerUrl(url);
+  if (!normalizedUrl) {
+    alert(t('invalidUrl'));
+    return;
+  }
+
+  if (!typedPassword) {
     const existingConfig = await window.omadaAPI.loadConfig();
-    if (existingConfig.password) {
-      // Blank field while editing: keep the stored password
-      password = existingConfig.password;
-    } else {
-      // No stored password either: refuse to save an unusable config
+    if (!existingConfig.hasPassword) {
+      // Blank field and nothing stored: refuse to save an unusable config
       alert(t('passwordRequired'));
       return;
     }
+    // Blank field while editing: the main process keeps the stored password
   }
 
-  const config = {
-    url,
+  const payload: { url: string; username: string; language: Language; password?: string } = {
+    url: normalizedUrl,
     username,
-    password,
     language: languageSelect.value as Language
   };
+  // Send the password only when the user typed a new one
+  if (typedPassword) {
+    payload.password = typedPassword;
+  }
 
-  const saved = await window.omadaAPI.saveConfig(config);
+  const result = await window.omadaAPI.saveConfig(payload);
 
-  if (saved) {
+  if (result.success) {
     // Apply language change
-    setLanguage(config.language);
+    setLanguage(payload.language);
     applyTranslations();
 
     closeSettings();
-    // Auto-connect after saving
+    // Auto-connect after saving (the main process reads its own stored
+    // password; nothing credential-related comes from the renderer)
     connect();
+  } else if (result.error === 'invalidUrl') {
+    alert(t('invalidUrl'));
+  } else if (result.error === 'passwordRequired') {
+    alert(t('passwordRequired'));
   } else {
     alert(t('saveError'));
   }
