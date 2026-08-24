@@ -106,6 +106,24 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
+// Best-effort server-side logout when the app quits with a live session.
+// The first pass prevents the quit, runs logout() (bounded so a slow or
+// unreachable controller cannot block quitting), then re-enters app.quit()
+let quitLogoutStarted = false;
+app.on('before-quit', (event) => {
+  if (omadaController && !quitLogoutStarted) {
+    quitLogoutStarted = true;
+    event.preventDefault();
+    const controller = omadaController;
+    omadaController = null;
+    // Do not let the logout request delay quitting for more than 3 seconds
+    const deadline = new Promise<void>((resolve) => setTimeout(resolve, 3000));
+    Promise.race([controller.logout(), deadline]).finally(() => {
+      app.quit();
+    });
+  }
+}); // End of the before-quit handler
+
 // ============================================================================
 // IPC Handlers
 // ============================================================================
@@ -167,7 +185,12 @@ ipcMain.handle(IPC_CHANNELS.OMADA_SET_WLAN, async (_event, mac: string, wlanId: 
   return omadaController.setApWlanGroup(mac, wlanId);
 });
 
-// Disconnect from controller
+// Disconnect from controller (best-effort server-side logout, then drop
+// the controller reference; logout() swallows network errors itself)
 ipcMain.handle(IPC_CHANNELS.OMADA_DISCONNECT, async (): Promise<void> => {
-  omadaController = null;
+  if (omadaController) {
+    const controller = omadaController;
+    omadaController = null;
+    await controller.logout();
+  }
 });

@@ -20,10 +20,11 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **What:** `npm run package:win` will fail or produce a package without the intended icon, because `assets/icon.ico` does not exist.
 - **Fix:** Generate a multi-resolution `icon.ico` from `icon.png` and add it to `assets/`, or remove the `win.icon` entry to use electron-builder's fallback.
 
-### 🔴 1.3 Cookie jar is replaced, not merged, on every response
+### ✅ 1.3 Cookie jar is replaced, not merged, on every response
 - **Where:** `src/main/omada-api.ts` — `request()` (~lines 189–195).
 - **What:** Each response's `Set-Cookie` **overwrites** `this.cookies` entirely. If any later response sets a single cookie without repeating the session cookie (`TPOMADA_SESSIONID`), the session cookie is dropped and every subsequent call fails with an auth error until reconnect.
 - **Fix:** Parse cookies by name into a `Map<name, value>` and merge updates (honoring deletions/expiry). Alternatively, use a dedicated Electron session partition and let its cookie store handle this instead of hand-building the `Cookie` header.
+- **Done:** the jar is now a `Map<name, value>`; a new `mergeCookies()` parses each `Set-Cookie` header by name and merges it into the jar (an empty value, `Max-Age <= 0`, or a past `Expires` deletes the cookie), and the `Cookie` header is rebuilt from the map, so `TPOMADA_SESSIONID` survives responses that set unrelated cookies.
 
 ### ✅ 1.4 `will-navigate` origin check compares against the wrong value
 - **Where:** `src/main/index.ts` (~lines 41–46).
@@ -61,20 +62,23 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Fix:** `.catch()` the promise: log the error and `show()` the window (or display an error dialog) so failure is visible.
 - **Done:** `loadFile()` now has a `.catch()` that logs the error via `console.error` and calls `mainWindow?.show()` so the failure is visible.
 
-### 🟡 1.6 No HTTP status, timeout, or size limit in the API client
+### ✅ 1.6 No HTTP status, timeout, or size limit in the API client
 - **Where:** `src/main/omada-api.ts` — `request()`.
 - **What:** (a) The response status code is never checked; a 401/500 HTML error page surfaces as the cryptic `Error parsing response: <html>…` with the full body in the message. (b) There is no request timeout: an unreachable-but-routed controller (firewalled IP) leaves "Conectando..." hanging indefinitely. (c) The response body accumulates without any size ceiling.
 - **Fix:** Reject non-2xx `statusCode` with a bounded body excerpt; add an abort timer (e.g. 15 s) cleared on all terminal events; cap the accumulated response size.
+- **Done:** `rawRequest()` now rejects non-2xx statuses with `HTTP <status>: <first 200 chars>`, runs a 15 s abort timer, and caps the body at 5 MB (aborting on overflow); all resolve/reject paths go through `settleResolve()`/`settleReject()` helpers that clear the timer and guarantee single settlement, so the timer can never fire after a completed request.
 
-### 🟡 1.7 Session expiry is not handled — no re-login, misleading errors
+### ✅ 1.7 Session expiry is not handled — no re-login, misleading errors
 - **Where:** `src/main/omada-api.ts` / `src/main/index.ts`.
 - **What:** Omada web sessions expire (idle timeout). After expiry the app still shows "Connected" but every action fails with a raw controller error (e.g. errorCode -1200 "login required") until the user manually disconnects and reconnects.
 - **Fix:** Detect the "not logged in" error codes in `request()` and transparently re-run `connect()` once, then retry the original call; surface a "session expired, reconnecting…" status if it fails.
+- **Done:** `request()` checks the result against `AUTH_ERROR_CODES` (`-1200`); when hit after a successful login it joins a shared in-flight re-login (`sharedRelogin()` — concurrent expirations await the same login operation) and retries the original call exactly once through `rawRequest()`, so neither the re-login nor the retry can trigger another re-login; a failed re-login clears all local auth state (cookies, CSRF token, site id) and rejects with a clear "Session expired; re-login failed" error.
 
-### 🟡 1.8 Disconnect never logs out of the controller
+### ✅ 1.8 Disconnect never logs out of the controller
 - **Where:** `src/main/index.ts` — `OMADA_DISCONNECT` handler just sets `omadaController = null` (and see 1.12 — it isn't even called).
 - **What:** The server-side session stays alive on the controller. Repeated connect/disconnect cycles accumulate sessions (controllers cap concurrent sessions and can start rejecting logins).
 - **Fix:** Add a `logout()` method calling `POST /{omadacId}/api/v2/logout` and invoke it from the disconnect handler (and on app quit); clear cookies, token, and site id in the controller instance.
+- **Done:** `OmadaController.logout()` POSTs `/{omadacId}/api/v2/logout` best-effort (network errors are logged and swallowed) and clears cookies, CSRF token, and site id; the `OMADA_DISCONNECT` handler awaits it before dropping the reference, and a `before-quit` handler in `index.ts` runs it on app quit (bounded to 3 s via `Promise.race`, then re-enters `app.quit()`).
 
 ### 🟡 1.9 Unescaped values interpolated into HTML attributes
 - **Where:** `src/renderer/renderer.ts` — `renderApList()` (`data-mac="${ap.mac}"`, ~line 346) and `renderWlanList()` (`data-wlan-id="${wlan.wlanId}"`, ~line 406).
@@ -185,10 +189,11 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Why:** Settings stay usable while connecting; saving can start a second connect while the first is in flight. The second IPC call overwrites the global `omadaController`, so the first flow's `loadData()` can hit a not-yet-authenticated controller.
 - **Fix:** Serialize attempts in the main process (create the controller in a local variable, assign globally only after successful auth, discard stale generations); disable Settings/Save during connect.
 
-### 🟢 3.13 Runtime validation of API responses
+### ✅ 3.13 Runtime validation of API responses
 - **Where:** `src/main/omada-api.ts` — results are trusted via TypeScript casts and immediately dereferenced (`name.localeCompare`, `ssidList.map`).
 - **Why:** A different controller version returning missing/differently-typed fields crashes list loading even though the HTTP request succeeded.
 - **Fix:** Add small runtime validators (strings, arrays, optional fields); normalize absent names/SSID lists or fail with an explicit "unsupported API response" error.
+- **Done:** added `validateAccessPoints()` and `validateWlanGroups()`, plus site-list validation in `resolveSiteId()`: they throw an explicit `Unsupported API response (devices/WLANs/sites)` error when the payload isn't the expected array, when an entry isn't an object, or when a required identifier (`mac`, `wlanId`, site `id`) is missing, and normalize only optional display fields (missing names to the MAC or `''`, missing SSID lists to `[]`).
 
 ### 🟢 3.14 Tighten the CSP
 - **Where:** `src/renderer/index.html` (~line 6) allows `style-src 'unsafe-inline'` solely because `updateSelectionInfo()` emits inline `style` attributes.

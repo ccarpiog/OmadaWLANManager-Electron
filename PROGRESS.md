@@ -7,7 +7,7 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 | Phase | Scope (todo.md items) | Status |
 |---|---|---|
 | 1 | Renderer/main bug fixes: 1.1, 1.4, 1.5, 1.12, 1.13, 1.14 (minimal renderer-side), 1.15, 3.9 | **done** |
-| 2 | API client robustness (`omada-api.ts`): 1.3, 1.6, 1.7, 1.8, 3.13 | pending |
+| 2 | API client robustness (`omada-api.ts`): 1.3, 1.6, 1.7, 1.8, 3.13 | **done** |
 | 3 | Config & credential security: 2.1, 2.4, 2.5 (+1.14 final flag mechanism), 2.7, 3.6 | pending |
 | 4 | Renderer/IPC/cert hardening: 1.9, 2.2, 2.3a (origin compare), 2.6, 3.14 | pending |
 | 5 | Packaging & platform: 1.2, 3.5, 3.15 | pending |
@@ -41,9 +41,15 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 - Codex review: `.claude/reviews/phase1-aggregate.md`. One P1 found (the `{success:false}` branch of `connect()` skipped `clearData()` + IPC disconnect) — fixed before commit; verdict otherwise clean.
 - New helper `clearData()` in renderer.ts centralizes data/selection/filter reset; new i18n key `passwordRequired` (es+en).
 
+### Phase 2 — API client robustness (2026-08-24)
+- Items 1.3, 1.6, 1.7, 1.8, 3.13 implemented in `src/main/omada-api.ts` + `src/main/index.ts`; details per-item in `todo.md`.
+- Key mechanics: cookie jar is a `Map` with per-name merge honoring deletions; `rawRequest()` rejects non-2xx with a 200-char excerpt, 15 s abort timer, 5 MB body cap, all settle paths clear the timer; session expiry (`errorCode -1200`) triggers ONE shared re-login (`sharedRelogin()` + `reloginPromise`) with a single retry via `rawRequest()`; `logout()` (best-effort POST + `clearSessionState()`) runs on `OMADA_DISCONNECT` and `before-quit` (3 s bound, guarded re-entry of `app.quit()`); validators throw `Unsupported API response (...)` on missing required ids, normalize only display fields.
+- Acceptance: `npm run build` exit 0 (after fixes). Orchestrator spot-read of the relogin path.
+- Codex review: `.claude/reviews/phase2-aggregate.md` — 4 findings (1 high: relogin race; 2 medium; 1 low), ALL fixed in a second worker round before commit.
+
 ## Next action
 
-Run Phase 2: spawn one worker for API-client robustness in `src/main/omada-api.ts` — todo.md items 1.3 (merge cookies by name instead of replacing the jar), 1.6 (reject non-2xx with bounded excerpt, 15 s abort timeout, response size cap), 1.7 (detect "login required" error codes, transparent one-shot re-login + retry), 1.8 (add `logout()` calling `POST /{omadacId}/api/v2/logout`, invoke from the disconnect IPC handler and on app quit, clear cookies/token/siteId), 3.13 (runtime validation of API list responses). Then verify build, Codex-review aggregate, commit, push.
+Run Phase 3: spawn one worker for config & credential security — todo.md items 2.1 (encrypt password with Electron `safeStorage`, store only the blob, one-time migration of plaintext; breaks Python-version config compat per Decisions), 2.4 (cache config in memory, invalidate on `CONFIG_SAVE`, stop `readFileSync` on every TLS verification), 2.5 (CONFIG_LOAD returns `{url, username, language, hasPassword}` — never the password; password stays main-process-only), 1.14-final (renderer sends an explicit password-changed flag / omits password when unchanged, main keeps the stored one), 2.7 (config dir 0o700, file 0o600, atomic temp-file+rename writes, validate parsed fields instead of casting), 3.6 (validate/normalize controller URL on save in BOTH renderer and main: require https:, reject credentials/fragments, strip trailing slash, i18n'd error es+en). Then verify build, Codex-review aggregate, commit, push.
 
 ## Key paths
 
