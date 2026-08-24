@@ -43,6 +43,20 @@
   padding: 0;
 }
 
+/* The html element keeps painting the themed background while <body> is
+   hidden by the pre-init class, so dark-mode users never see a white flash */
+html {
+  background: var(--bg-primary);
+}
+
+/* The UI stays hidden until init() (renderer.ts) has applied the
+   translations — index.html ships without user-facing text, so showing it
+   earlier would expose empty headings and buttons. Kept in the stylesheet
+   because the CSP forbids inline styles (style-src 'self') */
+body.pre-init {
+  visibility: hidden;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
   font-size: 14px;
@@ -281,6 +295,16 @@ body.platform-darwin .title-bar {
 
 .list-item:hover {
   background: var(--bg-tertiary);
+}
+
+/* Keyboard focus ring for the focusable (tabindex="0") list items */
+.list-item:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+.list-item.selected:focus-visible {
+  outline-color: white;
 }
 
 .list-item.selected {
@@ -539,6 +563,60 @@ body.platform-darwin .title-bar {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* Refresh button while a data load is in flight */
+.btn-icon.spinning svg {
+  animation: spin 0.8s linear infinite;
+}
+
+/* Toasts (non-blocking notifications replacing alert()).
+   Anchored to the top-right corner, below the header, so the stack can never
+   cover a centered modal's footer buttons at the 700x500 minimum window
+   size (it grows downwards, away from nothing interactive). The whole layer
+   is click-through (toasts auto-dismiss and have no controls), so a toast
+   can never intercept a click aimed at a modal control underneath it; the
+   stack is additionally capped by showToast() in renderer.ts */
+.toast-container {
+  position: fixed;
+  top: 72px; /* below the header bar */
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  z-index: 200; /* above the modal overlays (z-index 100) so feedback stays visible */
+  pointer-events: none;
+}
+
+.toast {
+  max-width: 420px;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: white;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity var(--transition), transform var(--transition);
+  pointer-events: none;
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast-success {
+  background: var(--success-color);
+}
+
+.toast-error {
+  background: var(--error-color);
+}
+
+.toast-info {
+  background: var(--accent-color);
 }
 
 /* Scrollbar */

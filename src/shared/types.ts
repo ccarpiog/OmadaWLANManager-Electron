@@ -59,10 +59,16 @@ export interface OmadaApiResponse<T> {
   result?: T;
 }
 
-// Connection result
+// Error codes a connection attempt can fail with; the renderer maps them to
+// i18n strings (never hardcoded user-facing text in the main process)
+export type ConnectionErrorCode = 'configIncomplete' | 'connectFailed' | 'connectError';
+
+// Connection result. `detail` optionally carries the underlying technical
+// message (e.g. an HTTP error from the API client) for display/diagnostics.
 export interface ConnectionResult {
   success: boolean;
-  error?: string;
+  error?: ConnectionErrorCode;
+  detail?: string;
 }
 
 // Data loaded from controller

@@ -11,7 +11,7 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 | 3 | Config & credential security: 2.1, 2.4, 2.5 (+1.14 final flag mechanism), 2.7, 3.6 | **done** |
 | 4 | Renderer/IPC/cert hardening: 1.9, 2.2, 2.3a (origin compare), 2.6, 3.14 | **done** |
 | 5 | Packaging & platform: 1.2, 3.5, 3.15 | **done** |
-| 6 | UX improvements: 3.1, 3.2, 3.7, 3.8 | pending |
+| 6 | UX improvements: 3.1, 3.2, 3.7, 3.8 (+OMADA_CONNECT i18n error codes) | **done** |
 | 7 | Connection flow & multi-site: 1.11, 3.12 | pending |
 
 **Deferred (need user input or live controller):**
@@ -67,6 +67,12 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 - Acceptance: `npm run build` exit 0 (worker + orchestrator re-run); no packaging run performed (per phase constraints — `npm run package:win` etc. still untested end-to-end).
 - Codex review: `.claude/reviews/phase5-aggregate.md` — clean, "ready to proceed", no findings.
 
+### Phase 6 — UX improvements (2026-08-24)
+- Items 3.1, 3.2, 3.7, 3.8 + OMADA_CONNECT i18n error codes implemented in `src/renderer/renderer.ts`, `index.html`, `styles.css`, `src/main/index.ts`, `src/shared/types.ts`; details per-item in `todo.md`.
+- Key mechanics: `showToast()` toasts (top-right below header, click-through, aria-live, stack capped at 3, 4 s auto-dismiss) replace all `alert()` calls; header Refresh button + panel spinners (`refreshData()` restores old lists on failure); Enter submits settings (per-field handlers — CSP `form-action 'none'` forbids forms); index.html ships textless and `<body class="pre-init">` hides the UI until `applyTranslations()` (no Spanish/blank flash; init failure paths still reveal the UI); AP/WLAN lists are `role="listbox"`/`role="option"` with roving tabindex, ArrowUp/Down, Enter/Space toggle; modals have `role="dialog"`/`aria-modal`, a Tab focus trap, opener-focus restore, and background `inert` (`updateBackgroundInert()`); async safety via `sessionGeneration` + `invalidateSession()` (every post-await UI commit generation-checked) and per-operation flags behind `isOperationInProgress()` (connect/disconnect/save/apply/refresh mutually exclusive); `OMADA_CONNECT` returns `ConnectionErrorCode` codes mapped in the renderer. New i18n keys (es+en, parity enforced by the `Translations` interface): `refresh`, `loading`, `loadError`, `close`, `configIncomplete`, `connectFailed`, `configureHint`, `configLoadError`.
+- Acceptance: `npm run build` exit 0 (after each round); greps clean (no `alert(`, no inline styles, no `.style.` writes, no Spanish in `src/main/index.ts`).
+- Codex review: `.claude/reviews/phase6-aggregate.md` — first pass found 2 P1 races + 4 P2s (fixed in a worker round); a focused Codex verification pass then confirmed 4/6 closed and re-flagged disconnect serialization + a settings-open race, closed in a second worker round (orchestrator spot-verified). Intentionally untranslated: technical error `detail`, product name, input placeholders, language autonyms.
+
 ## Open risks
 
 - Verify-proc cert bypass is hostname-scoped, not origin-scoped (Electron API limitation, see phase 4 notes); fully closed only by deferred item 2.3b (TOFU pinning).
@@ -74,7 +80,7 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 
 ## Next action
 
-Run Phase 6: spawn one worker for UX improvements — todo.md items 3.1 ("Replace blocking `alert()` calls with in-app toasts"), 3.2 ("Add a Refresh button and loading indicators"), 3.7 ("Keyboard/UX niceties in the settings modal"), 3.8 ("i18n and accessibility polish"). Worker reads those items in `todo.md` for full instructions. All four are renderer-heavy: every new user-facing string must land in BOTH es and en i18n tables; the strict CSP (`style-src 'self'`, no inline styles) and DOM-building conventions from phase 4 (`createElement`/`textContent`, no innerHTML) must be preserved. Also a phase-6 polish candidate flagged in phase 3: `OMADA_CONNECT`'s hardcoded Spanish error strings in `src/main/index.ts` should move to i18n error codes mapped in the renderer. Then verify build, Codex-review aggregate, commit, push.
+Run Phase 7 (FINAL phase): spawn one worker for connection flow & multi-site — todo.md items 1.11 and 3.12. Worker reads those items in `todo.md` for full instructions. Constraints to carry: strict CSP / no inline styles; DOM via createElement; sandboxed preload (type-only imports); every ipcMain.handle keeps `assertTrustedIpcSender` + payload guards; new user-facing strings in BOTH es and en tables; async UI work must respect the phase-6 `sessionGeneration` + `isOperationInProgress()` model. Then verify build, Codex-review aggregate, commit, push. After phase 7 the plan is complete — remaining todo.md items (1.10, 2.3b, 3.3, 3.4, 3.10) are all in the Deferred list awaiting user input.
 
 ## Key paths
 

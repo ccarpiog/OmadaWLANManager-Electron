@@ -147,14 +147,16 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 
 ## 3. Improvements (prioritized)
 
-### 🟢 3.1 Replace blocking `alert()` calls with in-app toasts
+### ✅ 3.1 Replace blocking `alert()` calls with in-app toasts
 - **Where:** `src/renderer/renderer.ts` — `saveSettings()`, `applyChange()`.
 - **Why:** `alert()` in Electron has a long-standing macOS bug where the window loses keyboard focus after the dialog closes (inputs stop accepting typing until the window is refocused). It also blocks the renderer.
 - **Fix:** Add a small toast/notification component (styled div with auto-dismiss) for "change applied" / error messages; the confirm-modal pattern already exists for questions.
+- **Done:** added `showToast(message, type)` in `renderer.ts` (DOM-built, auto-dismisses after 4 s with a fade transition) rendering into a fixed `#toastContainer` (`role="status"`, `aria-live="polite"`, z-index above the modals) styled via new `.toast`/`.toast-success`/`.toast-error`/`.toast-info` classes in `styles.css`; every `alert()` call in `saveSettings()` and `applyChange()` was replaced (validation errors → error toasts, "change applied" → success toast), and a failed reload after a successful apply now reports the new `loadError` message instead of the misleading `changeError`.
 
-### 🟢 3.2 Add a Refresh button and loading indicators
+### ✅ 3.2 Add a Refresh button and loading indicators
 - **Why:** The only way to re-read APs/WLANs is disconnect + reconnect. There is also no spinner while `loadData()` runs.
 - **Fix:** Add a refresh icon-button (header or next to the filters) that calls `loadData()`; show a lightweight loading state in the panels while fetching.
+- **Done:** added a refresh icon-button (`#refreshBtn`) to the header, enabled only while connected (`setStatus()` gates it) and guarded against re-entry (`isLoadingData`); `loadData()` now shows a spinner in both panels (`createLoadingState()` using the existing `.loading`/`.spinner` styles, `role="status"` + localized `aria-label`) and spins the refresh icon (`.btn-icon.spinning`); on refresh failure `refreshData()` re-renders the previous lists and shows an error toast (`loadError`, es/en).
 
 ### 🟢 3.3 Update Electron (28 → current) and dev dependencies
 - **Why:** Electron 28 (Dec 2023) is long EOL; it embeds an old Chromium/Node with known CVEs. electron-builder 24 is similarly outdated.
@@ -175,15 +177,18 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Fix:** Parse with `new URL(...)`; require `protocol === 'https:'` (plain `http://` would send credentials unencrypted); reject embedded credentials/fragments; strip the trailing slash; show an i18n'd error if invalid. Prevents bug 1.5 at the source.
 - **Done:** `validateControllerUrl()` (renderer) and `normalizeControllerUrl()` (main, enforced inside `saveConfig()`) both parse with `new URL(...)`, require `protocol === 'https:'`, reject embedded credentials/fragments, and strip a trailing slash; an invalid URL shows the new `invalidUrl` i18n key (es and en) in the renderer, and the main-process `CONFIG_SAVE` handler returns `{success: false, error: 'invalidUrl'}` instead of throwing.
 
-### 🟢 3.7 Keyboard/UX niceties in the settings modal
+### ✅ 3.7 Keyboard/UX niceties in the settings modal
 - Enter submits only from the password field; make URL and username fields submit too (or wrap fields in a `<form>` and handle `submit`).
 - After Escape-closing settings on first run (no config), the app sits idle with no hint; consider keeping the modal open or showing a "configure connection" empty state.
+- **Done:** Enter now submits from URL, username, and password fields (one shared keydown handler per field — a real `<form>` was avoided because the CSP sets `form-action 'none'`); on first run (no stored config, tracked by `hasStoredConfig`) both panels show a localized "configure the connection in Settings" empty state (`configureHint`, es/en) instead of the misleading "connect to see data" message, so Escape-closing the settings modal no longer leaves the app without guidance; the confirm modal now moves keyboard focus to its Confirm button when opened (Enter confirms, Escape cancels).
 
-### 🟢 3.8 i18n and accessibility polish
+### ✅ 3.8 i18n and accessibility polish
 - `<html lang="es">` is static; update `document.documentElement.lang` in `setLanguage()`.
 - Icon-only buttons (settings, modal close) need localized `aria-label`s.
 - List items are non-focusable `<div>`s — keyboard-only users cannot select an AP or WLAN. Render them as `<button>`s or add `role="radio"`, `tabindex="0"`, `aria-checked` and Enter/Space handlers, with radiogroup labels on both panels.
 - The hard-coded Spanish strings in `index.html` flash briefly for English users; consider rendering empty and applying translations before `show()`.
+- **Done:** `setLanguage()` now updates `document.documentElement.lang`; the icon-only buttons (settings, refresh, modal close) get localized `title` + `aria-label` in `applyTranslations()` (new `close`/`refresh` keys, es/en); list items are now keyboard-operable radios — `role="radio"`, `tabindex="0"`, `aria-checked`, Enter/Space toggle with focus restored after the re-render (`focusListItemByData()`) and a `:focus-visible` outline — inside `role="radiogroup"` panels labeled via `aria-label`; `index.html` now ships with no user-facing text at all (filled by `applyTranslations()` before the async init completes), so English users never see a Spanish flash.
+- **Done (OMADA_CONNECT i18n, flagged in phase 3):** the `OMADA_CONNECT` handler in `src/main/index.ts` no longer returns hardcoded Spanish strings — it sends stable error codes (`configIncomplete` | `connectFailed` | `connectError`, typed as `ConnectionErrorCode` in `shared/types.ts`, plus an optional technical `detail`) which `connectionErrorMessage()` in the renderer maps to es/en i18n strings (new `configIncomplete`/`connectFailed` keys), consistent with the `saveConfig` error-code pattern; the remaining internal `'No conectado al controlador'` throws in `index.ts` were rewritten in English (they are diagnostics — the renderer already maps them to generic i18n errors).
 
 ### ✅ 3.9 Remove dead code
 - `src/renderer/renderer.ts`: `currentServerUrl` is written and cleared but never read. Delete it.

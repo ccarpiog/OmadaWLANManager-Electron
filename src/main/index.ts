@@ -290,13 +290,16 @@ ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (event, payload: unknown): Promis
 }); // End of the CONFIG_SAVE handler
 
 // Connect to Omada controller (the password is decrypted here in the main
-// process; the renderer is never involved in credential handling)
+// process; the renderer is never involved in credential handling). Failures
+// are reported as stable error codes — never user-facing text — which the
+// renderer maps to its es/en i18n strings; `detail` carries the underlying
+// technical message when one exists.
 ipcMain.handle(IPC_CHANNELS.OMADA_CONNECT, async (event): Promise<ConnectionResult> => {
   assertTrustedIpcSender(event);
   const config = getConnectionCredentials();
 
   if (!config.url || !config.username || !config.password) {
-    return { success: false, error: 'Configuración incompleta. Por favor, configura la conexión.' };
+    return { success: false, error: 'configIncomplete' };
   }
 
   try {
@@ -306,19 +309,20 @@ ipcMain.handle(IPC_CHANNELS.OMADA_CONNECT, async (event): Promise<ConnectionResu
     if (connected) {
       return { success: true };
     } else {
-      return { success: false, error: 'No se pudo conectar al controlador.' };
+      return { success: false, error: 'connectFailed' };
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
-    return { success: false, error: errorMessage };
+    console.error('Error connecting to the Omada controller:', error);
+    const detail = error instanceof Error ? error.message : String(error);
+    return { success: false, error: 'connectError', detail };
   }
-});
+}); // End of the OMADA_CONNECT handler
 
 // Get access points
 ipcMain.handle(IPC_CHANNELS.OMADA_GET_APS, async (event) => {
   assertTrustedIpcSender(event);
   if (!omadaController) {
-    throw new Error('No conectado al controlador');
+    throw new Error('Not connected to the controller');
   }
   return omadaController.getAccessPoints();
 });
@@ -327,7 +331,7 @@ ipcMain.handle(IPC_CHANNELS.OMADA_GET_APS, async (event) => {
 ipcMain.handle(IPC_CHANNELS.OMADA_GET_WLANS, async (event) => {
   assertTrustedIpcSender(event);
   if (!omadaController) {
-    throw new Error('No conectado al controlador');
+    throw new Error('Not connected to the controller');
   }
   return omadaController.getWlanGroups();
 });
@@ -343,7 +347,7 @@ ipcMain.handle(IPC_CHANNELS.OMADA_SET_WLAN, async (event, mac: unknown, wlanId: 
     throw new Error('IPC call rejected: invalid WLAN id format');
   }
   if (!omadaController) {
-    throw new Error('No conectado al controlador');
+    throw new Error('Not connected to the controller');
   }
   return omadaController.setApWlanGroup(mac, wlanId);
 }); // End of the OMADA_SET_WLAN handler
