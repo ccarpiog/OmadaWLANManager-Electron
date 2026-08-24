@@ -38,6 +38,8 @@
     },
     "files": [
       "dist/**/*",
+      "!dist/**/*.map",
+      "!dist/**/*.d.ts",
       "package.json"
     ],
     "mac": {

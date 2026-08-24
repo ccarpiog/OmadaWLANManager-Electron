@@ -129,7 +129,9 @@ function createWindow(): void {
       // Electron 20; preload.ts avoids runtime require() of project files
       sandbox: true
     },
-    titleBarStyle: 'hiddenInset',
+    // Hidden-inset title bar is a macOS-only look (traffic lights over the
+    // app's own header). Windows/Linux keep the native frame and title bar
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false
   });
 

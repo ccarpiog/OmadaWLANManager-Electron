@@ -978,6 +978,16 @@ passwordInput.addEventListener('keydown', (e) => {
 // Initialization
 // ============================================================================
 
+/**
+ * Tags <body> with a platform class (e.g. "platform-darwin") so the
+ * stylesheet can scope platform-specific rules — currently the macOS
+ * traffic-light padding in the title bar. Runs synchronously at script
+ * start, before first paint.
+ */
+function applyPlatformClass(): void {
+  document.body.classList.add(`platform-${window.omadaAPI.platform}`);
+}
+
 async function init() {
   const config = await window.omadaAPI.loadConfig();
 
@@ -995,4 +1005,5 @@ async function init() {
 }
 
 // Start the app
+applyPlatformClass();
 init();

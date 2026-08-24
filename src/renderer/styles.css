@@ -66,10 +66,16 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  padding-left: 80px; /* Space for macOS traffic lights */
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
   -webkit-app-region: drag;
+}
+
+/* Space for the macOS traffic lights (hiddenInset title bar). The
+   platform-* body class is set by applyPlatformClass() in renderer.ts;
+   Windows/Linux keep the native frame, so no extra padding there */
+body.platform-darwin .title-bar {
+  padding-left: 80px;
 }
 
 .title-bar-drag {

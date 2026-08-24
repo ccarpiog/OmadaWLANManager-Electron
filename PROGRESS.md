@@ -10,7 +10,7 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 | 2 | API client robustness (`omada-api.ts`): 1.3, 1.6, 1.7, 1.8, 3.13 | **done** |
 | 3 | Config & credential security: 2.1, 2.4, 2.5 (+1.14 final flag mechanism), 2.7, 3.6 | **done** |
 | 4 | Renderer/IPC/cert hardening: 1.9, 2.2, 2.3a (origin compare), 2.6, 3.14 | **done** |
-| 5 | Packaging & platform: 1.2, 3.5, 3.15 | pending |
+| 5 | Packaging & platform: 1.2, 3.5, 3.15 | **done** |
 | 6 | UX improvements: 3.1, 3.2, 3.7, 3.8 | pending |
 | 7 | Connection flow & multi-site: 1.11, 3.12 | pending |
 
@@ -61,6 +61,12 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 - Codex review: `.claude/reviews/phase4-aggregate.md` — 1 P2 (verify-proc accepts any port on the configured hostname) + 1 CSP regression (`data:` SVG select arrow blocked). Both addressed by orchestrator before commit: CSP got `img-src 'self' data:`; the verify-proc bypass was narrowed to self-signed failure classes (`isSelfSignedVerificationResult()`). Full origin scoping in the verify proc is IMPOSSIBLE (Electron's request has no port) and the bypass cannot be removed (the API client uses `net.request`, which `certificate-error` does not cover) — residual same-host-other-port risk documented, closes only with deferred 2.3b TOFU pinning.
 - Not GUI-tested: the sandboxed preload was verified statically (compiled output requires only `electron`); a quick `npm start` smoke test is recommended when a display is available.
 
+### Phase 5 — packaging & platform (2026-08-24)
+- Items 1.2, 3.5, 3.15 implemented in `package.json`, `assets/icon.ico` (new), `src/main/index.ts`, `src/main/preload.ts`, `src/renderer/renderer.ts`, `src/renderer/styles.css`; details per-item in `todo.md`.
+- Key mechanics: `assets/icon.ico` generated from `icon.png` (7 PNG-compressed frames 16–256 px; `file` confirms a valid MS Windows icon resource) so `build.win.icon` resolves; `build.files` excludes `dist/**/*.map` and `dist/**/*.d.ts`; `titleBarStyle` is `'hiddenInset'` on darwin only (`'default'` elsewhere); sandbox-safe preload exposes `platform: process.platform` on the contextBridge; renderer `applyPlatformClass()` tags `<body>` with `platform-<os>` before first paint and the 80 px traffic-light padding lives under `body.platform-darwin .title-bar`. Drag-region CSS intentionally left unscoped (benign on framed windows).
+- Acceptance: `npm run build` exit 0 (worker + orchestrator re-run); no packaging run performed (per phase constraints — `npm run package:win` etc. still untested end-to-end).
+- Codex review: `.claude/reviews/phase5-aggregate.md` — clean, "ready to proceed", no findings.
+
 ## Open risks
 
 - Verify-proc cert bypass is hostname-scoped, not origin-scoped (Electron API limitation, see phase 4 notes); fully closed only by deferred item 2.3b (TOFU pinning).
@@ -68,7 +74,7 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 
 ## Next action
 
-Run Phase 5: spawn one worker for packaging & platform — todo.md items 1.2 ("Windows packaging references a missing icon file", 🔴), 3.5 ("Trim the packaged app", 🟢), 3.15 ("Scope macOS title-bar styling to macOS", 🟢: `titleBarStyle: 'hiddenInset'` + the 80 px traffic-light padding in `styles.css` must apply on darwin only). Worker reads those items in `todo.md` for full instructions. Then verify build, Codex-review aggregate, commit, push. (Note: packaging changes touch `package.json` build config; the worker cannot run a full `electron-builder` package as verification — `npm run build` + config inspection is the acceptance bar unless the user asks for a packaging run.)
+Run Phase 6: spawn one worker for UX improvements — todo.md items 3.1 ("Replace blocking `alert()` calls with in-app toasts"), 3.2 ("Add a Refresh button and loading indicators"), 3.7 ("Keyboard/UX niceties in the settings modal"), 3.8 ("i18n and accessibility polish"). Worker reads those items in `todo.md` for full instructions. All four are renderer-heavy: every new user-facing string must land in BOTH es and en i18n tables; the strict CSP (`style-src 'self'`, no inline styles) and DOM-building conventions from phase 4 (`createElement`/`textContent`, no innerHTML) must be preserved. Also a phase-6 polish candidate flagged in phase 3: `OMADA_CONNECT`'s hardcoded Spanish error strings in `src/main/index.ts` should move to i18n error codes mapped in the renderer. Then verify build, Codex-review aggregate, commit, push.
 
 ## Key paths
 
@@ -80,4 +86,4 @@ Run Phase 5: spawn one worker for packaging & platform — todo.md items 1.2 ("W
 
 ## Git state
 
-- Start of run: clean tree at b8c182f except untracked `todo.md`.
+- Phase 4 committed as 37450f1, phase 5 committed on top (SHA in `git log`), both pushed to origin/main (2026-08-24).

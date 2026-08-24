@@ -15,10 +15,11 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Fix:** Give `showConfirm()` a single `finish(result)` function that hides the modal, removes **all** listeners (including its own Escape listener) and resolves exactly once. The global Escape handler must call that cancel path instead of manipulating the modal class directly.
 - **Done:** `showConfirm()` now uses a guarded `finish(result)` that hides the modal, removes the confirm/cancel click listeners and its own document-level Escape listener, and resolves exactly once; Escape routes through `handleCancel()`, and the global keydown handler no longer touches the confirm modal class.
 
-### 🔴 1.2 Windows packaging references a missing icon file
+### ✅ 1.2 Windows packaging references a missing icon file
 - **Where:** `package.json` → `build.win.icon: "assets/icon.ico"`; `assets/` only contains `icon.icns` and `icon.png`.
 - **What:** `npm run package:win` will fail or produce a package without the intended icon, because `assets/icon.ico` does not exist.
 - **Fix:** Generate a multi-resolution `icon.ico` from `icon.png` and add it to `assets/`, or remove the `win.icon` entry to use electron-builder's fallback.
+- **Done:** generated `assets/icon.ico` from `assets/icon.png` (sips-resized frames at 256/128/64/48/32/24/16 px, packed as PNG-compressed entries into an ICO container — the same layout electron-builder's own icon pipeline emits, valid on Windows Vista+), so `build.win.icon` now points at a real file.
 
 ### ✅ 1.3 Cookie jar is replaced, not merged, on every response
 - **Where:** `src/main/omada-api.ts` — `request()` (~lines 189–195).
@@ -164,9 +165,10 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Why:** Duplicated types drift; one accidental `import` in renderer.ts breaks the app at runtime (CommonJS `exports` doesn't exist in the browser).
 - **Fix:** Introduce esbuild (single small dev-dep) to bundle `renderer.ts` → `renderer.js`; then import shared types and drop the duplicates. Also lets you split the inline i18n table into its own module.
 
-### 🟢 3.5 Trim the packaged app
+### ✅ 3.5 Trim the packaged app
 - **Where:** `tsconfig.json` emits `.d.ts`, `.d.ts.map`, `.js.map` into `dist/`, and `package.json` `build.files` includes all of `dist/**/*`.
 - **Fix:** Either disable `declaration`/`declarationMap`/`sourceMap` for production builds or exclude `*.map`/`*.d.ts` in `build.files`.
+- **Done:** added `!dist/**/*.map` and `!dist/**/*.d.ts` exclusions to `build.files` in `package.json` (`*.map` covers both `.js.map` and `.d.ts.map`), so packages ship only runtime `.js` plus the static HTML/CSS while dev builds keep source maps and declarations.
 
 ### ✅ 3.6 Validate and normalize the controller URL on save (require HTTPS)
 - **Where:** `src/renderer/renderer.ts` — `saveSettings()`; also validate in the main-process `CONFIG_SAVE` handler (the renderer's `type="url"` input enforces nothing since there is no form submission).
@@ -210,7 +212,8 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Fix:** Replace the inline muted-color styles with a CSS class, then use `style-src 'self'`; add `object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'`.
 - **Done:** the muted spans in `updateSelectionInfo()` now use the new `.selection-detail .muted-text` class in `styles.css` (the DOM rewrite from 1.9 removed every inline `style` attribute — none remain anywhere in HTML or TS), and the CSP is now `default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'` (`img-src ... data:` added after Codex review so the `data:` SVG select arrow in `styles.css` keeps rendering).
 
-### 🟢 3.15 Scope macOS title-bar styling to macOS
+### ✅ 3.15 Scope macOS title-bar styling to macOS
 - **Where:** `src/main/index.ts` (~line 23) `titleBarStyle: 'hiddenInset'`; `src/renderer/styles.css` (~lines 63–83) fixed 80 px traffic-light padding.
 - **Why:** Windows/Linux get unnecessary left padding and non-native framing.
 - **Fix:** Apply `hiddenInset` only when `process.platform === 'darwin'`; add a platform class to `<body>` and scope the padding to it.
+- **Done:** `titleBarStyle` is now `process.platform === 'darwin' ? 'hiddenInset' : 'default'`; the sandbox-safe preload exposes `platform: process.platform` on the `omadaAPI` bridge (a value captured at preload time — no IPC round-trip), `applyPlatformClass()` in `renderer.ts` tags `<body>` with `platform-<os>` before first paint, and the 80 px padding moved to a `body.platform-darwin .title-bar` rule in `styles.css`.

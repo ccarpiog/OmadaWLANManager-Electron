@@ -28,6 +28,12 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
 
 // Expose a safe API to the renderer process
 contextBridge.exposeInMainWorld('omadaAPI', {
+  // OS platform ('darwin' | 'win32' | 'linux' | ...), captured once at
+  // preload time so the renderer can scope platform-specific styling (e.g.
+  // the macOS traffic-light padding) without an IPC round-trip. Sandboxed
+  // preloads get a polyfilled `process` that includes `platform`
+  platform: process.platform,
+
   // Configuration. loadConfig() returns a sanitized view: the stored
   // password never crosses the bridge, only a hasPassword flag. saveConfig()
   // sends a password only when the user typed a new one (renderer → main).
@@ -63,6 +69,7 @@ contextBridge.exposeInMainWorld('omadaAPI', {
 
 // Type declaration for the exposed API (for TypeScript support in renderer)
 export interface OmadaAPI {
+  readonly platform: NodeJS.Platform;
   loadConfig(): Promise<RendererConfig>;
   saveConfig(config: ConfigSavePayload): Promise<ConfigSaveResult>;
   connect(): Promise<ConnectionResult>;
