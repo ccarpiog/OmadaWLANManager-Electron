@@ -125,8 +125,10 @@ validation, connect-without-config, console/main-process errors).
   with the keychain profile and aborts the build.
 - Packaged-app smoke test: 10/10 (runs from inside `app.asar`, preload bridge
   intact, focus fix present in the shipped build).
-- Published as a **draft** release on GitHub; the `v1.0.0` git tag is created
-  by GitHub only when the draft is published.
+- **Published** on GitHub 2026-08-29:
+  https://github.com/ccarpiog/OmadaWLANManager-Electron/releases/tag/v1.0.0 —
+  tag `v1.0.0` points at commit `a209965`. Published after the user confirmed
+  the app works against a live controller.
 - Build must NOT use the default `./release` output dir: it lives in Dropbox,
   which strips the symlinks inside `Electron.app` and produces a broken
   bundle. Build to `/private/tmp` and copy the finished `.dmg` back if needed.
@@ -140,10 +142,11 @@ All 7 phases are done, committed, and pushed. Remaining todo.md items are ALL in
 ## Open risks
 
 - Verify-proc cert bypass is hostname-scoped, not origin-scoped (Electron API limitation, see phase 4 notes); fully closed only by deferred item 2.3b (TOFU pinning).
-- ~~No live GUI smoke test~~ — done 2026-08-29, see above. Still NOT covered by
-  it: anything requiring a real controller (connect/auth, re-login, AP and WLAN
-  lists, applying a change, the multi-site selection modal, item 1.10 status
-  values). Those remain untested.
+- ~~No live GUI smoke test~~ — done 2026-08-29, see above.
+- ~~Never tested against a live controller~~ — the user tested the packaged
+  v1.0.0 app against a real controller on 2026-08-29 and reported it working.
+  This was the last blocker on the release. Deferred item 1.10 (status-category
+  mapping) is now actionable: it only needed live status values to verify.
 - ~~Packaging never run end-to-end~~ — `electron-builder --mac` run 2026-08-29
   (signed + notarized, see the release section). Windows and Linux targets are
   still untested.
