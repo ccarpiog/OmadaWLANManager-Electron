@@ -109,6 +109,30 @@ validation, connect-without-config, console/main-process errors).
   there; and `node_modules/app-builder-bin/mac/app-builder_arm64` loses its
   executable bit, which fails electron-builder with `EACCES` until re-chmodded.
 
+### Release v1.0.0 (2026-08-29)
+
+- Artifacts: `Omada WLAN Manager-1.0.0-arm64.dmg` (93 MB) and a matching
+  `-mac.zip`, built by `electron-builder --mac` from commit `3918c8d`.
+  **arm64 only** — no Intel or universal build.
+- Signed with `Developer ID Application: Carlos Carpio García (CXVKS8ZNCD)`,
+  hardened runtime on. The `.app` and the `.dmg` are each notarized and
+  stapled; both report `accepted / source=Notarized Developer ID`, and the app
+  still does so when checked from inside the mounted image.
+- Notarization runs through the `AC_NOTARY_PROFILE` notarytool keychain
+  profile (see `SIGN_AND_NOTARIZE.md` in the user's OneDrive). In
+  `package.json`, `mac.notarize` MUST stay a plain `true`: adding a `teamId`
+  makes @electron/notarize read it as password credentials, which collides
+  with the keychain profile and aborts the build.
+- Packaged-app smoke test: 10/10 (runs from inside `app.asar`, preload bridge
+  intact, focus fix present in the shipped build).
+- Published as a **draft** release on GitHub; the `v1.0.0` git tag is created
+  by GitHub only when the draft is published.
+- Build must NOT use the default `./release` output dir: it lives in Dropbox,
+  which strips the symlinks inside `Electron.app` and produces a broken
+  bundle. Build to `/private/tmp` and copy the finished `.dmg` back if needed.
+  For the same reason `codesign` must select the identity by SHA-1 hash, not
+  by name — the "í" in the name is mangled under a non-UTF-8 locale.
+
 ## Plan status: COMPLETE
 
 All 7 phases are done, committed, and pushed. Remaining todo.md items are ALL in the Deferred list below — each needs user input or a live controller before work can start. There is no next phase to run; a future `/goahead-fable` should tell the user the plan is complete and ask which deferred item (if any) to tackle.
