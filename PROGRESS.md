@@ -1,6 +1,6 @@
 # PROGRESS — Omada WLAN Manager (Electron)
 
-Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-review findings, 2026-08-24).
+Authoritative checkpoint for `/goahead-fable` runs. Plan source: `todo.md` (code-review findings, 2026-08-24).
 
 ## Phase plan
 
@@ -80,15 +80,49 @@ Authoritative checkpoint for `/goahead` runs. Plan source: `todo.md` (code-revie
 - Codex review: `.claude/reviews/phase7-aggregate.md` — 3 P2s (superseded-attempt cleanup disconnecting the newer controller; OMADA_SELECT_SITE not bound to a pending selection; site pagination), all fixed in a worker round per the review's own recommended designs; orchestrator spot-verified the pending-record mechanics.
 - Not tested against a live controller (single- or multi-site) — see Open risks.
 
+### GUI smoke test (2026-08-29)
+
+First real launch of the app since phase 4. Driven with Playwright's
+`_electron` API; script kept at `scratchpad/smoke.mjs` (26 assertions:
+window/preload/sandbox, translations, modal focus + trap + inert, URL
+validation, connect-without-config, console/main-process errors).
+
+- **Verified working:** single window loads the packaged renderer; the
+  sandboxed preload exposes all 9 `omadaAPI` members with no `require`/
+  `process` leaking into the renderer; `platform-darwin` body class; every
+  string translated with no blank/Spanish flash; the `data:` select-arrow
+  renders (phase-4 CSP fix holds); non-https URL rejected renderer-side with
+  no config file written; Tab/Shift+Tab focus trap holds in both directions;
+  zero console errors, zero page errors, zero main-process output.
+- **Bug found and fixed:** opening any modal left keyboard focus on `<body>`.
+  `.modal-overlay` used `transition: all`, so `visibility` was still computed
+  as `hidden` at the instant `openSettings()` called `urlInput.focus()`, and a
+  `visibility: hidden` subtree is not focusable — the call was a silent no-op
+  on every open path, including the first-run auto-open. Confirmed by probe
+  (identical `focus()` call succeeds once the transition finishes). Fixed in
+  `styles.css` by transitioning `opacity`/`visibility` explicitly and
+  overriding `visibility 0s` in `.modal-overlay.visible`. One fix covers all
+  three modals (settings, confirm, site selection). 26/26 checks pass after.
+- Environment gotchas (both caused by the repo living in Dropbox, which
+  strips symlinks and exec bits): `node_modules/electron/dist` unpacks
+  broken — Electron must be extracted to `/private/tmp` and launched from
+  there; and `node_modules/app-builder-bin/mac/app-builder_arm64` loses its
+  executable bit, which fails electron-builder with `EACCES` until re-chmodded.
+
 ## Plan status: COMPLETE
 
-All 7 phases are done, committed, and pushed. Remaining todo.md items are ALL in the Deferred list below — each needs user input or a live controller before work can start. There is no next phase to run; a future `/goahead` should tell the user the plan is complete and ask which deferred item (if any) to tackle.
+All 7 phases are done, committed, and pushed. Remaining todo.md items are ALL in the Deferred list below — each needs user input or a live controller before work can start. There is no next phase to run; a future `/goahead-fable` should tell the user the plan is complete and ask which deferred item (if any) to tackle.
 
 ## Open risks
 
 - Verify-proc cert bypass is hostname-scoped, not origin-scoped (Electron API limitation, see phase 4 notes); fully closed only by deferred item 2.3b (TOFU pinning).
-- No live GUI smoke test has been run for phases 4–7 (`npm start`): sandbox + IPC hardening, the phase-6 UX rework, and the multi-site selection flow are verified statically/by build only. Recommended first thing next session, plus a real connect against a controller (the multi-site path additionally needs a multi-site controller, and item 1.10 needs live status values).
-- Packaging (`npm run package:*`) has never been run end-to-end after the phase-5 config changes.
+- ~~No live GUI smoke test~~ — done 2026-08-29, see above. Still NOT covered by
+  it: anything requiring a real controller (connect/auth, re-login, AP and WLAN
+  lists, applying a change, the multi-site selection modal, item 1.10 status
+  values). Those remain untested.
+- ~~Packaging never run end-to-end~~ — `electron-builder --mac` run 2026-08-29
+  (signed + notarized, see the release section). Windows and Linux targets are
+  still untested.
 
 ## Next action
 

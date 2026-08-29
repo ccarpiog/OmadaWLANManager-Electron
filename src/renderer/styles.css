@@ -426,13 +426,23 @@ body.platform-darwin .title-bar {
   justify-content: center;
   opacity: 0;
   visibility: hidden;
-  transition: all var(--transition);
+  /* `visibility` is transitioned on purpose (it keeps the overlay painted
+     while it fades out on close), but it must NOT be transitioned on open:
+     with a duration, the computed value is still `hidden` at the instant the
+     .visible class is added, and a visibility:hidden subtree is not
+     focusable — so the focus() call at the end of openSettings() (and the
+     equivalents in showConfirm()/showSiteSelection()) would silently do
+     nothing and leave keyboard focus on <body>. Hence the 0s override in
+     the .visible rule below. Do not collapse these back into `all`. */
+  transition: opacity var(--transition), visibility var(--transition);
   z-index: 100;
 }
 
 .modal-overlay.visible {
   opacity: 1;
   visibility: visible;
+  /* Flip to visible immediately so the modal is focusable straight away */
+  transition: opacity var(--transition), visibility 0s;
 }
 
 .modal {
