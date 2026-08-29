@@ -15,7 +15,7 @@ Authoritative checkpoint for `/goahead-fable` runs. Plan source: `todo.md` (code
 | 7 | Connection flow & multi-site: 1.11, 3.12 | **done** |
 
 **Deferred (need user input or live controller):**
-- 1.10 status-category mapping — needs verification against a live controller.
+- ~~1.10 status-category mapping~~ — **done 2026-08-29** (see below).
 - 2.3b trust-on-first-use cert pinning — UX decision (first-use confirmation dialog).
 - 3.3 Electron 28 → current major upgrade — risky, retest on all platforms; user call.
 - 3.4 esbuild bundler for renderer — structural change; user call.
@@ -134,6 +134,25 @@ validation, connect-without-config, console/main-process errors).
   bundle. Build to `/private/tmp` and copy the finished `.dmg` back if needed.
   For the same reason `codesign` must select the identity by SHA-1 hash, not
   by name — the "í" in the name is mangled under a non-UTF-8 locale.
+
+### Item 1.10 — AP status-category mapping (2026-08-29, post-v1.0.0)
+
+- `isOnline` (categories 1 and 2 green, everything else red) replaced by an
+  `AP_STATUS` table + `getApStatus()` in `renderer.ts`: 0 disconnected (red),
+  1 connected (green), 2 pending/adopting (blue), 3 heartbeat missed and
+  4 isolated (orange, distinguished by label), unknown → grey fallback so a
+  category added by future firmware cannot look like a dead AP. The status dot
+  gained `title` + `role="img"`/`aria-label`, so state is no longer
+  colour-only. Six new `statusAp*` i18n keys (es+en).
+- Verified with `scratchpad/smoke-status.mjs` (23/23): the main-process IPC
+  handlers are stubbed so the renderer walks its real connect → loadData →
+  renderApList path over one AP per category. **Not** verified against live
+  hardware — the numeric → meaning mapping remains the documented Omada one.
+- **Test isolation matters now:** the user has a real config in
+  `~/.omada-wlan-manager/`, so the app auto-connects to their live controller
+  on startup. Every smoke script launches Electron with `HOME` pointed at
+  `scratchpad/fakehome` to keep tests off that controller and off the real
+  config. Do not drop that override.
 
 ## Plan status: COMPLETE
 

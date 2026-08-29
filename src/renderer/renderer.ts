@@ -62,6 +62,14 @@ interface Translations {
   siteSelectionMessage: string;
   siteSelectError: string;
   connectionSuperseded: string;
+  // AP status categories (see AP_STATUS below). Shown as the accessible name
+  // of the status dot, so the state is not conveyed by colour alone.
+  statusApConnected: string;
+  statusApPending: string;
+  statusApHeartbeatMissed: string;
+  statusApIsolated: string;
+  statusApDisconnected: string;
+  statusApUnknown: string;
 }
 
 const translations: Record<Language, Translations> = {
@@ -120,6 +128,12 @@ const translations: Record<Language, Translations> = {
     siteSelectionMessage: 'Este controlador gestiona varios sitios. Elige cuál quieres administrar:',
     siteSelectError: 'No se pudo seleccionar el sitio',
     connectionSuperseded: 'Conexión descartada: se inició un intento más reciente',
+    statusApConnected: 'Conectado',
+    statusApPending: 'Adoptando',
+    statusApHeartbeatMissed: 'Sin respuesta',
+    statusApIsolated: 'Aislado',
+    statusApDisconnected: 'Desconectado',
+    statusApUnknown: 'Estado desconocido',
   },
   en: {
     disconnected: 'Disconnected',
@@ -176,6 +190,12 @@ const translations: Record<Language, Translations> = {
     siteSelectionMessage: 'This controller manages several sites. Choose which one to manage:',
     siteSelectError: 'Could not select the site',
     connectionSuperseded: 'Connection discarded: a newer attempt was started',
+    statusApConnected: 'Connected',
+    statusApPending: 'Adopting',
+    statusApHeartbeatMissed: 'Heartbeat missed',
+    statusApIsolated: 'Isolated',
+    statusApDisconnected: 'Disconnected',
+    statusApUnknown: 'Unknown status',
   },
 };
 
@@ -616,6 +636,43 @@ function moveOptionFocus(listElement: HTMLElement, current: HTMLElement, directi
 } // End of function moveOptionFocus()
 
 /**
+ * Presentation for each Omada AP `statusCategory`, keyed by the numeric value
+ * the controller reports:
+ *
+ *   0 disconnected — the controller has lost the AP entirely
+ *   1 connected    — normal working state
+ *   2 pending      — being adopted; reachable but not yet managed
+ *   3 heartbeat missed — adopted, but the controller stopped hearing from it
+ *   4 isolated     — adopted and reachable, but cut off from its uplink
+ *
+ * Previously categories 1 and 2 were both painted green as "online" and
+ * everything else red as "offline", which claimed a pending AP was working and
+ * hid the difference between a dead AP and one that had merely gone quiet.
+ * Each state now gets its own colour and its own label (see the statusAp*
+ * translation keys).
+ */
+const AP_STATUS: Record<number, { className: string; labelKey: keyof Translations }> = {
+  0: { className: 'offline', labelKey: 'statusApDisconnected' },
+  1: { className: 'online', labelKey: 'statusApConnected' },
+  2: { className: 'pending', labelKey: 'statusApPending' },
+  3: { className: 'warning', labelKey: 'statusApHeartbeatMissed' },
+  4: { className: 'isolated', labelKey: 'statusApIsolated' },
+};
+
+/**
+ * Maps an AP's `statusCategory` to its colour class and label key, falling
+ * back to a neutral "unknown" state for any value the controller reports that
+ * is not in AP_STATUS — a newer firmware adding a category must not make an AP
+ * look disconnected.
+ * @param {number} statusCategory - The category reported by the controller.
+ * @returns {{ className: string; labelKey: keyof Translations }} Presentation
+ *   for that state.
+ */
+function getApStatus(statusCategory: number): { className: string; labelKey: keyof Translations } {
+  return AP_STATUS[statusCategory] ?? { className: 'unknown', labelKey: 'statusApUnknown' };
+} // End of function getApStatus()
+
+/**
  * Builds one AP list item entirely with DOM APIs (createElement/textContent/
  * dataset — no HTML strings), so values coming from the controller can never
  * be interpreted as markup. The item acts as a listbox option (which, unlike
@@ -626,7 +683,7 @@ function moveOptionFocus(listElement: HTMLElement, current: HTMLElement, directi
  * @returns {HTMLElement} The list-item element with its handlers attached.
  */
 function createApListItem(ap: AccessPoint): HTMLElement {
-  const isOnline = ap.statusCategory === 1 || ap.statusCategory === 2;
+  const apStatus = getApStatus(ap.statusCategory);
   const isSelected = selectedAp?.mac === ap.mac;
 
   const item = document.createElement('div');
@@ -645,8 +702,14 @@ function createApListItem(ap: AccessPoint): HTMLElement {
   header.className = 'item-header';
 
   const status = document.createElement('span');
-  status.className = isOnline ? 'item-status online' : 'item-status offline';
+  status.className = `item-status ${apStatus.className}`;
   status.textContent = '●';
+  // The dot is the only indicator of the AP's state, so it must carry the
+  // state as text too: colour alone is not an accessible distinction, and
+  // several categories share a colour.
+  status.title = t(apStatus.labelKey);
+  status.setAttribute('role', 'img');
+  status.setAttribute('aria-label', t(apStatus.labelKey));
 
   const name = document.createElement('span');
   name.className = 'item-name';

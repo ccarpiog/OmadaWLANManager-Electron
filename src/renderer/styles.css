@@ -348,12 +348,34 @@ body.platform-darwin .title-bar {
   font-size: 12px;
 }
 
+/* One colour per AP statusCategory (see AP_STATUS in renderer.ts). The dot
+   also carries an aria-label/title, so these are a redundant cue rather than
+   the only way to tell the states apart. */
 .item-status.online {
   color: var(--success-color);
 }
 
+/* Being adopted: in progress rather than healthy or broken */
+.item-status.pending {
+  color: var(--accent-color);
+}
+
+/* Degraded but still adopted — heartbeat missed, and isolated (reachable but
+   cut off from its uplink). They share a colour deliberately: both mean
+   "present but not working", and their labels tell them apart. Separate
+   classes so either can be restyled without touching the other. */
+.item-status.warning,
+.item-status.isolated {
+  color: var(--warning-color);
+}
+
 .item-status.offline {
   color: var(--error-color);
+}
+
+/* Category the controller reports that this build does not know about */
+.item-status.unknown {
+  color: var(--text-muted);
 }
 
 .item-name {
