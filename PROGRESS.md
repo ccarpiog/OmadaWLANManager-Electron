@@ -154,6 +154,20 @@ validation, connect-without-config, console/main-process errors).
   `scratchpad/fakehome` to keep tests off that controller and off the real
   config. Do not drop that override.
 
+### Release v1.1.0 (2026-08-29)
+
+- Ships item 1.10 (AP status categories) plus the modal focus fix that v1.0.0
+  already contained. Minor, not patch: the status states are user-visible new
+  behaviour, not a silent correction.
+- `Omada WLAN Manager-1.1.0-arm64.dmg`, arm64 only. App and disk image both
+  signed, notarized and stapled; both report
+  `accepted / source=Notarized Developer ID`.
+- Verified before publishing: source-tree smoke 26/26, packaged-app smoke
+  10/10, status-category rendering 23/23 **against the packaged app**
+  (`PACKAGED=1 node smoke-status.mjs`).
+- `notarize-dmg.sh` now globs the `.dmg` instead of hard-coding a version, so
+  it survives future releases.
+
 ## Plan status: COMPLETE
 
 All 7 phases are done, committed, and pushed. Remaining todo.md items are ALL in the Deferred list below — each needs user input or a live controller before work can start. There is no next phase to run; a future `/goahead-fable` should tell the user the plan is complete and ask which deferred item (if any) to tackle.
