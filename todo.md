@@ -117,7 +117,7 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Fix:** Set `sandbox: true`, keep `contextIsolation: true` / `nodeIntegration: false`, and verify the preload still works.
 - **Done:** `sandbox: true` set (contextIsolation/nodeIntegration untouched); `preload.ts` was made sandbox-compatible by removing its one runtime dependency on a project file — the `IPC_CHANNELS` value import from `shared/types` (a sandboxed preload's polyfilled `require()` cannot load project files) is now a local copy compile-time-checked against the shared table via `typeof SHARED_IPC_CHANNELS`, and every other import is `import type`; the compiled `dist/main/preload.js` only `require`s `electron`, which the sandbox provides.
 
-### ✅ 2.3 Certificate trust is all-or-nothing for the configured host *(part a done; part b deferred)*
+### ✅ 2.3 Certificate trust is all-or-nothing for the configured host *(part a done; part b scheduled as 4.4 — phase 11)*
 - **Where:** `src/main/index.ts` — `setCertificateVerifyProc` (accepts *any* cert for the configured hostname, ignoring fingerprint/port) and the `certificate-error` handler (`url.startsWith(configUrl)` — a prefix match, so `https://192.168.1.1` also matches `https://192.168.1.100`, and `https://controller` matches `https://controller.attacker.example`).
 - **What:** Necessary for self-signed certs, but it silently accepts a MITM cert too — an interceptor can capture the login credentials and alter API responses.
 - **Fix:** (a) In `certificate-error`, compare parsed origins (`new URL(configUrl).origin === new URL(url).origin`) instead of `startsWith` — or remove the handler once (b) is done. (b) Trust-on-first-use pinning: store `request.certificate.fingerprint256` after explicit first-use confirmation and return `-3` on any mismatch.
@@ -161,11 +161,11 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Fix:** Add a refresh icon-button (header or next to the filters) that calls `loadData()`; show a lightweight loading state in the panels while fetching.
 - **Done:** added a refresh icon-button (`#refreshBtn`) to the header, enabled only while connected (`setStatus()` gates it) and guarded against re-entry (`isLoadingData`); `loadData()` now shows a spinner in both panels (`createLoadingState()` using the existing `.loading`/`.spinner` styles, `role="status"` + localized `aria-label`) and spins the refresh icon (`.btn-icon.spinning`); on refresh failure `refreshData()` re-renders the previous lists and shows an error toast (`loadError`, es/en).
 
-### 🟢 3.3 Update Electron (28 → current) and dev dependencies
+### 🟢 3.3 Update Electron (28 → current) and dev dependencies — scheduled as 4.3 (phase 10)
 - **Why:** Electron 28 (Dec 2023) is long EOL; it embeds an old Chromium/Node with known CVEs. electron-builder 24 is similarly outdated.
 - **Fix:** Bump `electron`, `electron-builder`, `typescript`, `@types/node` incrementally; retest cert verification, sandboxed preload behavior, and packaging on all three platforms.
 
-### 🟢 3.4 Share types between renderer and the rest of the app (bundler)
+### 🟢 3.4 Share types between renderer and the rest of the app (bundler) — scheduled as 4.1 (phase 8)
 - **Where:** `src/renderer/renderer.ts` duplicates `AccessPoint`/`WlanGroup`/`Language` because the renderer is compiled as a plain non-module script.
 - **Why:** Duplicated types drift; one accidental `import` in renderer.ts breaks the app at runtime (CommonJS `exports` doesn't exist in the browser).
 - **Fix:** Introduce esbuild (single small dev-dep) to bundle `renderer.ts` → `renderer.js`; then import shared types and drop the duplicates. Also lets you split the inline i18n table into its own module.
@@ -198,7 +198,7 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - `IPC_CHANNELS.OMADA_DISCONNECT` becomes live again once 1.12 is fixed.
 - **Done:** deleted the `currentServerUrl` declaration and both writes in `renderer.ts`; `IPC_CHANNELS.OMADA_DISCONNECT` is now live via the 1.12 fix.
 
-### 🟢 3.10 Add lint/format/test scaffolding
+### 🟢 3.10 Add lint/format/test scaffolding — tests scheduled as 4.2 (phase 9); ESLint/CI still optional
 - No ESLint, no Prettier config, no tests, no CI. For a codebase this size, at least add ESLint (typescript-eslint) + a `lint` script; a couple of unit tests for `OmadaController.request`/cookie handling (with the net module mocked) would catch regressions like 1.3.
 
 ### 🟢 3.11 Dev environment note (Dropbox)
@@ -226,3 +226,67 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Why:** Windows/Linux get unnecessary left padding and non-native framing.
 - **Fix:** Apply `hiddenInset` only when `process.platform === 'darwin'`; add a platform class to `<body>` and scope the padding to it.
 - **Done:** `titleBarStyle` is now `process.platform === 'darwin' ? 'hiddenInset' : 'default'`; the sandbox-safe preload exposes `platform: process.platform` on the `omadaAPI` bridge (a value captured at preload time — no IPC round-trip), `applyPlatformClass()` in `renderer.ts` tags `<body>` with `platform-<os>` before first paint, and the 80 px padding moved to a `body.platform-darwin .title-bar` rule in `styles.css`.
+
+---
+
+## 4. Omada 6.3: AP groups & Wi-Fi network management (planned 2026-10-06)
+
+Plan agreed with the user after live tests on controller 6.3.0.45 and two Codex reviews. **Spec:**
+`docs/management-design.md` (decisions, architecture, security, UI). **API facts:**
+`docs/omada-6.3-api-findings.md` + `docs/omada-openapi-ops.md`. One item = one autoclaude phase
+(phase numbers continue PROGRESS.md). Every phase: `npm run build` exits 0, es/en i18n parity, JSDoc
+on every function, closing-brace comments on blocks > 10 lines, **no contact with the real controller
+and no use of the real `~/.omada-wlan-manager/` config** (design spec §1, D4).
+
+### 🟢 4.1 Renderer modularization with esbuild — phase 8 (absorbs 3.4)
+- **What:** Bundle the renderer with esbuild (`renderer.ts` → `renderer.js`), split the ~1,950-line `renderer.ts` into modules (i18n table, DOM helpers, AP list, group list, modals, toasts, state), import shared types from `src/shared/types.ts` and delete the duplicated renderer types.
+- **Constraints:** no behavior or markup change; CSP stays `script-src 'self'` (no inline/eval bundle output); `npm run build` still produces a runnable `dist/`; packaged files list still correct.
+- **Acceptance:** build exit 0; one bundled renderer script loaded by `index.html`; no duplicated `AccessPoint`/`WlanGroup`/`Language` types; renderer behavior unchanged (manual reasoning + phase 9 smoke).
+
+### 🟢 4.2 Test harness — phase 9 (absorbs part of 3.10; ESLint stays optional)
+- **What:** (a) `npm test` with `node:test` (+ esbuild/tsx transpile if needed) and JSON fixtures for the API response validators, cookie merge and config normalization; extract validators/transport behind an interface so they are testable without Electron's `net`. (b) Commit a Playwright `_electron` GUI smoke harness under `tests/smoke/` that stubs the main-process IPC handlers, launches with `HOME` pointed at a temp dir, and supports an `ELECTRON_PATH` override (Dropbox breaks `node_modules/electron/dist` — see PROGRESS.md "GUI smoke test").
+- **Acceptance:** `npm test` exit 0 with ≥ 1 fixture test per validator; `npm run smoke` covers startup in es and en, first-run, connect → lists rendered, single AP move with confirm/cancel, and zero console errors.
+
+### 🟢 4.3 Electron upgrade — phase 10 (absorbs 3.3)
+- **What:** Electron 28 → current stable major; bump electron-builder, TypeScript, @types/node. Re-check sandboxed preload, `setCertificateVerifyProc`, `certificate-error`, CSP, `net.request` behavior and packaging config (`mac.notarize` must stay plain `true`, see PROGRESS.md release notes).
+- **Acceptance:** build, `npm test`, `npm run smoke` all exit 0 on the new Electron; `electron-builder --mac --dir` (unsigned, output under `/private/tmp`) succeeds; breaking changes noted in PROGRESS.md.
+
+### 🟡 4.4 URL-scoped credentials + certificate TOFU pinning — phase 11 (completes 2.3b)
+- **What:** Changing the controller URL clears password, Client Secret, site id and pin and requires new credentials (today a blank password reuses the old controller's password — `src/main/config.ts` `saveConfig()`). TOFU pinning per normalized origin with a first-use fingerprint confirmation dialog, mismatch dialog, and "Reset trusted certificate" in Settings; no credential is sent before the pin check passes. Fix README's stale "Python-compatible / plaintext" config note.
+- **Acceptance:** unit tests for URL-change clearing and pin match/mismatch/first-use; smoke covers the first-use dialog and the mismatch dialog (stubbed); es/en strings added.
+
+### 🔴 4.5 Omada 6.3 correctness & terminology — phase 12
+- **What:** Keep `controllerVer` from `/api/info`; derive `groupModel`; load the authoritative group list from `GET setting/wlans` (includes **empty** groups such as `zNinguna`, which the app currently cannot show) and outer-join SSID names from `GET setting/ssids`; ignore entries whose `deviceType` is not an AP type; vocabulary switches "AP groups" (6.3+) vs "WLAN groups (legacy)"; README/package description updated.
+- **Acceptance:** fixtures: 6.3 payload with an empty group renders it; legacy payload keeps "WLAN group" wording; unit tests for the join; smoke shows an empty group as selectable.
+
+### 🟢 4.6 New app shell + Access points view — phase 13
+- **What:** Sidebar navigation (Access points / AP groups / Wi-Fi networks with counts), site + connection state, refresh with "Updated hh:mm"; Access points view per spec §4.3: native checkbox multi-select, range select, selection that survives filters, always-visible destination pane with group/SSID search, "Silence" section for empty groups, gains/losses preview, review dialog, **sequential bulk move with per-AP results and Retry failed**, specific button labels. Moves use only the internal `PATCH eaps/{mac}` path.
+- **Acceptance:** smoke: single move, bulk move (all succeed / partial failure / cancel), selection survives filtering, keyboard-only move, empty group selectable and labelled; AP groups / Wi-Fi networks nav items present (placeholder content allowed until phase 14).
+
+### 🟢 4.7 Read-only AP groups & Wi-Fi networks views, cross-navigation, responsive layout — phase 14
+- **What:** Spec §4.4/§4.5 in read-only form from internal data (group → SSID names; network → groups/APs); cross-links with "Back to …"; all states from §4.6 (first run, disconnected, loading, refreshing, no data vs no results, errors, read-only banner with reason); responsive breakpoints and keyboard rules from §4.7.
+- **Acceptance:** smoke at 1200, 900 and 720 px widths; cross-navigation round trip; Cmd/Ctrl+F and Escape behavior; read-only banner shows the "no management credentials" reason.
+
+### 🟡 4.8 Open API credentials, client & capability detection — phase 15
+- **What:** Settings "Management access (optional)" (Client ID, Client Secret — `safeStorage` only, refuse plaintext persistence, session-only fallback); `OpenApiClient` (token lifecycle with single shared re-acquire, `AccessToken=` header, pagination, explicit v1/v2 paths, DELETE support, validators, central redactor); `ControllerSession` facade; capability checks and reason codes from spec §2.2; "Test management access" button.
+- **Acceptance:** unit tests: token acquire/expiry/re-acquire-once, redaction (no secret in logs/errors/IPC), capability matrix (each failing check → management off with the right reason), site/group id-set mismatch disables management; Client Secret never returned over IPC (`hasClientSecret` only).
+
+### 🟡 4.9 AP group management — phase 16
+- **What:** Create (empty, name only), rename, delete (only non-default, 0 APs, no bindings — app policy), per-band capacity display, "Move access points here" reusing the phase-13 move flow (internal path). New IPC channels follow spec §3.
+- **Acceptance:** contract tests against fixtures for each Open API call (method, path version, body); smoke: create → rename → delete-blocked-when-non-empty → delete-empty; UI hidden/explained when the capability is off.
+
+### 🟢 4.10 Wi-Fi network read model (Open API) — phase 17
+- **What:** Paginated v2 SSID catalog, v1 detail and per-SSID AP-group bindings; renderer DTO strips `securityKey` (exposes `hasPassphrase`); enable-field fallback per spec §5; "All access points" scope detection (`chooseDevices = 0`); networks view switches to this source when management is available.
+- **Acceptance:** tests prove nested secrets cannot reach the preload/renderer; malformed payloads rejected; smoke renders scopes "All access points" and "N groups · M APs".
+
+### 🟡 4.11 Wi-Fi network editing (Open + WPA-Personal) — phase 18
+- **What:** Create (disabled by default, bound to selected groups), staged edit of basic settings via main-process read-merge-write, **Change password**, enable/disable via the `enable` endpoint, delete with impact summary; WPA-Personal `basic-config` saves require re-typing the passphrase (spec §3/§5); Enterprise/PPSK: no edit/create, explained in the UI.
+- **Acceptance:** fixture tests for Open and WPA-Personal bodies (required fields present, passphrase only when typed, UTF-8 SSID ≤ 32 bytes, 8–63 char passphrase); smoke for create/edit/cancel/delete confirmations.
+
+### 🟡 4.12 "Broadcast on" binding editor — phase 19
+- **What:** The single canonical SSID ↔ AP-group editor (spec §4.5): searchable group checkboxes, before/after reach diff, per-band capacity validation naming the failing groups/bands, confirmation; "All access points" networks stay read-only (never converted).
+- **Acceptance:** tests: capacity validation, no binding PATCH ever sent for All-devices networks, diff computation; smoke: change bindings → confirm → refreshed state shown.
+
+### 🟢 4.13 Integration, hardening, docs & live-test checklist — phase 20
+- **What:** IPC and redaction audit, async-race review across views, accessibility/keyboard smoke at the three widths, README + a short user guide (es/en UI terms), and `docs/live-test-checklist.md` per spec §6 for the user's manual run on "EAP Carpio" with disposable resources.
+- **Acceptance:** build + tests + smoke exit 0; no secret strings in renderer/IPC/log fixtures; every destructive path confirmed; checklist covers every unknown in spec §5.

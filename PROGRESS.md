@@ -1,6 +1,6 @@
 # PROGRESS — Omada WLAN Manager (Electron)
 
-Authoritative checkpoint for `/goahead-fable` runs. Plan source: `todo.md` (code-review findings, 2026-08-24).
+Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-fable`; earlier phases ran under `/goahead-fable`). Plan source: `todo.md` — sections 1–3 (code-review findings, 2026-08-24, phases 1–7) and **section 4 (Omada 6.3 AP groups & Wi-Fi network management, 2026-10-06, phases 8–20)**. Phases 8–20 implement the spec in `docs/management-design.md`; read that spec's relevant section before starting any of them.
 
 ## Phase plan
 
@@ -13,19 +13,36 @@ Authoritative checkpoint for `/goahead-fable` runs. Plan source: `todo.md` (code
 | 5 | Packaging & platform: 1.2, 3.5, 3.15 | **done** |
 | 6 | UX improvements: 3.1, 3.2, 3.7, 3.8 (+OMADA_CONNECT i18n error codes) | **done** |
 | 7 | Connection flow & multi-site: 1.11, 3.12 | **done** |
+| 8 | 4.1 Renderer modularization with esbuild (absorbs 3.4) — risk: high (structural, no behavior change) | pending |
+| 9 | 4.2 Test harness: `npm test` (node:test + fixtures) and committed Playwright `_electron` smoke with stubbed main (`npm run smoke`) — risk: routine | pending |
+| 10 | 4.3 Electron 28 → current major (absorbs 3.3) — risk: high | pending |
+| 11 | 4.4 URL-scoped credentials + certificate TOFU pinning (completes 2.3b) — risk: high | pending |
+| 12 | 4.5 Omada 6.3 correctness: `controllerVer`, `groupModel`, full group list from `setting/wlans` (empty groups), AP/WLAN terminology — risk: routine | pending |
+| 13 | 4.6 New app shell (sidebar) + Access points view: multi-select, bulk move with per-AP results — risk: high | pending |
+| 14 | 4.7 Read-only AP groups & Wi-Fi networks views, cross-navigation, states, responsive layout — risk: routine | pending |
+| 15 | 4.8 Open API credentials, `OpenApiClient`, `ControllerSession`, capability detection — risk: high | pending |
+| 16 | 4.9 AP group management (create/rename/delete-if-empty, move APs here) — risk: high | pending |
+| 17 | 4.10 Wi-Fi network read model via Open API (secrets stripped) — risk: routine | pending |
+| 18 | 4.11 Wi-Fi network editing, Open + WPA-Personal (read-merge-write, change password) — risk: high | pending |
+| 19 | 4.12 "Broadcast on" SSID ↔ AP-group binding editor with capacity checks — risk: high | pending |
+| 20 | 4.13 Integration, hardening, docs, `docs/live-test-checklist.md` — risk: routine | pending |
+
+**Phases 8–20 invariants (user decision D4, 2026-10-06):** no phase may contact the real controller (`192.168.1.130`) or read/write the real `~/.omada-wlan-manager/` config. Verification is `npm run build` + (from phase 9) `npm test` + `npm run smoke` against a stubbed main process with `HOME` pointed at a temp dir. Behaviors that need a live controller follow the defensive defaults in `docs/management-design.md` §5; the user runs `docs/live-test-checklist.md` manually after phase 20.
 
 **Deferred (need user input or live controller):**
 - ~~1.10 status-category mapping~~ — **done 2026-08-29** (see below).
-- 2.3b trust-on-first-use cert pinning — UX decision (first-use confirmation dialog).
-- 3.3 Electron 28 → current major upgrade — risky, retest on all platforms; user call.
-- 3.4 esbuild bundler for renderer — structural change; user call.
-- 3.10 ESLint/tests/CI scaffolding — optional final phase if user wants it.
+- ~~2.3b trust-on-first-use cert pinning~~ — scheduled as phase 11 (todo 4.4).
+- ~~3.3 Electron 28 → current major upgrade~~ — scheduled as phase 10 (todo 4.3).
+- ~~3.4 esbuild bundler for renderer~~ — scheduled as phase 8 (todo 4.1).
+- 3.10 ESLint/CI scaffolding — tests scheduled as phase 9 (todo 4.2); ESLint/CI remain optional.
 
 ## Decisions
 
 - **2.1 config compat:** password will be encrypted via `safeStorage` with one-time migration of the plaintext value. This breaks config compatibility with the old Python version (one-way). Chosen because todo.md's own fix instruction recommends it; flagged here for the user.
 - **User-facing text:** the app is bilingual (es/en via the i18n table in `renderer.ts`); every new user-facing string must be added to BOTH languages. Code comments/docs in English.
 - **todo.md upkeep:** each phase worker marks its completed items in `todo.md` (✅ + one line describing how).
+- **Management plan (2026-10-06, user decisions D1–D4 — full text in `docs/management-design.md` §1):** D1 hybrid architecture — internal username/password API stays for viewing and **all AP moves**; an optional Open API Client ID/Secret unlocks AP-group and Wi-Fi network management. D2 groundwork first (phases 8–11). D3 Wi-Fi network editing for Open + WPA-Personal only; Enterprise/PPSK view/enable/bind/delete only. D4 no live-controller tests in autoclaude runs. Defaults: controllers < 6.3 are assignment-only; "All devices" SSID bindings read-only; only empty, unbound, non-default AP groups can be deleted; Client Secret never stored in plaintext.
+- **UI direction (2026-10-06):** sidebar with Access points (landing) / AP groups / Wi-Fi networks; the Wi-Fi networks view is the only place to edit SSID ↔ AP-group bindings; no "remove AP from group" (always "move to"). Spec §4 of `docs/management-design.md`.
 
 ## Environment
 
@@ -168,9 +185,9 @@ validation, connect-without-config, console/main-process errors).
 - `notarize-dmg.sh` now globs the `.dmg` instead of hard-coding a version, so
   it survives future releases.
 
-## Plan status: COMPLETE
+## Plan status: ACTIVE — phases 8–20 pending
 
-All 7 phases are done, committed, and pushed. Remaining todo.md items are ALL in the Deferred list below — each needs user input or a live controller before work can start. There is no next phase to run; a future `/goahead-fable` should tell the user the plan is complete and ask which deferred item (if any) to tackle.
+Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
 ## Open risks
 
@@ -186,7 +203,7 @@ All 7 phases are done, committed, and pushed. Remaining todo.md items are ALL in
 
 ## Next action
 
-None — the plan is complete (see "Plan status" above). If the user wants more: (1) run the live smoke tests listed under Open risks; (2) pick from the Deferred list (1.10 status mapping — needs live controller; 2.3b TOFU cert pinning — needs a UX decision; 3.3 Electron upgrade; 3.4 esbuild bundling; 3.10 ESLint/tests/CI). Ask, don't assume.
+**Phase 8 — todo 4.1, renderer modularization with esbuild.** Read `todo.md` item 4.1 and `docs/management-design.md` §1 (invariants) first. Introduce esbuild for the renderer bundle, split `src/renderer/renderer.ts` into modules, and import shared types from `src/shared/types.ts`. No behavior or markup change; CSP stays `script-src 'self'`. Acceptance: `npm run build` exit 0, `index.html` loads one bundled renderer script, and no duplicated renderer types remain. GUI smoke coverage arrives in phase 9, so phase 8's review must check carefully that behavior is unchanged.
 
 ## Key paths
 
@@ -195,6 +212,9 @@ None — the plan is complete (see "Plan status" above). If the user wants more:
 - `src/main/omada-api.ts` — OmadaController HTTP client
 - `src/main/config.ts` — config persistence
 - `src/main/preload.ts` — contextBridge API
+- `docs/management-design.md` — approved spec for phases 8–20 (decisions, architecture, security, UI)
+- `docs/omada-6.3-api-findings.md` — live API findings on controller 6.3.0.45 (internal API + Open API summary)
+- `docs/omada-openapi-ops.md` — Open API operations (params, bodies, responses) extracted from the controller's own spec
 
 ## Git state
 
