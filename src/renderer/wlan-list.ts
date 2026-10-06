@@ -1,11 +1,12 @@
 // ============================================================================
-// WLAN group list panel: list items and rendering
+// Group list panel (AP groups on Omada 6.3+, WLAN groups before — the code
+// keeps the internal API's "WLAN" naming): list items and rendering
 // ============================================================================
 
 import type { WlanGroup } from '../shared/types';
 import { wlanList } from './elements';
 import { applyRovingTabindex, createEmptyState, focusListItemByData, moveOptionFocus } from './dom-helpers';
-import { t } from './i18n';
+import { t, tGroup } from './i18n';
 import { updateSelectionInfo } from './panels';
 import { state } from './state';
 
@@ -15,7 +16,9 @@ import { state } from './state';
  * (which, unlike a radio, legitimately supports an empty selection and
  * toggling): clickable, keyboard focusable via roving tabindex (see
  * applyRovingTabindex()), toggled with Enter/Space, with ArrowUp/ArrowDown
- * moving focus between options.
+ * moving focus between options. A group without Wi-Fi networks (an empty
+ * AP group, listed since setting/wlans became the group source) is a normal,
+ * selectable option; its subtitle says that it silences its APs.
  * @param {WlanGroup} wlan - The WLAN group to render.
  * @returns {HTMLElement} The list-item element with its handlers attached.
  */
@@ -47,7 +50,7 @@ function createWlanListItem(wlan: WlanGroup): HTMLElement {
 
   const subtitle = document.createElement('div');
   subtitle.className = 'item-subtitle';
-  subtitle.textContent = ssidPreview || t('noSsids');
+  subtitle.textContent = ssidPreview || t('emptyGroup');
 
   header.appendChild(name);
   content.appendChild(header);
@@ -93,7 +96,7 @@ export function renderWlanList(): void {
   );
 
   if (state.wlanGroups.length === 0) {
-    wlanList.replaceChildren(createEmptyState(t('noWlanGroups')));
+    wlanList.replaceChildren(createEmptyState(tGroup('noGroups')));
     return;
   }
 

@@ -1,13 +1,15 @@
 # Omada WLAN Manager (Electron)
 
-A modern desktop application for managing TP-Link Omada Controller WLAN group assignments for access points.
+A modern desktop application for moving TP-Link Omada Controller access points between AP groups
+(Omada 6.3 and later) or WLAN groups (older controllers).
 
 ## Features
 
 - Connect to TP-Link Omada Controller
 - View all access points with online/offline status
-- View all WLAN groups with their SSIDs
-- Assign WLAN groups to specific access points
+- View all AP groups with the Wi-Fi networks (SSIDs) each one broadcasts,
+  including groups without any network (see [Controller versions](#controller-versions))
+- Move an access point into another group, including an empty one to silence it
 - Supports the self-signed certificates Omada controllers use, with
   trust-on-first-use pinning: you confirm the certificate's SHA-256
   fingerprint once, and a different certificate is refused afterwards
@@ -24,7 +26,8 @@ A modern desktop application for managing TP-Link Omada Controller WLAN group as
   `node --no-turbo-fast-api-calls node_modules/electron-builder/cli.js ...`.
 - npm or yarn
 - macOS 13 (Ventura) or later to run the macOS build (Electron 44 dropped macOS 12)
-- TP-Link Omada Controller (tested with controller versions 5.x and 6.1.0.19)
+- TP-Link Omada Controller (tested with controller versions 5.x and 6.1.0.19;
+  the internal API calls the app makes were verified on 6.3.0.45)
 
 Toolchain: Electron 44 (Chromium 152, Node.js 24), TypeScript 7, esbuild,
 electron-builder 26, Playwright (`playwright-core`) for the GUI smoke test.
@@ -54,8 +57,26 @@ npm run dev
    certificate of your controller and choose **Trust and connect** (no password
    is sent before you do)
 4. Select an Access Point from the left panel
-5. Select a WLAN Group from the right panel
-6. Click **Apply Change** to assign the WLAN group to the access point
+5. Select a group from the right panel (titled **AP groups** on Omada 6.3+,
+   **WLAN groups (legacy)** on older controllers)
+6. Click **Apply Change** to move the access point into that group
+
+## Controller versions
+
+The app reads the controller version from `/api/info` when it connects:
+
+- **Omada 6.3 and later** use AP groups (6.3 turned WLAN groups into AP
+  groups). The list comes from the controller's complete AP-group list, so
+  groups without Wi-Fi networks are shown too, labelled "No Wi-Fi networks —
+  silences these APs": moving an access point there stops it broadcasting.
+- **Older controllers**, and any controller whose version is missing or cannot
+  be read, are treated as legacy: the panel is titled "WLAN groups (legacy)".
+  The app still asks for the complete group list and, when the controller does
+  not offer it, shows the groups that have Wi-Fi networks, as earlier versions
+  of the app did.
+
+Moving an access point always uses the same controller call (`PATCH
+eaps/{mac}` with the group id), whatever the version.
 
 ## Building for Distribution
 
@@ -130,7 +151,8 @@ npm run tls-probe # build, then the opt-in certificate-pinning probe (local HTTP
   `tests/unit/**/*.test.ts` with esbuild into a temp directory (never `dist/`,
   so no test code is packaged) and runs them with `node:test`. Fixtures are
   JSON files under `tests/fixtures/`. Covered: the API response validators,
-  cookie-jar merging, controller URL normalization, the hardened HTTP
+  the group-list join (6.3 and legacy payloads) and the controller-version
+  rule, cookie-jar merging, controller URL normalization, the hardened HTTP
   transport, and `OmadaController` driven through a fake transport. A test
   that imports Electron fails the bundle step.
 - `npm run smoke` launches Electron through Playwright (`playwright-core`, which
@@ -179,7 +201,7 @@ omada-electron/
 │   │   ├── cert-verify.ts     # Certificate hooks + replaceable controller session
 │   │   ├── connection-manager.ts # Connection state machine (connect, site choice, trust, reset, URL change)
 │   │   ├── omada-validators.ts, cookie-jar.ts, url.ts, # Pure, unit-tested helpers
-│   │   │   cert-pinning.ts, config-model.ts
+│   │   │   cert-pinning.ts, config-model.ts, controller-version.ts
 │   │   └── preload.ts  # Preload script for secure IPC
 │   ├── renderer/       # Renderer process (Browser), bundled by esbuild
 │   │   ├── index.html  # Main HTML

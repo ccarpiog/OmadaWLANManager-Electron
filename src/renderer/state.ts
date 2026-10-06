@@ -3,7 +3,7 @@
 // modules read and write `state.<field>` instead of reassigning their own
 // `let`s. Nothing else in src/renderer declares module-level mutable state.
 
-import type { AccessPoint, Language, WlanGroup } from '../shared/types';
+import type { AccessPoint, GroupModel, Language, WlanGroup } from '../shared/types';
 import { refreshBtn } from './elements';
 
 /**
@@ -16,6 +16,12 @@ export interface RendererState {
   // Loaded controller data and the current selection
   accessPoints: AccessPoint[];
   wlanGroups: WlanGroup[];
+  // Group model and version of the controller the loaded groups come from
+  // (getWlanGroups()); both null while no controller data is loaded. The
+  // model picks the group vocabulary (tGroup() in i18n.ts); the version is
+  // kept for display by later views
+  groupModel: GroupModel | null;
+  controllerVersion: string | null;
   selectedAp: AccessPoint | null;
   selectedWlan: WlanGroup | null;
   isConnected: boolean;
@@ -62,6 +68,8 @@ export const state: RendererState = {
   currentLanguage: 'es',
   accessPoints: [],
   wlanGroups: [],
+  groupModel: null,
+  controllerVersion: null,
   selectedAp: null,
   selectedWlan: null,
   isConnected: false,

@@ -22,6 +22,43 @@ export interface SitePage {
 }
 
 /**
+ * One entry of the authoritative group list (internal `GET setting/wlans`,
+ * see validateGroupList()): the group id and its display name.
+ */
+export interface GroupListEntry {
+  id: string;
+  name: string;
+}
+
+/**
+ * Result of joinGroupsWithSsids(): the joined groups, in group-list order, and
+ * the ids of the `setting/ssids` entries that matched no listed group (they
+ * were left out; the caller may log them).
+ */
+export interface GroupJoinResult {
+  groups: WlanGroup[];
+  ignoredSsidGroupIds: string[];
+}
+
+/**
+ * Tells whether a group-payload entry belongs to access points. Group payloads
+ * (`setting/ssids` entries carry it; see docs/omada-6.3-api-findings.md) may
+ * tag each entry with a `deviceType`: only the AP type ('ap', in any letter
+ * case) counts. An entry without the field (absent or null) counts as an AP
+ * entry, because these endpoints have always served AP groups and older
+ * payloads may not carry the tag.
+ * @param {Record<string, unknown>} entry - One payload entry (an object).
+ * @returns {boolean} True when the entry is an access-point entry.
+ */
+function isApEntry(entry: Record<string, unknown>): boolean {
+  const deviceType = entry.deviceType;
+  if (deviceType === undefined || deviceType === null) {
+    return true;
+  }
+  return typeof deviceType === 'string' && deviceType.toLowerCase() === 'ap';
+}
+
+/**
  * Validate and normalize the raw device list returned by the controller.
  * Keeps only access points and normalizes optional display fields
  * (missing name, wlanGroup, statusCategory) so later dereferences cannot
@@ -68,13 +105,17 @@ export function validateAccessPoints(result: unknown): AccessPoint[] {
 } // End of function validateAccessPoints()
 
 /**
- * Validate and normalize the raw WLAN/SSID payload returned by the
- * controller. Normalizes only optional display fields (missing wlanName,
- * missing SSID lists become empty). Required identifiers are strict: an
- * entry that is not an object or lacks a string wlanId makes the whole
- * payload fail as unsupported instead of silently shrinking the list.
+ * Validate and normalize the raw `setting/ssids` payload: one entry per group
+ * that has Wi-Fi networks, with the group id (`wlanId`), its name and its SSID
+ * list (on Omada 6.3+ `wlanId` is the AP-group id, and groups without SSIDs
+ * are omitted — see validateGroupList() for the complete list). Entries whose
+ * `deviceType` is not the AP type are ignored (isApEntry()). Normalizes only
+ * optional display fields (missing wlanName, missing SSID lists become empty).
+ * Required identifiers are strict: an entry that is not an object, or an AP
+ * entry without a string wlanId, makes the whole payload fail as unsupported
+ * instead of silently shrinking the list.
  * @param {unknown} result - Raw `result` field of the ssids response.
- * @returns {WlanGroup[]} The normalized list of WLAN groups.
+ * @returns {WlanGroup[]} The normalized groups with their SSID names.
  * @throws {Error} When the payload shape is unsupported.
  */
 export function validateWlanGroups(result: unknown): WlanGroup[] {
@@ -91,6 +132,9 @@ export function validateWlanGroups(result: unknown): WlanGroup[] {
       throw new Error('Unsupported API response (WLANs)');
     }
     const wlan = entry as Record<string, unknown>;
+    if (!isApEntry(wlan)) {
+      continue; // Not an access-point group (e.g. a gateway's own Wi-Fi)
+    }
     if (typeof wlan.wlanId !== 'string' || wlan.wlanId === '') {
       // wlanId is the group's required identifier
       throw new Error('Unsupported API response (WLANs)');
@@ -115,6 +159,96 @@ export function validateWlanGroups(result: unknown): WlanGroup[] {
 
   return wlanGroups;
 } // End of function validateWlanGroups()
+
+/**
+ * Validate the authoritative group list (`setting/wlans`): `result.data` must
+ * be an array of objects, and every access-point entry needs a non-empty
+ * string `id`; otherwise the controller speaks a shape we don't support. On
+ * Omada 6.3+ this is the complete AP-group list, including groups without
+ * SSIDs (docs/omada-6.3-api-findings.md). Entries whose `deviceType` is not
+ * the AP type are ignored (isApEntry()); a repeated id keeps its first entry.
+ * Only the display name is normalized (a missing one becomes ''); every other
+ * field (default flag, per-band capacity, ...) is left out of the result.
+ * @param {unknown} result - Raw `result` field of the wlans response.
+ * @returns {GroupListEntry[]} The groups, in response order.
+ * @throws {Error} When the payload shape is unsupported.
+ */
+export function validateGroupList(result: unknown): GroupListEntry[] {
+  const data = result !== null && typeof result === 'object'
+    ? (result as Record<string, unknown>).data
+    : undefined;
+  if (!Array.isArray(data)) {
+    throw new Error('Unsupported API response (groups)');
+  }
+
+  const groups: GroupListEntry[] = [];
+  const seenIds = new Set<string>();
+  for (const entry of data) {
+    if (entry === null || typeof entry !== 'object') {
+      throw new Error('Unsupported API response (groups)');
+    }
+    const group = entry as Record<string, unknown>;
+    if (!isApEntry(group)) {
+      continue; // Not an access-point group
+    }
+    if (typeof group.id !== 'string' || group.id === '') {
+      // The id is the group's required identifier (the AP move sends it)
+      throw new Error('Unsupported API response (groups)');
+    }
+    if (seenIds.has(group.id)) {
+      continue; // Deduplicate: keep the first occurrence of each id
+    }
+    seenIds.add(group.id);
+    groups.push({ id: group.id, name: typeof group.name === 'string' ? group.name : '' });
+  } // End of the loop that validates each group-list entry
+
+  return groups;
+} // End of function validateGroupList()
+
+/**
+ * Outer-joins the SSID names of `setting/ssids` (validateWlanGroups() output)
+ * onto the authoritative group list of `setting/wlans` (validateGroupList()
+ * output). Every listed group is kept — including the groups without SSIDs,
+ * which `setting/ssids` omits — with the SSID names of every `setting/ssids`
+ * entry that carries its id, in payload order. A `setting/ssids` entry whose
+ * id is not in the list is left out and reported in `ignoredSsidGroupIds`:
+ * the list is authoritative, and an AP can only be moved into a group it
+ * contains. The name comes from the list; a blank one falls back to the name
+ * `setting/ssids` reports for the same id. The result shares no objects with
+ * the inputs.
+ * @param {GroupListEntry[]} groupList - The validated group list.
+ * @param {WlanGroup[]} ssidGroups - The validated `setting/ssids` groups.
+ * @returns {GroupJoinResult} The joined groups and the ignored ids.
+ */
+export function joinGroupsWithSsids(groupList: GroupListEntry[], ssidGroups: WlanGroup[]): GroupJoinResult {
+  const listedIds = new Set(groupList.map((group) => group.id));
+  const ssidGroupsById = new Map<string, WlanGroup[]>();
+  const ignoredSsidGroupIds: string[] = [];
+
+  for (const ssidGroup of ssidGroups) {
+    if (!listedIds.has(ssidGroup.wlanId)) {
+      if (!ignoredSsidGroupIds.includes(ssidGroup.wlanId)) {
+        ignoredSsidGroupIds.push(ssidGroup.wlanId);
+      }
+      continue;
+    }
+    const matches = ssidGroupsById.get(ssidGroup.wlanId) ?? [];
+    matches.push(ssidGroup);
+    ssidGroupsById.set(ssidGroup.wlanId, matches);
+  } // End of the loop that indexes the setting/ssids entries by group id
+
+  const groups = groupList.map((group): WlanGroup => {
+    const matches = ssidGroupsById.get(group.id) ?? [];
+    const fallbackName = matches.find((match) => match.wlanName !== '')?.wlanName ?? '';
+    return {
+      wlanId: group.id,
+      wlanName: group.name !== '' ? group.name : fallbackName,
+      ssidList: matches.flatMap((match) => match.ssidList.map((ssid) => ({ ssidName: ssid.ssidName })))
+    };
+  });
+
+  return { groups, ignoredSsidGroupIds };
+} // End of function joinGroupsWithSsids()
 
 /**
  * Validate one page of the paginated authorized-site listing: `result.data`

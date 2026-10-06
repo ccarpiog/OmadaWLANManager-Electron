@@ -50,16 +50,43 @@ export interface AccessPoint {
   statusCategory: number;
 }
 
-// WLAN Group data from Omada API
+// A group access points are assigned to: an AP group on Omada 6.3+, a WLAN
+// group on older controllers. The field names are the internal API's: `wlanId`
+// is the group id (the AP-group id on 6.3+, the value an AP move sends with
+// PATCH eaps/{mac}) and `wlanName` its name. `ssidList` holds the Wi-Fi
+// networks the group broadcasts; it is empty for a group without networks
+// (assigning an AP to such a group silences it).
 export interface WlanGroup {
   wlanId: string;
   wlanName: string;
   ssidList: Ssid[];
 }
 
-// SSID within a WLAN Group
+// One Wi-Fi network (SSID) broadcast by a group
 export interface Ssid {
   ssidName: string;
+}
+
+// Group model of the connected controller (docs/management-design.md §2.2):
+// 'apGroup' for Omada 6.3+, where WLAN groups became AP groups; 'wlanGroup'
+// for an older controller, and also when the version is missing or cannot be
+// parsed (defensive default). It selects the vocabulary the renderer shows
+// ("AP groups" vs "WLAN groups (legacy)").
+export type GroupModel = 'apGroup' | 'wlanGroup';
+
+// What the app knows about the connected controller: `controllerVersion` is
+// the `controllerVer` string /api/info reported (trimmed; null when absent or
+// not a sane string) and `groupModel` the model derived from it.
+export interface ControllerInfo {
+  controllerVersion: string | null;
+  groupModel: GroupModel;
+}
+
+// Result of getWlanGroups(): the group list together with the controller info
+// it is expressed in, so the renderer always shows a list with the matching
+// vocabulary.
+export interface GroupListing extends ControllerInfo {
+  groups: WlanGroup[];
 }
 
 // API response wrapper
@@ -165,7 +192,7 @@ export interface OmadaAPI {
   saveConfig(config: ConfigSavePayload): Promise<ConfigSaveResult>;
   connect(): Promise<ConnectionResult>;
   getAccessPoints(): Promise<AccessPoint[]>;
-  getWlanGroups(): Promise<WlanGroup[]>;
+  getWlanGroups(): Promise<GroupListing>;
   setApWlanGroup(mac: string, wlanId: string): Promise<boolean>;
   selectSite(siteId: string, selectionNonce: string): Promise<ConnectionResult>;
   disconnect(selectionNonce?: string): Promise<void>;

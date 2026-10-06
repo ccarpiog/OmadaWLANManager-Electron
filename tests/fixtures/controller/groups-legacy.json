@@ -1,0 +1,42 @@
+{
+  "description": "Pre-6.3 (legacy) controller payloads, made up in the shapes the app has always read: /api/info reports controllerVer 5.15.24.18, so the group model is 'wlanGroup'; the setting/ssids entries carry no deviceType (counted as AP entries). `wlansUnsupported` is the -1600 envelope Omada returns for an unknown path (docs/omada-6.3-api-findings.md): with it getWlanGroups() falls back to the groups setting/ssids reports (`expectedFallbackGroups`, no empty group). `wlans` covers a legacy controller that does serve setting/wlans: the empty WLAN group 'Silencio' is then listed too (`expectedJoinedGroups`). All ids and names are made up; the omadacId matches responses.json.",
+  "apiInfo": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": { "controllerVer": "5.15.24.18", "apiVer": "3", "configured": true, "type": 1, "omadacId": "0f1e2d3c4b5a69788796a5b4c3d2e1f0" }
+  },
+  "wlansUnsupported": {
+    "errorCode": -1600,
+    "msg": "Unsupported request path."
+  },
+  "wlans": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "data": [
+        { "id": "5f1a0c0ffee0000000000b01", "name": "Default", "primary": true, "site": "64f0c0ffee0000000000a001" },
+        { "id": "5f1a0c0ffee0000000000b02", "name": "Aulas", "primary": false, "site": "64f0c0ffee0000000000a001" },
+        { "id": "5f1a0c0ffee0000000000b03", "name": "Silencio", "primary": false, "site": "64f0c0ffee0000000000a001" }
+      ]
+    }
+  },
+  "ssids": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "ssids": [
+        { "wlanId": "5f1a0c0ffee0000000000b01", "wlanName": "Default", "ssidList": [{ "ssidName": "Colegio" }, { "ssidName": "Invitados" }] },
+        { "wlanId": "5f1a0c0ffee0000000000b02", "wlanName": "Aulas", "ssidList": [{ "ssidName": "Alumnos" }] }
+      ]
+    }
+  },
+  "expectedFallbackGroups": [
+    { "wlanId": "5f1a0c0ffee0000000000b02", "wlanName": "Aulas", "ssidList": [{ "ssidName": "Alumnos" }] },
+    { "wlanId": "5f1a0c0ffee0000000000b01", "wlanName": "Default", "ssidList": [{ "ssidName": "Colegio" }, { "ssidName": "Invitados" }] }
+  ],
+  "expectedJoinedGroups": [
+    { "wlanId": "5f1a0c0ffee0000000000b02", "wlanName": "Aulas", "ssidList": [{ "ssidName": "Alumnos" }] },
+    { "wlanId": "5f1a0c0ffee0000000000b01", "wlanName": "Default", "ssidList": [{ "ssidName": "Colegio" }, { "ssidName": "Invitados" }] },
+    { "wlanId": "5f1a0c0ffee0000000000b03", "wlanName": "Silencio", "ssidList": [] }
+  ]
+}

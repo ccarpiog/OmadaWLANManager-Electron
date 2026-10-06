@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-06T21:16:26Z",
+ "updated": "2026-10-06T21:42:47Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -88,9 +88,11 @@
   {
    "id": "12",
    "title": "Omada 6.3 correctness",
-   "status": "queued",
+   "status": "done",
    "risk": "routine",
-   "summary": "Detects the controller version and group model, lists empty AP groups and updates terminology."
+   "summary": "Detects the controller version and group model, lists empty AP groups from setting/wlans and switches AP/WLAN group wording.",
+   "review": "docs/reviews/phase12.md",
+   "narrative": "docs/progress-archive/phase-12.md"
   },
   {
    "id": "13",

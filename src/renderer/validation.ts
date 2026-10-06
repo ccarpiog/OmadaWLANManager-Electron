@@ -6,7 +6,7 @@
 // check the controller-URL mirror against the main-process rules
 // (tests/unit/renderer-validation.test.ts).
 
-import type { CertificateDetails } from '../shared/types';
+import type { CertificateDetails, GroupListing } from '../shared/types';
 
 // Format guards for identifiers crossing the IPC boundary (from the
 // controller via the main process, and back when applying a change). The main
@@ -19,6 +19,9 @@ const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const FINGERPRINT_REGEX = /^[0-9A-F]{2}(?::[0-9A-F]{2}){31}$/;
 // Length cap for the controller host shown in the certificate dialogs
 const MAX_CERTIFICATE_HOST_LENGTH = 300;
+// Length cap for the controller version of a group listing (same value as
+// MAX_CONTROLLER_VERSION_LENGTH in src/main/controller-version.ts)
+const MAX_CONTROLLER_VERSION_LENGTH = 64;
 
 /**
  * Validates a MAC address format (six hex pairs separated by ':' or '-').
@@ -84,6 +87,32 @@ export function parseCertificateDetails(raw: unknown, withPinned: boolean): Cert
   }
   return { host: candidate.host, fingerprint: candidate.fingerprint, pinnedFingerprint: candidate.pinnedFingerprint };
 } // End of function parseCertificateDetails()
+
+/**
+ * Validates the group listing received over IPC (getWlanGroups()) before it
+ * reaches the renderer state. It must be an object with a `groups` array,
+ * otherwise this throws: a broken listing surfaces as a load error, never as
+ * an empty list. The group model is 'apGroup' only when exactly that value
+ * arrives; anything else becomes the legacy 'wlanGroup' (the defensive
+ * default of docs/management-design.md §2.2). The version is kept only as a
+ * non-empty string within the length cap. The group entries are returned as
+ * received: loadData() drops the ones with a malformed id itself.
+ * @param {unknown} raw - The listing received over IPC.
+ * @returns {GroupListing} The validated listing.
+ * @throws {Error} When the listing has no group array.
+ */
+export function parseGroupListing(raw: unknown): GroupListing {
+  if (typeof raw !== 'object' || raw === null || !Array.isArray((raw as Record<string, unknown>).groups)) {
+    throw new Error('Unsupported group listing');
+  }
+  const candidate = raw as Record<string, unknown>;
+  const version = candidate.controllerVersion;
+  return {
+    controllerVersion: typeof version === 'string' && version.length > 0 && version.length <= MAX_CONTROLLER_VERSION_LENGTH ? version : null,
+    groupModel: candidate.groupModel === 'apGroup' ? 'apGroup' : 'wlanGroup',
+    groups: candidate.groups as GroupListing['groups'],
+  };
+} // End of function parseGroupListing()
 
 /**
  * Validates and normalizes the controller URL. Mirrors the main-process rules

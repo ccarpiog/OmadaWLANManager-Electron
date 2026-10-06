@@ -86,6 +86,26 @@
       ]
     }
   },
+  "wlans": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "data": [
+        {
+          "id": "6512a0e1f3b2c41d2e3f4a5b", "name": "Default", "primary": true, "site": "64f0c0ffee0000000000a001", "clone": false, "resource": 0,
+          "remainingBinding": { "2.4GHz": 14, "5GHz": 14, "6GHz": 16, "mlo": 16 }, "maxSsids2G": 16, "maxSsids5G": 16, "maxSsids6G": 16, "maxSsidsMlo": 16
+        },
+        {
+          "id": "6512a0e1f3b2c41d2e3f4a5c", "name": "zGrupo B", "primary": false, "site": "64f0c0ffee0000000000a001", "clone": false, "resource": 0,
+          "remainingBinding": { "2.4GHz": 15, "5GHz": 15, "6GHz": 16, "mlo": 16 }, "maxSsids2G": 16, "maxSsids5G": 16, "maxSsids6G": 16, "maxSsidsMlo": 16
+        },
+        {
+          "id": "6512a0e1f3b2c41d2e3f4a5e", "name": "zNinguna", "primary": false, "site": "64f0c0ffee0000000000a001", "clone": false, "resource": 0,
+          "remainingBinding": { "2.4GHz": 16, "5GHz": 16, "6GHz": 16, "mlo": 16 }, "maxSsids2G": 16, "maxSsids5G": 16, "maxSsids6G": 16, "maxSsidsMlo": 16
+        }
+      ]
+    }
+  },
   "sessionExpired": {
     "errorCode": -1200,
     "msg": "Login required."

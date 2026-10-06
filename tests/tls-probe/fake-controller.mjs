@@ -46,6 +46,11 @@ function route(method, pathname, sites) {
   if (method === 'GET' && pathname === `${prefix}/sites/${SITE_ID}/setting/ssids`) {
     return responses.ssids;
   }
+  // The authoritative group list (the fixture's /api/info reports 6.3.0.45,
+  // where the app requires it — see OmadaController.getWlanGroups())
+  if (method === 'GET' && pathname === `${prefix}/sites/${SITE_ID}/setting/wlans`) {
+    return responses.wlans;
+  }
   return null;
 } // End of function route()
 

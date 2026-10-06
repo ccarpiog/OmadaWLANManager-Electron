@@ -34,12 +34,10 @@ import {
   siteModalTitle,
   statusText,
   wlanFilterInput,
-  wlanList,
-  wlanPanelTitle,
 } from './elements';
 import { renderApList } from './ap-list';
 import { t } from './i18n';
-import { showEmptyStates, updateSelectionInfo } from './panels';
+import { applyGroupVocabulary, showEmptyStates, updateSelectionInfo } from './panels';
 import { state } from './state';
 import { renderWlanList } from './wlan-list';
 
@@ -51,13 +49,11 @@ import { renderWlanList } from './wlan-list';
  * settings save that may have changed the language.
  */
 export function applyTranslations() {
-  // Panel titles
+  // Panel titles and listbox labels for the (keyboard-navigable) list
+  // panels; the group panel's follow the controller's group model
   apPanelTitle.textContent = t('accessPoints');
-  wlanPanelTitle.textContent = t('wlanGroups');
-
-  // Listbox labels for the (keyboard-navigable) list panels
   apList.setAttribute('aria-label', t('accessPoints'));
-  wlanList.setAttribute('aria-label', t('wlanGroups'));
+  applyGroupVocabulary();
 
   // Filter placeholders
   apFilterInput.placeholder = t('filter');

@@ -2,7 +2,8 @@
 // a DOM-free module): the controller-URL mirror must accept and reject exactly
 // what the main process does (same fixture as tests/unit/url.test.ts), and the
 // certificate details of a connect result must be format-checked before they
-// reach the DOM.
+// reach the DOM, and the group listing must carry a group array, a known group
+// model (else the legacy default) and a sane controller version.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -11,6 +12,7 @@ import {
   isSameControllerUrl,
   isValidFingerprint,
   parseCertificateDetails,
+  parseGroupListing,
   validateControllerUrl
 } from '../../src/renderer/validation';
 import { FINGERPRINT_REGEX } from '../../src/main/cert-pinning';
@@ -88,3 +90,38 @@ describe('certificate details validation', () => {
     }
   });
 }); // End of the describe block for certificate details validation
+
+describe('group listing validation (parseGroupListing)', () => {
+  const groups = [{ wlanId: '6512a0e1f3b2c41d2e3f4a5e', wlanName: 'zNinguna', ssidList: [] }];
+
+  test('accepts an AP-groups listing as is', () => {
+    assert.deepEqual(parseGroupListing({ controllerVersion: '6.3.0.45', groupModel: 'apGroup', groups }), {
+      controllerVersion: '6.3.0.45', groupModel: 'apGroup', groups,
+    });
+  });
+
+  test('keeps the legacy model and a null version', () => {
+    assert.deepEqual(parseGroupListing({ controllerVersion: null, groupModel: 'wlanGroup', groups: [] }), {
+      controllerVersion: null, groupModel: 'wlanGroup', groups: [],
+    });
+  });
+
+  test('an unknown or missing group model becomes the legacy one (defensive default)', () => {
+    for (const groupModel of ['APGROUP', 'apgroup', '', 1, null, undefined]) {
+      assert.equal(parseGroupListing({ controllerVersion: '6.3.0.45', groupModel, groups }).groupModel, 'wlanGroup', String(groupModel));
+    }
+  });
+
+  test('a non-string, empty or oversized version becomes null', () => {
+    for (const controllerVersion of [6.3, '', '9'.repeat(65), { major: 6 }]) {
+      assert.equal(parseGroupListing({ controllerVersion, groupModel: 'apGroup', groups }).controllerVersion, null);
+    }
+    assert.equal(parseGroupListing({ controllerVersion: '9'.repeat(64), groupModel: 'apGroup', groups }).controllerVersion, '9'.repeat(64));
+  });
+
+  test('a listing without a group array throws (a load error, never an empty list)', () => {
+    for (const raw of [null, undefined, 'listing', [], { groupModel: 'apGroup' }, { groupModel: 'apGroup', groups: {} }, groups]) {
+      assert.throws(() => parseGroupListing(raw), { message: 'Unsupported group listing' });
+    }
+  });
+}); // End of the describe block for parseGroupListing

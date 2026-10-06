@@ -1,6 +1,14 @@
-import { AccessPoint, WlanGroup, OmadaApiResponse, SiteInfo } from '../shared/types';
+import { AccessPoint, ControllerInfo, GroupListing, WlanGroup, OmadaApiResponse, SiteInfo } from '../shared/types';
+import { describeController } from './controller-version';
 import { CookieJar } from './cookie-jar';
-import { validateAccessPoints, validateSitePage, validateWlanGroups } from './omada-validators';
+import {
+  GroupListEntry,
+  joinGroupsWithSsids,
+  validateAccessPoints,
+  validateGroupList,
+  validateSitePage,
+  validateWlanGroups
+} from './omada-validators';
 import { OmadaTransport, parseOmadaResponse, ResponseHeaders } from './omada-transport';
 
 // This module never imports Electron: all HTTP goes through the injected
@@ -41,6 +49,9 @@ export class OmadaController {
   // HTTP transport (timeouts, body cap and the actual network I/O live there)
   private transport: OmadaTransport;
   private omadacId: string | null = null;
+  // The controllerVer /api/info reported and the group model derived from it
+  // (controller-version.ts); until connect() reads it, the defensive default
+  private controllerInfo: ControllerInfo = { controllerVersion: null, groupModel: 'wlanGroup' };
   private siteId: string | null = null;
   // Sites the logged-in account is authorized to see (filled by connect());
   // selectSite() only ever accepts an id from this list
@@ -79,14 +90,17 @@ export class OmadaController {
    */
   async connect(preferredSiteId?: string): Promise<ConnectOutcome> {
     try {
-      // Step 1: Get controller info to retrieve omadacId
-      const infoResponse = await this.request<{ omadacId: string }>('/api/info', 'GET');
+      // Step 1: Get controller info to retrieve omadacId, and keep the
+      // controller version: it decides the group model (AP groups on 6.3+,
+      // legacy WLAN groups otherwise — see describeController())
+      const infoResponse = await this.request<{ omadacId: string; controllerVer?: unknown }>('/api/info', 'GET');
 
       if (!infoResponse.result?.omadacId) {
         throw new Error('No se pudo obtener el ID del controlador');
       }
 
       this.omadacId = infoResponse.result.omadacId;
+      this.controllerInfo = describeController(infoResponse.result.controllerVer);
 
       // Step 2: Login to get CSRF token
       const loginResponse = await this.request<{ token: string }>(
@@ -267,15 +281,96 @@ export class OmadaController {
   } // End of function getAccessPoints()
 
   /**
-   * Get all WLAN groups from the controller
-   * @returns WLAN groups sorted alphabetically by name.
+   * Get the groups APs can be assigned to (AP groups on Omada 6.3+, WLAN
+   * groups before), each with the names of the Wi-Fi networks it broadcasts,
+   * together with the controller info (version, group model) they belong to.
+   *
+   * Sources (docs/management-design.md §2.3): the authoritative list is
+   * `GET setting/wlans`, which includes the groups without SSIDs (e.g. an
+   * empty group used to silence APs) that `GET setting/ssids` omits; the SSID
+   * names are outer-joined onto it from `GET setting/ssids`
+   * (joinGroupsWithSsids()). Both requests run in parallel.
+   *
+   * Legacy controllers (decision): `setting/wlans` is live-verified only on
+   * 6.3.0.45 (docs/omada-6.3-api-findings.md), while the app has always built
+   * its group list from `setting/ssids` alone, which works on older
+   * controllers. Therefore:
+   * - groupModel 'apGroup' (6.3+): `setting/wlans` is required. A failed
+   *   request, an errorCode or a shape validateGroupList() rejects fails the
+   *   whole load: falling back would silently hide the empty groups, which are
+   *   exactly what this list must offer as move targets.
+   * - groupModel 'wlanGroup' (older, or a missing/unparseable version):
+   *   `setting/wlans` is tried, and when it is unavailable — any request
+   *   error, an errorCode such as -1600 "Unsupported request path", or a shape
+   *   validateGroupList() rejects — the list falls back to the pre-6.3 source,
+   *   the groups `setting/ssids` reports (groups without SSIDs then stay
+   *   invisible, as they always were on those controllers).
+   * `setting/ssids` is required in both models.
+   * @returns The group listing; groups sorted alphabetically by name.
    */
-  async getWlanGroups(): Promise<WlanGroup[]> {
+  async getWlanGroups(): Promise<GroupListing> {
     if (!this.omadacId || !this.csrfToken || !this.siteId) {
       throw new Error('No conectado al controlador');
     }
 
-    // The API returns { result: { ssids: [...] } } not { result: [...] }
+    const info = this.controllerInfo;
+    const [listOutcome, ssidOutcome] = await Promise.allSettled([this.loadGroupList(), this.loadSsidGroups()]);
+
+    if (listOutcome.status === 'rejected' && info.groupModel === 'apGroup') {
+      throw listOutcome.reason;
+    }
+    if (ssidOutcome.status === 'rejected') {
+      throw ssidOutcome.reason;
+    }
+
+    let groups: WlanGroup[];
+    if (listOutcome.status === 'fulfilled') {
+      const joined = joinGroupsWithSsids(listOutcome.value, ssidOutcome.value);
+      if (joined.ignoredSsidGroupIds.length > 0) {
+        console.warn(
+          `Ignoring setting/ssids entries for ${joined.ignoredSsidGroupIds.length} group id(s) missing from setting/wlans:`,
+          joined.ignoredSsidGroupIds.join(', ')
+        );
+      }
+      groups = joined.groups;
+    } else {
+      // Pre-6.3 (or unknown) controller without a usable setting/wlans
+      console.warn('Group list (setting/wlans) unavailable; using the groups setting/ssids reports:', listOutcome.reason);
+      groups = ssidOutcome.value;
+    }
+
+    // Sort alphabetically by name (names are guaranteed strings here)
+    groups.sort((a, b) => a.wlanName.localeCompare(b.wlanName));
+    return { controllerVersion: info.controllerVersion, groupModel: info.groupModel, groups };
+  } // End of function getWlanGroups()
+
+  /**
+   * Load and validate the authoritative group list (`GET setting/wlans`).
+   * @returns The validated group-list entries.
+   * @throws When the request fails, reports an errorCode, or the payload
+   *   shape is unsupported (validateGroupList()).
+   */
+  private async loadGroupList(): Promise<GroupListEntry[]> {
+    const response = await this.request<unknown>(
+      `/${this.omadacId}/api/v2/sites/${this.siteId}/setting/wlans`,
+      'GET'
+    );
+
+    if (response.errorCode !== 0) {
+      throw new Error(response.msg || 'Error al obtener la lista de grupos');
+    }
+
+    return validateGroupList(response.result);
+  } // End of function loadGroupList()
+
+  /**
+   * Load and validate the per-group SSID lists (`GET setting/ssids`, which
+   * returns { result: { ssids: [...] } }, not { result: [...] }).
+   * @returns The groups that have SSIDs, with their SSID names.
+   * @throws When the request fails, reports an errorCode, or the payload
+   *   shape is unsupported (validateWlanGroups()).
+   */
+  private async loadSsidGroups(): Promise<WlanGroup[]> {
     const response = await this.request<unknown>(
       `/${this.omadacId}/api/v2/sites/${this.siteId}/setting/ssids`,
       'GET'
@@ -286,16 +381,15 @@ export class OmadaController {
     }
 
     // Validate/normalize at runtime instead of trusting a TypeScript cast
-    const wlans = validateWlanGroups(response.result);
-
-    // Sort alphabetically by name (names are guaranteed strings here)
-    return wlans.sort((a, b) => a.wlanName.localeCompare(b.wlanName));
-  } // End of function getWlanGroups()
+    return validateWlanGroups(response.result);
+  } // End of function loadSsidGroups()
 
   /**
-   * Assign a WLAN group to an access point
+   * Move an access point into a group (AP group on 6.3+, WLAN group before)
+   * with the internal `PATCH eaps/{mac} {wlanId}` call — the only move path,
+   * live-verified on 6.3.0.45; a group without SSIDs is a valid target
    * @param mac MAC address of the access point.
-   * @param wlanId Id of the WLAN group to assign.
+   * @param wlanId Id of the group to assign (getWlanGroups() `wlanId`).
    * @returns True when the controller accepts the change.
    */
   async setApWlanGroup(mac: string, wlanId: string): Promise<boolean> {

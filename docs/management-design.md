@@ -38,7 +38,7 @@ or write the user's real config (`~/.omada-wlan-manager/`). GUI smoke tests laun
 
 ### 2.2 Compatibility and capability policy
 
-- Parse `controllerVer` from `/api/info` (today it is discarded).
+- Parse `controllerVer` from `/api/info` (kept since phase 12: `src/main/controller-version.ts`).
 - `controllerVer >= 6.3` → `groupModel = 'apGroup'` ("AP groups" vocabulary).
 - Older or unparseable version → `groupModel = 'wlanGroup'`, vocabulary "WLAN groups (legacy)",
   assignment only, management views read-only with an explanatory banner.

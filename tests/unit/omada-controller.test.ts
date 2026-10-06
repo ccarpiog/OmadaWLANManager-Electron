@@ -2,12 +2,16 @@
 // client is driven end-to-end through FakeTransport with the canned Omada
 // envelopes in tests/fixtures/controller/responses.json — login → sites →
 // APs/groups, multi-site selection, site pagination, the -1200 session-expiry
-// single shared re-login, cookie/CSRF handling, logout and error paths. No
-// Electron, no network.
+// single shared re-login, cookie/CSRF handling, logout and error paths — and
+// with the 6.3 / legacy group payloads in tests/fixtures/controller/groups-*.json
+// (group list from setting/wlans joined with setting/ssids, the controller
+// version / group model, and the legacy fallback). No Electron, no network.
 
 import assert from 'node:assert/strict';
 import { describe, mock, test } from 'node:test';
 import { OmadaController } from '../../src/main/omada-api';
+import groups63 from '../fixtures/controller/groups-6.3.json';
+import groupsLegacy from '../fixtures/controller/groups-legacy.json';
 import responses from '../fixtures/controller/responses.json';
 import { FakeTransport } from './helpers/fake-transport';
 
@@ -35,6 +39,15 @@ function devicesPath(siteId: string): string {
  */
 function ssidsPath(siteId: string): string {
   return `/${OMADAC_ID}/api/v2/sites/${siteId}/setting/ssids`;
+}
+
+/**
+ * Builds the group-list (setting/wlans) path for a site.
+ * @param {string} siteId - Site id.
+ * @returns {string} The wlans path.
+ */
+function wlansPath(siteId: string): string {
+  return `/${OMADAC_ID}/api/v2/sites/${siteId}/setting/wlans`;
 }
 
 /**
@@ -104,10 +117,11 @@ describe('OmadaController connect (single site)', () => {
     assert.equal(sites.headers.Cookie, 'TPOMADA_SESSIONID=session-1');
   }); // End of test "attaches the CSRF token only after login and the session cookie fro..."
 
-  test('loads APs (sorted, APs only) and WLAN groups (sorted) for the selected site', async () => {
+  test('loads APs (sorted, APs only) and the group listing (sorted, empty group included) for the selected site', async () => {
     const siteId = responses.sitesSingle.result.data[0].id;
     const transport = singleSiteTransport()
       .on('GET', devicesPath(siteId), { body: responses.devices })
+      .on('GET', wlansPath(siteId), { body: responses.wlans })
       .on('GET', ssidsPath(siteId), { body: responses.ssids });
     const controller = createController(transport);
     await controller.connect();
@@ -116,10 +130,13 @@ describe('OmadaController connect (single site)', () => {
     assert.deepEqual(aps.map((ap) => ap.name), ['Altillo', 'EAP Carpio', 'Salón']);
     assert.deepEqual(aps[1], { mac: 'AA-BB-CC-00-11-33', name: 'EAP Carpio', type: 'ap', wlanGroup: 'zGrupo B', statusCategory: 1 });
 
-    const groups = await controller.getWlanGroups();
-    assert.deepEqual(groups.map((group) => group.wlanName), ['Default', 'zGrupo B']);
-    assert.deepEqual(groups[0].ssidList, [{ ssidName: 'Casa' }, { ssidName: 'Invitados' }]);
-  }); // End of test "loads APs (sorted, APs only) and WLAN groups (sorted) for the selec..."
+    const listing = await controller.getWlanGroups();
+    assert.equal(listing.controllerVersion, '6.3.0.45');
+    assert.equal(listing.groupModel, 'apGroup');
+    assert.deepEqual(listing.groups.map((group) => group.wlanName), ['Default', 'zGrupo B', 'zNinguna']);
+    assert.deepEqual(listing.groups[0].ssidList, [{ ssidName: 'Casa' }, { ssidName: 'Invitados' }]);
+    assert.deepEqual(listing.groups[2].ssidList, []);
+  }); // End of test "loads APs (sorted, APs only) and the group listing (sorted, empty g..."
 
   test('moves an AP with PATCH eaps/{mac} {wlanId}', async () => {
     const siteId = responses.sitesSingle.result.data[0].id;
@@ -148,6 +165,7 @@ describe('OmadaController connect (single site)', () => {
     const siteId = responses.sitesSingle.result.data[0].id;
     const transport = singleSiteTransport()
       .on('GET', devicesPath(siteId), { body: responses.devices, setCookie: 'TPOMADA_SESSIONID=; Max-Age=0' })
+      .on('GET', wlansPath(siteId), { body: responses.wlans })
       .on('GET', ssidsPath(siteId), { body: responses.ssids });
     const controller = createController(transport);
     await controller.connect();
@@ -258,14 +276,15 @@ describe('OmadaController session expiry (-1200)', () => {
       // would fail the test with "no more replies"
       .on('POST', LOGIN_PATH, [{ body: responses.loginOk }, { body: responses.loginOkRefreshed }])
       .on('GET', devicesPath(siteId), [{ body: responses.sessionExpired }, { body: responses.devices }])
+      .on('GET', wlansPath(siteId), [{ body: responses.sessionExpired }, { body: responses.wlans }])
       .on('GET', ssidsPath(siteId), [{ body: responses.sessionExpired }, { body: responses.ssids }]);
     const controller = createController(transport);
     await controller.connect();
 
-    const [aps, groups] = await Promise.all([controller.getAccessPoints(), controller.getWlanGroups()]);
+    const [aps, listing] = await Promise.all([controller.getAccessPoints(), controller.getWlanGroups()]);
 
     assert.equal(aps.length, 3);
-    assert.equal(groups.length, 2);
+    assert.equal(listing.groups.length, 3);
     assert.equal(transport.requestsTo('POST', LOGIN_PATH).length, 2, 'connect login + one shared re-login');
   }); // End of test "concurrent expirations share ONE re-login"
 
@@ -311,6 +330,129 @@ describe('OmadaController session expiry (-1200)', () => {
     assert.equal(transport.requestsTo('POST', LOGIN_PATH).length, 1);
   });
 }); // End of the describe block for session expiry
+
+describe('OmadaController group list (setting/wlans joined with setting/ssids)', () => {
+  const siteId = responses.sitesSingle.result.data[0].id;
+
+  /**
+   * Creates a fake transport for a single-site login whose /api/info replies
+   * with the given envelope (it decides the controller version).
+   * @param {unknown} apiInfo - The /api/info envelope.
+   * @returns {FakeTransport} The transport.
+   */
+  function transportWith(apiInfo: unknown): FakeTransport {
+    return new FakeTransport(BASE_URL)
+      .on('GET', '/api/info', { body: apiInfo })
+      .on('POST', LOGIN_PATH, { body: responses.loginOk })
+      .on('GET', SITES_PATH, { body: responses.sitesSingle });
+  }
+
+  /**
+   * Connects a controller over a transport and loads its group listing.
+   * @param {FakeTransport} transport - The fake transport.
+   * @returns {Promise<Awaited<ReturnType<OmadaController['getWlanGroups']>>>} The listing.
+   */
+  async function loadListing(transport: FakeTransport): Promise<Awaited<ReturnType<OmadaController['getWlanGroups']>>> {
+    const controller = createController(transport);
+    await controller.connect();
+    return controller.getWlanGroups();
+  }
+
+  test('Omada 6.3: AP-groups model; the list comes from setting/wlans (empty groups included) with SSID names joined from setting/ssids', async () => {
+    const transport = transportWith(groups63.apiInfo)
+      .on('GET', wlansPath(siteId), { body: groups63.wlans })
+      .on('GET', ssidsPath(siteId), { body: groups63.ssids });
+    const listing = await loadListing(transport);
+    assert.deepEqual(listing, { controllerVersion: '6.3.0.45', groupModel: 'apGroup', groups: groups63.expectedGroups });
+    assert.equal(transport.requestsTo('GET', wlansPath(siteId)).length, 1);
+    assert.equal(transport.requestsTo('GET', ssidsPath(siteId)).length, 1);
+  });
+
+  test('Omada 6.3: an unsupported setting/wlans fails the load (no fallback that would hide the empty groups)', async () => {
+    const transport = transportWith(groups63.apiInfo)
+      .on('GET', wlansPath(siteId), { body: groups63.wlansUnsupported })
+      .on('GET', ssidsPath(siteId), { body: groups63.ssids });
+    await assert.rejects(loadListing(transport), { message: 'Unsupported request path.' });
+  });
+
+  test('Omada 6.3: a malformed setting/wlans payload is rejected', async () => {
+    const transport = transportWith(groups63.apiInfo)
+      .on('GET', wlansPath(siteId), { body: groups63.wlansMalformed })
+      .on('GET', ssidsPath(siteId), { body: groups63.ssids });
+    await assert.rejects(loadListing(transport), { message: 'Unsupported API response (groups)' });
+  });
+
+  test('Omada 6.3: an empty AP group is a move target through the same PATCH eaps/{mac} {wlanId} call', async () => {
+    const empty = groups63.expectedGroups.find((group) => group.wlanName === 'zNinguna');
+    const mac = 'AA-BB-CC-00-11-33';
+    const patchPath = `/${OMADAC_ID}/api/v2/sites/${siteId}/eaps/${mac}`;
+    const transport = transportWith(groups63.apiInfo)
+      .on('GET', wlansPath(siteId), { body: groups63.wlans })
+      .on('GET', ssidsPath(siteId), { body: groups63.ssids })
+      .on('PATCH', patchPath, { body: responses.ok });
+    const controller = createController(transport);
+    await controller.connect();
+    const listing = await controller.getWlanGroups();
+    const target = listing.groups.find((group) => group.wlanName === 'zNinguna');
+    assert.ok(empty && target && target.ssidList.length === 0);
+
+    assert.equal(await controller.setApWlanGroup(mac, target.wlanId), true);
+    assert.deepEqual(transport.requestsTo('PATCH', patchPath).map((request) => request.body), [{ wlanId: empty.wlanId }]);
+  }); // End of test "Omada 6.3: an empty AP group is a move target through the same PATCH..."
+
+  test('legacy (5.x): WLAN-groups model; an unsupported setting/wlans falls back to the groups setting/ssids reports', async () => {
+    const transport = transportWith(groupsLegacy.apiInfo)
+      .on('GET', wlansPath(siteId), { body: groupsLegacy.wlansUnsupported })
+      .on('GET', ssidsPath(siteId), { body: groupsLegacy.ssids });
+    const listing = await loadListing(transport);
+    assert.deepEqual(listing, { controllerVersion: '5.15.24.18', groupModel: 'wlanGroup', groups: groupsLegacy.expectedFallbackGroups });
+  });
+
+  test('legacy: an HTTP error or an unsupported shape on setting/wlans also falls back', async () => {
+    for (const reply of [{ status: 404, body: 'Not Found' }, { body: groups63.wlansMalformed }]) {
+      const transport = transportWith(groupsLegacy.apiInfo)
+        .on('GET', wlansPath(siteId), reply)
+        .on('GET', ssidsPath(siteId), { body: groupsLegacy.ssids });
+      const listing = await loadListing(transport);
+      assert.deepEqual(listing.groups, groupsLegacy.expectedFallbackGroups, JSON.stringify(reply).slice(0, 60));
+    }
+  });
+
+  test('legacy: a controller that serves setting/wlans gets the joined list, empty WLAN group included', async () => {
+    const transport = transportWith(groupsLegacy.apiInfo)
+      .on('GET', wlansPath(siteId), { body: groupsLegacy.wlans })
+      .on('GET', ssidsPath(siteId), { body: groupsLegacy.ssids });
+    const listing = await loadListing(transport);
+    assert.deepEqual(listing, { controllerVersion: '5.15.24.18', groupModel: 'wlanGroup', groups: groupsLegacy.expectedJoinedGroups });
+  });
+
+  test('unknown version (controllerVer missing or garbage): legacy model and the legacy fallback', async () => {
+    const cases: Array<{ result: Record<string, unknown>; version: string | null }> = [
+      { result: { omadacId: OMADAC_ID }, version: null },
+      { result: { omadacId: OMADAC_ID, controllerVer: 'banana' }, version: 'banana' },
+      { result: { omadacId: OMADAC_ID, controllerVer: 6.3 }, version: null },
+    ];
+    for (const { result, version } of cases) {
+      const transport = transportWith({ errorCode: 0, msg: 'Success.', result })
+        .on('GET', wlansPath(siteId), { body: groupsLegacy.wlansUnsupported })
+        .on('GET', ssidsPath(siteId), { body: groupsLegacy.ssids });
+      const listing = await loadListing(transport);
+      assert.deepEqual(listing, { controllerVersion: version, groupModel: 'wlanGroup', groups: groupsLegacy.expectedFallbackGroups });
+    }
+  }); // End of test "unknown version (controllerVer missing or garbage)..."
+
+  test('setting/ssids stays required in both models', async () => {
+    const modern = transportWith(groups63.apiInfo)
+      .on('GET', wlansPath(siteId), { body: groups63.wlans })
+      .on('GET', ssidsPath(siteId), { body: responses.apiError });
+    await assert.rejects(loadListing(modern), { message: 'Internal controller error.' });
+
+    const legacy = transportWith(groupsLegacy.apiInfo)
+      .on('GET', wlansPath(siteId), { body: groupsLegacy.wlans })
+      .on('GET', ssidsPath(siteId), { status: 502, body: 'Bad Gateway' });
+    await assert.rejects(loadListing(legacy), { message: 'HTTP 502: Bad Gateway' });
+  }); // End of test "setting/ssids stays required in both models"
+}); // End of the describe block for the group list
 
 describe('OmadaController errors and logout', () => {
   test('connect fails clearly when /api/info has no omadacId', async () => {

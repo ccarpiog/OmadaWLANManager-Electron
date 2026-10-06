@@ -5,7 +5,7 @@
 import type { AccessPoint } from '../shared/types';
 import { apList } from './elements';
 import { applyRovingTabindex, createEmptyState, focusListItemByData, moveOptionFocus } from './dom-helpers';
-import { t, type Translations } from './i18n';
+import { t, tGroup, type Translations } from './i18n';
 import { updateSelectionInfo } from './panels';
 import { state } from './state';
 
@@ -91,7 +91,8 @@ function createApListItem(ap: AccessPoint): HTMLElement {
 
   const subtitle = document.createElement('div');
   subtitle.className = 'item-subtitle';
-  subtitle.textContent = `${t('wlanLabel')}: ${ap.wlanGroup || t('unassigned')}`;
+  // "AP group: <name>" on Omada 6.3+, "WLAN: <name>" before (tGroup())
+  subtitle.textContent = `${tGroup('groupLabel')}: ${ap.wlanGroup || t('unassigned')}`;
 
   header.appendChild(status);
   header.appendChild(name);

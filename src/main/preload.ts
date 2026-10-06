@@ -5,7 +5,7 @@ import type {
   ConfigSaveResult,
   ConnectionResult,
   AccessPoint,
-  WlanGroup,
+  GroupListing,
   IPC_CHANNELS as SHARED_IPC_CHANNELS,
   OmadaAPI,
   RendererConfig
@@ -61,7 +61,8 @@ contextBridge.exposeInMainWorld('omadaAPI', {
     return ipcRenderer.invoke(IPC_CHANNELS.OMADA_GET_APS);
   },
 
-  getWlanGroups: (): Promise<WlanGroup[]> => {
+  // The group list plus the controller version and group model it belongs to
+  getWlanGroups: (): Promise<GroupListing> => {
     return ipcRenderer.invoke(IPC_CHANNELS.OMADA_GET_WLANS);
   },
 

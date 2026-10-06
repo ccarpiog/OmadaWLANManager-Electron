@@ -10,12 +10,12 @@ import { renderApList } from './ap-list';
 import { showCertificateChanged, showCertificateTrust } from './cert-modal';
 import { apFilterInput, connectBtn, refreshBtn, settingsBtn, wlanFilterInput } from './elements';
 import { t } from './i18n';
-import { showEmptyStates, showLoadingStates, updateSelectionInfo } from './panels';
+import { applyGroupVocabulary, showEmptyStates, showLoadingStates, updateSelectionInfo } from './panels';
 import { showSiteSelection } from './site-modal';
 import { invalidateSession, isOperationInProgress, state } from './state';
 import { setStatus } from './status';
 import { showToast } from './toast';
-import { isValidMac, isValidSiteId, isValidWlanId, parseCertificateDetails } from './validation';
+import { isValidMac, isValidSiteId, isValidWlanId, parseCertificateDetails, parseGroupListing } from './validation';
 import { renderWlanList } from './wlan-list';
 
 /**
@@ -332,12 +332,16 @@ async function runSiteSelection(rawSites: unknown, rawNonce: unknown, generation
 } // End of function runSiteSelection()
 
 /**
- * Clears all loaded AP/WLAN data, selections, and filters, then re-renders
- * the empty states and the selection info (which disables the Apply button).
+ * Clears all loaded AP/WLAN data (including the controller's group model and
+ * version, so the group vocabulary returns to its default), selections, and
+ * filters, then re-renders the empty states and the selection info (which
+ * disables the Apply button).
  */
 function clearData(): void {
   state.accessPoints = [];
   state.wlanGroups = [];
+  state.groupModel = null;
+  state.controllerVersion = null;
   state.selectedAp = null;
   state.selectedWlan = null;
   state.apFilterText = '';
@@ -345,6 +349,7 @@ function clearData(): void {
   apFilterInput.value = '';
   wlanFilterInput.value = '';
 
+  applyGroupVocabulary();
   showEmptyStates();
   updateSelectionInfo();
 } // End of function clearData()
@@ -416,7 +421,9 @@ export function toggleConnection() {
 }
 
 /**
- * Loads access points and WLAN groups from the controller and renders them.
+ * Loads access points and the group listing (groups plus the controller's
+ * group model and version, validated by parseGroupListing()) from the
+ * controller, applies the group vocabulary and renders both lists.
  * Shows a spinner in both panels while fetching (and spins the Refresh
  * button). The session generation is captured before awaiting: if it moves on
  * meanwhile (disconnect/reconnect), the result — success or error — is
@@ -435,13 +442,18 @@ export async function loadData(): Promise<void> {
   showLoadingStates();
 
   try {
-    const [aps, wlans] = await Promise.all([
+    const [aps, rawListing] = await Promise.all([
       window.omadaAPI.getAccessPoints(),
       window.omadaAPI.getWlanGroups()
     ]);
 
     // Stale result (the session changed while awaiting): discard it
     if (generation !== state.sessionGeneration) return;
+
+    // Boundary validation: a listing without a group array throws (a load
+    // error, never a silently empty list); an unknown group model becomes
+    // the legacy one (the defensive default)
+    const listing = parseGroupListing(rawListing);
 
     // Keep only entries whose identifiers have a valid format: they cross the
     // IPC boundary again when a change is applied, and a malformed id coming
@@ -453,7 +465,9 @@ export async function loadData(): Promise<void> {
       }
       return true;
     });
-    state.wlanGroups = wlans.filter(wlan => {
+    state.groupModel = listing.groupModel;
+    state.controllerVersion = listing.controllerVersion;
+    state.wlanGroups = listing.groups.filter(wlan => {
       if (!isValidWlanId(wlan.wlanId)) {
         console.warn('Ignoring WLAN group with invalid id format:', wlan.wlanId);
         return false;
@@ -465,6 +479,7 @@ export async function loadData(): Promise<void> {
     state.selectedAp = null;
     state.selectedWlan = null;
 
+    applyGroupVocabulary();
     renderApList();
     renderWlanList();
     updateSelectionInfo();

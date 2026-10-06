@@ -1,5 +1,7 @@
 {
-  "description": "Data the stubbed main process (tests/smoke/stub-main.cjs) serves over IPC, in the DTO shapes the real handlers return (src/shared/types.ts). The stub sorts by name like OmadaController does. One AP and one group carry malformed ids on purpose: the renderer must drop them (src/renderer/connection.ts loadData()). Every id, MAC and name is made up.",
+  "description": "Data the stubbed main process (tests/smoke/stub-main.cjs) serves over IPC, in the DTO shapes the real handlers return (src/shared/types.ts). `wlanGroups` is the group list of an Omada 6.3 controller (`controllerVersion`) as OmadaController.getWlanGroups() returns it after joining setting/wlans with setting/ssids, so it includes AP groups without Wi-Fi networks (zNinguna, Exterior). `legacyWlanGroups` is the list of a pre-6.3 controller (`legacyControllerVersion`). The stub sorts by name like OmadaController does and derives the group model from the version with the real rule. One AP and one group carry malformed ids on purpose: the renderer must drop them (src/renderer/connection.ts loadData()). Every id, MAC and name is made up.",
+  "controllerVersion": "6.3.0.45",
+  "legacyControllerVersion": "5.15.24.18",
   "accessPoints": [
     { "mac": "AA-BB-CC-00-11-22", "name": "Salón", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
     { "mac": "AA-BB-CC-00-11-33", "name": "EAP Carpio", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
@@ -21,8 +23,13 @@
       "wlanName": "Default",
       "ssidList": [{ "ssidName": "Casa" }, { "ssidName": "Invitados" }]
     },
+    { "wlanId": "6512a0e1f3b2c41d2e3f4a5e", "wlanName": "zNinguna", "ssidList": [] },
     { "wlanId": "6512a0e1f3b2c41d2e3f4a5d", "wlanName": "Exterior", "ssidList": [] },
     { "wlanId": "bad id!", "wlanName": "Corrupto", "ssidList": [] }
+  ],
+  "legacyWlanGroups": [
+    { "wlanId": "5f1a0c0ffee0000000000b01", "wlanName": "Default", "ssidList": [{ "ssidName": "Colegio" }, { "ssidName": "Invitados" }] },
+    { "wlanId": "5f1a0c0ffee0000000000b02", "wlanName": "Aulas", "ssidList": [{ "ssidName": "Alumnos" }] }
   ],
   "sites": [
     { "id": "64f0c0ffee0000000000a001", "name": "Casa" },

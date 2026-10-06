@@ -50,12 +50,30 @@
       ]
     },
     {
+      "name": "entries whose deviceType is not the AP type are ignored (even without a wlanId); 'ap' in any case and untagged entries are kept",
+      "result": {
+        "ssids": [
+          { "wlanId": "group-ap", "wlanName": "Tagged", "deviceType": "ap", "ssidList": [{ "ssidName": "Casa" }] },
+          { "wlanName": "ER706W", "deviceType": "gateway", "ssidList": [{ "ssidName": "Gateway WiFi" }] },
+          { "wlanId": "group-gw", "wlanName": "Gateway group", "deviceType": "osg", "ssidList": [] },
+          { "wlanId": "group-upper", "wlanName": "Upper case", "deviceType": "AP", "ssidList": [] },
+          { "wlanId": "group-untagged", "wlanName": "Untagged (pre-6.3 payload)", "ssidList": [{ "ssidName": "Aula" }] }
+        ]
+      },
+      "expected": [
+        { "wlanId": "group-ap", "wlanName": "Tagged", "ssidList": [{ "ssidName": "Casa" }] },
+        { "wlanId": "group-upper", "wlanName": "Upper case", "ssidList": [] },
+        { "wlanId": "group-untagged", "wlanName": "Untagged (pre-6.3 payload)", "ssidList": [{ "ssidName": "Aula" }] }
+      ]
+    },
+    {
       "name": "empty group list",
       "result": { "ssids": [] },
       "expected": []
     }
   ],
   "invalid": [
+    { "name": "AP-tagged entry has no wlanId (an SSID entry referencing no group)", "result": { "ssids": [{ "wlanName": "Default", "deviceType": "ap", "ssidList": [{ "ssidName": "Casa" }] }] } },
     { "name": "result is a bare array (pre-v2 shape)", "result": [{ "wlanId": "abc", "wlanName": "Default" }] },
     { "name": "result is null", "result": null },
     { "name": "result is absent" },

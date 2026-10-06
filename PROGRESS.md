@@ -17,7 +17,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 9 | 4.2 Test harness: `npm test` (node:test + fixtures) and committed Playwright `_electron` smoke with stubbed main (`npm run smoke`) — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-9.md` |
 | 10 | 4.3 Electron 28 → 44 (absorbs 3.3) — risk: high; worker: opus | **done** — `docs/progress-archive/phase-10.md` |
 | 11 | 4.4 URL-scoped credentials + certificate TOFU pinning (completes 2.3b) — risk: high; worker: opus | **done** — `docs/progress-archive/phase-11.md` |
-| 12 | 4.5 Omada 6.3 correctness: `controllerVer`, `groupModel`, full group list from `setting/wlans` (empty groups), AP/WLAN terminology — risk: routine | pending |
+| 12 | 4.5 Omada 6.3 correctness: `controllerVer`, `groupModel`, full group list from `setting/wlans` (empty groups), AP/WLAN terminology — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-12.md` |
 | 13 | 4.6 New app shell (sidebar) + Access points view: multi-select, bulk move with per-AP results — risk: high | pending |
 | 14 | 4.7 Read-only AP groups & Wi-Fi networks views, cross-navigation, states, responsive layout — risk: routine | pending |
 | 15 | 4.8 Open API credentials, `OpenApiClient`, `ControllerSession`, capability detection — risk: high | pending |
@@ -220,7 +220,14 @@ validation, connect-without-config, console/main-process errors).
 - Acceptance met: build exit 0; `npm test` 246/246; smoke 52/52; `npm run tls-probe` 21/21. The probe shows 0 HTTP requests reach the server before trust and covers the stale cache and the race cases.
 - Review: Codex, `docs/reviews/phase11.md`, ship-with-fixes with 2 blockers: a URL change and `CERT_RESET` did not invalidate in-flight connects, pending site selections or the installed controller. Both were fixed by moving the state logic into the Electron-free `connection-manager.ts` with one synchronous `invalidateControllerState()`, backed by 26 new unit tests and 4 new e2e probe checks. The orchestrator then re-ran build, tests, smoke and probe, all exit 0.
 
-## Plan status: ACTIVE — phases 8–11 done, phases 12–20 pending
+### Phase 12 — Omada 6.3 correctness & terminology (2026-10-06)
+
+- Risk: routine. Worker: opus. Full narrative: `docs/progress-archive/phase-12.md`.
+- `controllerVer` is kept, and `controller-version.ts` derives `groupModel`: `apGroup` on 6.3+, otherwise `wlanGroup` (also for a missing or garbage version). `getWlanGroups()` returns `{controllerVersion, groupModel, groups}`. The list comes from `setting/wlans` (empty groups included), with SSID names outer-joined from `setting/ssids`, and non-AP `deviceType` entries are dropped. On 6.3+ a failing `setting/wlans` fails the load; on legacy or unknown versions it falls back to the old `setting/ssids` list. Moves are unchanged and empty groups are move targets. Wording is "AP groups" vs "WLAN groups (legacy)" in es and en; README and package description are updated.
+- Acceptance met: build exit 0; `npm test` 327/327; smoke 58/58 (an empty group renders and opens the move confirm; legacy wording checked); `npm run tls-probe` 21/21; the preload still requires only `electron`; no `innerHTML`.
+- Review: Codex, `docs/reviews/phase12.md`, ship, with 0 findings.
+
+## Plan status: ACTIVE — phases 8–12 done, phases 13–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -249,15 +256,21 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Four comments in `src/renderer/index.html`/`styles.css` still point to
   `renderer.ts` for code that moved to other renderer modules. Fix them in
   phase 13, when the markup changes anyway.
+- Phase 12 leftovers (none blocking): the "Access Points" panel title still uses
+  the old wording (spec §4.1 says "Access points"/"Puntos de acceso"), and
+  `controllerVersion` reaches the renderer (`state`) but is not displayed. Both
+  belong to the phase 13 shell. Before connecting, the UI shows the 6.3 "AP groups"
+  wording. `setting/wlans` on pre-6.3 controllers has never been tested live; the
+  fallback to `setting/ssids` covers that case.
 
 ## Next action
 
-**Phase 12 — todo 4.5: Omada 6.3 correctness & terminology (risk: routine).** First read `todo.md` item 4.5, then only §2.2 "Compatibility and capability policy", §2.3 "Data sources" and §4.1 "Vocabulary" of `docs/management-design.md`, and the internal-API parts of `docs/omada-6.3-api-findings.md`. Then:
+**Phase 13 — todo 4.6: new app shell + Access points view (risk: high).** First read `todo.md` item 4.6, then only §4 of `docs/management-design.md` up to and including §4.3 "Access points view" (plus §4.6 "States" and §4.7 "Responsive and keyboard" if they are short). Phase 13 may have to be split; if the worker cannot finish it coherently, split it into 13a (shell + sidebar + Access points list with multi-select) and 13b (destination pane, review dialog, sequential bulk move with per-AP results and Retry failed), and record the split in `todo.md` and here. Then:
 
-- Keep `controllerVer` from `/api/info` and derive `groupModel` (6.3+ "AP groups" vs legacy "WLAN groups").
-- Load the authoritative group list from `GET setting/wlans`, which includes **empty** groups such as `zNinguna` that the app cannot show today, and outer-join SSID names from `GET setting/ssids`. Ignore entries whose `deviceType` is not an AP type.
-- Switch vocabulary: "AP groups" on 6.3+, "WLAN groups (legacy)" below, in es and en. Update the README and the `package.json` description.
-- Acceptance: fixtures for a 6.3 payload with an empty group (it renders) and a legacy payload (keeps "WLAN group" wording); unit tests for the join; the smoke shows an empty group as selectable. `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
+- Sidebar navigation (Access points / AP groups / Wi-Fi networks, with counts), site and connection state (surface the `controllerVersion` that phase 12 stores in renderer `state`), and refresh with "Updated hh:mm".
+- Access points view per spec §4.3: native checkbox multi-select, range select, a selection that survives filters, an always-visible destination pane with group/SSID search, a "Silence" section for empty groups, a gains/losses preview, a review dialog, a **sequential bulk move with per-AP results and Retry failed**, and specific button labels. Moves use only the internal `PATCH eaps/{mac}` path (`OMADA_SET_WLAN`).
+- Fix the four stale `renderer.ts` comments in `index.html`/`styles.css`, and rename the "Access Points" title to the spec §4.1 wording.
+- Acceptance: the smoke covers a single move, bulk moves (all succeed / partial failure / cancel), a selection that survives filtering, a keyboard-only move, and an empty group that is selectable and labelled; the AP groups and Wi-Fi networks nav items are present (placeholder content is allowed until phase 14). `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
 
 ## Key paths
 
@@ -267,7 +280,7 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - `src/main/omada-transport.ts` (transport interface + hardened request logic), `net-transport.ts` (Electron `net`), `omada-validators.ts`, `cookie-jar.ts`, `url.ts`
 - `docs/reviews/` — phase review briefs and reports from phase 8 on (earlier ones in `.claude/reviews/`); `docs/progress-archive/` — closed-phase narratives
 - `src/main/index.ts` — window creation, IPC handlers, cert verification
-- `src/main/omada-api.ts` — OmadaController HTTP client
+- `src/main/omada-api.ts` — OmadaController HTTP client (`getWlanGroups()` → `GroupListing`: `setting/wlans` outer-joined with `setting/ssids`, legacy fallback); `src/main/controller-version.ts` — `controllerVer` → `groupModel`
 - `src/main/config.ts` — config persistence (save rules in the pure `config-model.ts`)
 - `src/main/cert-pinning.ts` (pure pin decision + fingerprint), `cert-verify.ts` (verify proc, `certificate-error`, `ControllerTlsSessions`), `connection-manager.ts` (connect / site selection / trust / reset / `invalidateControllerState()`, Electron-free); `src/renderer/cert-modal.ts`
 - `tests/tls-probe/` — opt-in `npm run tls-probe` (local HTTPS servers, real Electron)
@@ -283,3 +296,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 9: `65dcf1a` ("Add unit tests and a GUI smoke harness"), pushed to origin/main (`f0a891e..65dcf1a`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 10: `388791f` ("Upgrade Electron to 44 and the build toolchain"), pushed to origin/main (`73ae8ed..388791f`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 11: `29be7d9` ("Scope credentials to the controller URL and pin its certificate"), pushed to origin/main (`4b82bd9..29be7d9`). A follow-up commit records this SHA. Tree clean after it.
+- Phase 12: committed as "List empty AP groups and detect the controller's group model" (a follow-up commit records its SHA and push result).

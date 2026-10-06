@@ -4,7 +4,7 @@
 // Applying the strings to the static UI lives in apply-translations.ts.
 // ============================================================================
 
-import type { Language } from '../shared/types';
+import type { GroupModel, Language } from '../shared/types';
 import { state } from './state';
 
 export interface Translations {
@@ -22,18 +22,28 @@ export interface Translations {
   confirm: string;
   settings: string;
   accessPoints: string;
-  wlanGroups: string;
   noAccessPoints: string;
-  noWlanGroups: string;
   connectToSeeAPs: string;
-  connectToSeeWLANs: string;
   noResultsFor: string;
-  selectApAndWlan: string;
   selectAp: string;
-  selectWlan: string;
-  wlanLabel: string;
   unassigned: string;
-  noSsids: string;
+  // Group vocabulary (docs/management-design.md §4.1). Each concept has a
+  // 6.3+ "AP groups" variant (...Ap) and a legacy "WLAN groups" variant
+  // (...Legacy); tGroup() picks the one matching state.groupModel
+  groupsTitleAp: string;
+  groupsTitleLegacy: string;
+  noGroupsAp: string;
+  noGroupsLegacy: string;
+  selectApAndGroupAp: string;
+  selectApAndGroupLegacy: string;
+  selectGroupAp: string;
+  selectGroupLegacy: string;
+  groupLabelAp: string;
+  groupLabelLegacy: string;
+  // Shown only while no controller data is loaded, hence 6.3+ vocabulary only
+  connectToSeeGroups: string;
+  // Subtitle of a group without Wi-Fi networks (§4.1 "empty group label")
+  emptyGroup: string;
   more: string;
   connectionSettings: string;
   controllerUrl: string;
@@ -115,18 +125,23 @@ const translations: Record<Language, Translations> = {
     confirm: 'Confirmar',
     settings: 'Ajustes',
     accessPoints: 'Access Points',
-    wlanGroups: 'Grupos WLAN',
     noAccessPoints: 'No hay access points disponibles',
-    noWlanGroups: 'No hay grupos WLAN disponibles',
     connectToSeeAPs: 'Conecta al controlador para ver los access points',
-    connectToSeeWLANs: 'Conecta al controlador para ver los grupos WLAN',
     noResultsFor: 'No hay resultados para',
-    selectApAndWlan: 'Selecciona un AP y un grupo WLAN',
     selectAp: 'Selecciona un AP',
-    selectWlan: 'Selecciona un grupo WLAN',
-    wlanLabel: 'WLAN',
     unassigned: 'Sin asignar',
-    noSsids: 'Sin SSIDs',
+    groupsTitleAp: 'Grupos de AP',
+    groupsTitleLegacy: 'Grupos WLAN (heredado)',
+    noGroupsAp: 'No hay grupos de AP disponibles',
+    noGroupsLegacy: 'No hay grupos WLAN disponibles',
+    selectApAndGroupAp: 'Selecciona un AP y un grupo de AP',
+    selectApAndGroupLegacy: 'Selecciona un AP y un grupo WLAN',
+    selectGroupAp: 'Selecciona un grupo de AP',
+    selectGroupLegacy: 'Selecciona un grupo WLAN',
+    groupLabelAp: 'Grupo de AP',
+    groupLabelLegacy: 'WLAN',
+    connectToSeeGroups: 'Conecta al controlador para ver los grupos de AP',
+    emptyGroup: 'Sin redes Wi-Fi — silencia estos AP',
     more: 'más',
     connectionSettings: 'Ajustes de conexión',
     controllerUrl: 'URL del controlador',
@@ -199,18 +214,23 @@ const translations: Record<Language, Translations> = {
     confirm: 'Confirm',
     settings: 'Settings',
     accessPoints: 'Access Points',
-    wlanGroups: 'WLAN Groups',
     noAccessPoints: 'No access points available',
-    noWlanGroups: 'No WLAN groups available',
     connectToSeeAPs: 'Connect to the controller to see access points',
-    connectToSeeWLANs: 'Connect to the controller to see WLAN groups',
     noResultsFor: 'No results for',
-    selectApAndWlan: 'Select an AP and a WLAN group',
     selectAp: 'Select an AP',
-    selectWlan: 'Select a WLAN group',
-    wlanLabel: 'WLAN',
     unassigned: 'Unassigned',
-    noSsids: 'No SSIDs',
+    groupsTitleAp: 'AP groups',
+    groupsTitleLegacy: 'WLAN groups (legacy)',
+    noGroupsAp: 'No AP groups available',
+    noGroupsLegacy: 'No WLAN groups available',
+    selectApAndGroupAp: 'Select an AP and an AP group',
+    selectApAndGroupLegacy: 'Select an AP and a WLAN group',
+    selectGroupAp: 'Select an AP group',
+    selectGroupLegacy: 'Select a WLAN group',
+    groupLabelAp: 'AP group',
+    groupLabelLegacy: 'WLAN',
+    connectToSeeGroups: 'Connect to the controller to see AP groups',
+    emptyGroup: 'No Wi-Fi networks — silences these APs',
     more: 'more',
     connectionSettings: 'Connection settings',
     controllerUrl: 'Controller URL',
@@ -304,4 +324,31 @@ export function tFormat(key: keyof Translations, vars: Record<string, string>): 
     text = text.replace(`{${varName}}`, value);
   }
   return text;
+}
+
+// The group-vocabulary concepts and, per group model, the translation key of
+// each (docs/management-design.md §4.1: "AP groups" on Omada 6.3+, "WLAN
+// groups (legacy)" before; the legacy suffix belongs to the view title only)
+const GROUP_VOCABULARY = {
+  groupsTitle: { apGroup: 'groupsTitleAp', wlanGroup: 'groupsTitleLegacy' },
+  noGroups: { apGroup: 'noGroupsAp', wlanGroup: 'noGroupsLegacy' },
+  selectApAndGroup: { apGroup: 'selectApAndGroupAp', wlanGroup: 'selectApAndGroupLegacy' },
+  selectGroup: { apGroup: 'selectGroupAp', wlanGroup: 'selectGroupLegacy' },
+  groupLabel: { apGroup: 'groupLabelAp', wlanGroup: 'groupLabelLegacy' },
+} as const satisfies Record<string, Record<GroupModel, keyof Translations>>;
+
+// A concept of the group vocabulary (see GROUP_VOCABULARY)
+export type GroupConcept = keyof typeof GROUP_VOCABULARY;
+
+/**
+ * Looks up a group-vocabulary string in the active language, in the variant
+ * of the connected controller's group model (state.groupModel). While no
+ * controller data is loaded (groupModel null) the 6.3+ "AP groups" variant is
+ * used: those are the product's current terms, and the legacy wording only
+ * describes a controller known to be older (or of unknown version).
+ * @param {GroupConcept} concept - The vocabulary concept.
+ * @returns {string} The localized string for the current group model.
+ */
+export function tGroup(concept: GroupConcept): string {
+  return t(GROUP_VOCABULARY[concept][state.groupModel ?? 'apGroup']);
 }

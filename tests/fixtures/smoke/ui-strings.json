@@ -1,9 +1,9 @@
 {
-  "description": "Expected static UI strings per language, checked by tests/smoke/run-smoke.mjs right after startup. Keys are CSS selectors (textContent) or 'selector@attribute'. Values mirror src/renderer/i18n.ts; state-dependent texts (status, Connect button) are checked separately.",
+  "description": "Expected static UI strings per language, checked by tests/smoke/run-smoke.mjs right after startup. Keys are CSS selectors (textContent) or 'selector@attribute'. Values mirror src/renderer/i18n.ts; state-dependent texts (status, Connect button) are checked separately. At startup no controller data is loaded, so the group panel shows the Omada 6.3+ vocabulary ('Grupos de AP' / 'AP groups').",
   "es": {
     "#applyBtn": "Aplicar cambio",
     ".panel:first-child .panel-title": "Access Points",
-    ".panel:last-child .panel-title": "Grupos WLAN",
+    ".panel:last-child .panel-title": "Grupos de AP",
     "#settingsModalHeading": "Ajustes de conexión",
     "label[for=\"urlInput\"]": "URL del controlador",
     "label[for=\"usernameInput\"]": "Usuario",
@@ -25,7 +25,7 @@
     "#settingsBtn@title": "Ajustes",
     "#closeSettingsBtn@aria-label": "Cerrar",
     "#apList@aria-label": "Access Points",
-    "#wlanList@aria-label": "Grupos WLAN",
+    "#wlanList@aria-label": "Grupos de AP",
     "#labelCertPin": "Certificado de confianza (SHA-256)",
     "#resetCertBtn": "Restablecer certificado de confianza",
     "#cancelCertResetBtn": "Cancelar",
@@ -37,7 +37,7 @@
   "en": {
     "#applyBtn": "Apply change",
     ".panel:first-child .panel-title": "Access Points",
-    ".panel:last-child .panel-title": "WLAN Groups",
+    ".panel:last-child .panel-title": "AP groups",
     "#settingsModalHeading": "Connection settings",
     "label[for=\"urlInput\"]": "Controller URL",
     "label[for=\"usernameInput\"]": "Username",
@@ -59,7 +59,7 @@
     "#settingsBtn@title": "Settings",
     "#closeSettingsBtn@aria-label": "Close",
     "#apList@aria-label": "Access Points",
-    "#wlanList@aria-label": "WLAN Groups",
+    "#wlanList@aria-label": "AP groups",
     "#labelCertPin": "Trusted certificate (SHA-256)",
     "#resetCertBtn": "Reset trusted certificate",
     "#cancelCertResetBtn": "Cancel",

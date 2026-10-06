@@ -10,9 +10,10 @@
 //
 // Invariant D4 (docs/management-design.md §1): this file never loads
 // dist/main/index.js, config.js, net-transport.js or anything else that does
-// network or touches the user's config. It only requires two pure compiled
+// network or touches the user's config. It only requires three pure compiled
 // modules (shared/types.js for the channel table, main/url.js for URL
-// normalization and the same-controller check), refuses to start unless HOME points away from the real
+// normalization and the same-controller check, main/controller-version.js for
+// the version -> group-model rule), refuses to start unless HOME points away from the real
 // home directory, keeps Electron's userData under that temp HOME, writes no
 // files, and cancels every non-file: request the window makes.
 
@@ -32,6 +33,7 @@ const RENDERER_HTML_PATH = path.normalize(path.join(distDir, 'renderer', 'index.
 // Pure compiled modules only (see the D4 note above)
 const { IPC_CHANNELS } = require(path.join(distDir, 'shared', 'types.js'));
 const { isSameControllerUrl, normalizeControllerUrl } = require(path.join(distDir, 'main', 'url.js'));
+const { groupModelForVersion, normalizeControllerVersion } = require(path.join(distDir, 'main', 'controller-version.js'));
 
 // Format guards mirrored from src/main/index.ts (keep in sync)
 const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
@@ -80,6 +82,12 @@ function defaultScenario() {
     connect: { success: true },
     sites: [],
     accessPoints: [],
+    // The controllerVer the fake controller's /api/info reports (null = absent:
+    // the legacy group model, like the real defensive default). OMADA_GET_WLANS
+    // derives the group model from it with the real rule (controller-version.js)
+    controllerVersion: null,
+    // GroupListing groups, i.e. what OmadaController.getWlanGroups() returns
+    // after joining setting/wlans with setting/ssids (empty groups included)
     wlanGroups: [],
     // Value OMADA_SET_WLAN resolves with (the real handler resolves true or throws)
     setWlanResult: true,
@@ -341,15 +349,22 @@ const handlers = {
   },
 
   /**
-   * OMADA_GET_WLANS: the fixture groups sorted by name; throws when not connected.
-   * @returns {object[]} The WlanGroup DTOs.
+   * OMADA_GET_WLANS: the GroupListing shape of the real handler — the fixture
+   * groups sorted by name plus the scenario's controller version and the group
+   * model the real rule derives from it; throws when not connected.
+   * @returns {object} The GroupListing DTO.
    */
   [IPC_CHANNELS.OMADA_GET_WLANS]: () => {
     if (!stub.connected) {
       throw new Error('Not connected to the controller');
     }
-    return sortedCopy(stub.scenario.wlanGroups, 'wlanName');
-  },
+    const controllerVersion = normalizeControllerVersion(stub.scenario.controllerVersion);
+    return {
+      controllerVersion,
+      groupModel: groupModelForVersion(controllerVersion),
+      groups: sortedCopy(stub.scenario.wlanGroups, 'wlanName'),
+    };
+  }, // End of the OMADA_GET_WLANS handler
 
   /**
    * OMADA_SET_WLAN: same format guards as the real handler; on success the

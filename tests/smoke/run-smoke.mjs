@@ -43,21 +43,31 @@ const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
 const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 
 // Per-language strings for the dynamic parts the checks read (src/renderer/i18n.ts)
+// The group vocabulary has an "AP groups" (apGroup, Omada 6.3+) and a legacy
+// "WLAN groups" (wlanGroup) variant per concept (docs/management-design.md §4.1)
 const TEXT = {
   es: {
     disconnected: 'Desconectado', connecting: 'Conectando...', connect: 'Conectar', disconnect: 'Desconectar',
-    apply: 'Aplicar cambio', selectApAndWlan: 'Selecciona un AP y un grupo WLAN', unassigned: 'Sin asignar',
-    noSsids: 'Sin SSIDs', more: 'más', configureHint: 'Configura la conexión en Ajustes para empezar',
+    apply: 'Aplicar cambio', unassigned: 'Sin asignar',
+    emptyGroup: 'Sin redes Wi-Fi — silencia estos AP', more: 'más', configureHint: 'Configura la conexión en Ajustes para empezar',
     connectToSeeAPs: 'Conecta al controlador para ver los access points',
-    connectToSeeWLANs: 'Conecta al controlador para ver los grupos WLAN',
+    connectToSeeGroups: 'Conecta al controlador para ver los grupos de AP',
+    groupsTitle: { apGroup: 'Grupos de AP', wlanGroup: 'Grupos WLAN (heredado)' },
+    selectApAndGroup: { apGroup: 'Selecciona un AP y un grupo de AP', wlanGroup: 'Selecciona un AP y un grupo WLAN' },
+    selectGroup: { apGroup: 'Selecciona un grupo de AP', wlanGroup: 'Selecciona un grupo WLAN' },
+    groupLabel: { apGroup: 'Grupo de AP', wlanGroup: 'WLAN' },
     status: ['Desconectado', 'Conectado', 'Adoptando', 'Sin respuesta', 'Aislado'], statusUnknown: 'Estado desconocido',
   },
   en: {
     disconnected: 'Disconnected', connecting: 'Connecting...', connect: 'Connect', disconnect: 'Disconnect',
-    apply: 'Apply change', selectApAndWlan: 'Select an AP and a WLAN group', unassigned: 'Unassigned',
-    noSsids: 'No SSIDs', more: 'more', configureHint: 'Set up the connection in Settings to get started',
+    apply: 'Apply change', unassigned: 'Unassigned',
+    emptyGroup: 'No Wi-Fi networks — silences these APs', more: 'more', configureHint: 'Set up the connection in Settings to get started',
     connectToSeeAPs: 'Connect to the controller to see access points',
-    connectToSeeWLANs: 'Connect to the controller to see WLAN groups',
+    connectToSeeGroups: 'Connect to the controller to see AP groups',
+    groupsTitle: { apGroup: 'AP groups', wlanGroup: 'WLAN groups (legacy)' },
+    selectApAndGroup: { apGroup: 'Select an AP and an AP group', wlanGroup: 'Select an AP and a WLAN group' },
+    selectGroup: { apGroup: 'Select an AP group', wlanGroup: 'Select a WLAN group' },
+    groupLabel: { apGroup: 'AP group', wlanGroup: 'WLAN' },
     status: ['Disconnected', 'Connected', 'Adopting', 'Heartbeat missed', 'Isolated'], statusUnknown: 'Unknown status',
   },
 };
@@ -66,6 +76,8 @@ const CONTROLLER_URL = 'https://controller.invalid:8043';
 const CONTROLLER_HOST = 'controller.invalid:8043';
 const MOVE_AP = data.accessPoints.find((ap) => ap.name === 'EAP Carpio');
 const MOVE_GROUP = data.wlanGroups.find((group) => group.wlanName === 'zGrupo B');
+// An AP group without Wi-Fi networks (listed since the group list comes from setting/wlans)
+const EMPTY_GROUP = data.wlanGroups.find((group) => group.wlanName === 'zNinguna');
 const EXPECTED_BRIDGE = ['connect', 'disconnect', 'getAccessPoints', 'getWlanGroups', 'loadConfig', 'platform', 'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup', 'trustCertificate'];
 // One launch per run*() function in main()
 const EXPECTED_LAUNCHES = 3;
@@ -158,7 +170,7 @@ function fail(message) {
  * Ensures the build output the stub loads exists.
  */
 function assertBuilt() {
-  const required = ['dist/main/preload.js', 'dist/main/url.js', 'dist/shared/types.js', 'dist/renderer/index.html', 'dist/renderer/renderer.js'];
+  const required = ['dist/main/preload.js', 'dist/main/url.js', 'dist/main/controller-version.js', 'dist/shared/types.js', 'dist/renderer/index.html', 'dist/renderer/renderer.js'];
   const missing = required.filter((file) => !existsSync(path.join(projectRoot, file)));
   if (missing.length > 0) {
     fail(`missing build output (${missing.join(', ')}). Run \`npm run build\` first (\`npm run smoke\` does it for you).`);
@@ -423,6 +435,9 @@ function readShell(page) {
     selectionPlaceholder: document.querySelector('#selectionInfo .selection-placeholder')?.textContent ?? null,
     selectionAp: document.querySelector('#selectionInfo .ap-name')?.textContent ?? null,
     selectionWlan: document.querySelector('#selectionInfo .wlan-name')?.textContent ?? null,
+    selectionMuted: document.querySelector('#selectionInfo .muted-text')?.textContent ?? null,
+    wlanTitle: document.querySelector('.panel:last-child .panel-title')?.textContent ?? null,
+    wlanListLabel: document.getElementById('wlanList')?.getAttribute('aria-label') ?? null,
     inert: document.querySelector('.app-container')?.hasAttribute('inert'),
     activeId: document.activeElement?.id || '',
     settingsOpen: document.getElementById('settingsModal')?.classList.contains('visible'),
@@ -518,27 +533,29 @@ async function waitForApCount(page, count) {
 
 /**
  * The AP rows the renderer must show for a set of AP DTOs: malformed MACs
- * dropped, sorted by name like the main process, labels per language.
+ * dropped, sorted by name like the main process, labels per language and the
+ * group label of the controller's group model ("AP group:" / "WLAN:").
  * @param {object[]} accessPoints - AccessPoint DTOs served by the stub.
  * @param {'es' | 'en'} language - UI language.
+ * @param {'apGroup' | 'wlanGroup'} groupModel - The controller's group model.
  * @returns {Array<{ name: string; subtitle: string; statusClass: string; statusLabel: string }>}
  */
-function expectedApRows(accessPoints, language) {
+function expectedApRows(accessPoints, language, groupModel) {
   const text = TEXT[language];
   return accessPoints
     .filter((ap) => MAC_REGEX.test(ap.mac))
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((ap) => ({
       name: ap.name,
-      subtitle: `WLAN: ${ap.wlanGroup || text.unassigned}`,
+      subtitle: `${text.groupLabel[groupModel]}: ${ap.wlanGroup || text.unassigned}`,
       statusClass: STATUS_CLASSES[ap.statusCategory] ?? 'unknown',
       statusLabel: text.status[ap.statusCategory] ?? text.statusUnknown,
     }));
 } // End of function expectedApRows()
 
 /**
- * The WLAN rows the renderer must show: malformed ids dropped, sorted by
- * name, SSID preview "a, b, c +N more" or the no-SSIDs label.
+ * The group rows the renderer must show: malformed ids dropped, sorted by
+ * name, SSID preview "a, b, c +N more" or the empty-group label.
  * @param {object[]} wlanGroups - WlanGroup DTOs served by the stub.
  * @param {'es' | 'en'} language - UI language.
  * @returns {Array<{ name: string; subtitle: string }>}
@@ -551,7 +568,7 @@ function expectedWlanRows(wlanGroups, language) {
     .map((group) => {
       const ssids = group.ssidList.map((ssid) => ssid.ssidName);
       const preview = ssids.length > 3 ? `${ssids.slice(0, 3).join(', ')} +${ssids.length - 3} ${text.more}` : ssids.join(', ');
-      return { name: group.wlanName, subtitle: preview || text.noSsids };
+      return { name: group.wlanName, subtitle: preview || text.emptyGroup };
     });
 }
 
@@ -665,6 +682,7 @@ async function runSpanishFirstRun(electronInfo) {
   const session = await launch(electronInfo, 'es', {
     config: { url: '', username: '', language: 'es', hasPassword: false },
     connect: { success: true },
+    controllerVersion: data.controllerVersion,
     accessPoints: data.accessPoints,
     wlanGroups: data.wlanGroups,
   });
@@ -688,7 +706,7 @@ async function runSpanishFirstRun(electronInfo) {
       return verdict(
         shell.status === es.disconnected && shell.connect === es.connect && shell.apply === es.apply &&
         shell.applyDisabled === true && shell.refreshDisabled === true && shell.apEmpty === es.configureHint &&
-        shell.wlanEmpty === es.configureHint && shell.selectionPlaceholder === es.selectApAndWlan,
+        shell.wlanEmpty === es.configureHint && shell.selectionPlaceholder === es.selectApAndGroup.apGroup,
         shell
       );
     });
@@ -728,18 +746,31 @@ async function runSpanishFirstRun(electronInfo) {
       );
     });
 
-    const expectedAps = expectedApRows(data.accessPoints, 'es');
+    const expectedAps = expectedApRows(data.accessPoints, 'es', 'apGroup');
     await check('[es] AP list rendered from the fixtures (sorted, malformed MAC dropped, translated status and group)', async () => {
       await waitForApCount(page, expectedAps.length);
       return compareApRows(await readApItems(page), expectedAps);
     });
 
-    await check('[es] WLAN group list rendered from the fixtures (sorted, malformed id dropped, SSID previews)', async () => {
+    await check('[es] group list rendered from the fixtures (sorted, malformed id dropped, SSID previews, empty groups labelled)', async () => {
       const expected = expectedWlanRows(data.wlanGroups, 'es');
       const actual = (await readWlanItems(page)).map(({ name, subtitle }) => ({ name, subtitle }));
       const shell = await readShell(page);
       return verdict(isDeepStrictEqual(actual, expected) && shell.refreshDisabled === false, { actual, expected, refreshDisabled: shell.refreshDisabled });
     });
+
+    await check('[es] Omada 6.3 vocabulary: the group panel and its list are labelled "Grupos de AP", AP rows say "Grupo de AP:", and the empty AP group zNinguna is listed with "Sin redes Wi-Fi — silencia estos AP"', async () => {
+      const shell = await readShell(page);
+      const empty = (await readWlanItems(page)).find((item) => item.wlanId === EMPTY_GROUP.wlanId);
+      const apRow = (await readApItems(page)).find((item) => item.mac === MOVE_AP.mac);
+      return verdict(
+        shell.wlanTitle === es.groupsTitle.apGroup && shell.wlanListLabel === es.groupsTitle.apGroup &&
+        shell.selectionPlaceholder === es.selectApAndGroup.apGroup && empty?.name === EMPTY_GROUP.wlanName &&
+        empty?.subtitle === es.emptyGroup && empty?.selected === 'false' &&
+        Boolean(apRow?.subtitle.startsWith(`${es.groupLabel.apGroup}: `)),
+        { shell, empty, apRow }
+      );
+    }); // End of check "[es] Omada 6.3 vocabulary..."
 
     await check('[es] AP move: picking an AP and a group fills the selection bar and enables Apply', async () => {
       await page.click(`#apList .list-item[data-mac="${MOVE_AP.mac}"]`);
@@ -801,16 +832,44 @@ async function runSpanishFirstRun(electronInfo) {
     await check('[es] AP move -> UI updates: lists reloaded, the AP shows its new group, selection reset', async () => {
       await page.waitForFunction(({ mac, subtitle }) =>
         document.querySelector(`#apList .list-item[data-mac="${mac}"] .item-subtitle`)?.textContent === subtitle,
-      { mac: MOVE_AP.mac, subtitle: `WLAN: ${MOVE_GROUP.wlanName}` }, { timeout: WAIT_MS });
+      { mac: MOVE_AP.mac, subtitle: `${es.groupLabel.apGroup}: ${MOVE_GROUP.wlanName}` }, { timeout: WAIT_MS });
       await page.waitForFunction(() => !document.getElementById('refreshBtn').classList.contains('spinning'), null, { timeout: WAIT_MS });
       const snapshot = await stubState(session);
       const shell = await readShell(page);
       return verdict(
         callsTo(snapshot, 'omada:get-aps').length === 2 && callsTo(snapshot, 'omada:get-wlans').length === 2 &&
-        shell.selectionPlaceholder === es.selectApAndWlan && shell.applyDisabled === true && shell.apply === es.apply,
+        shell.selectionPlaceholder === es.selectApAndGroup.apGroup && shell.applyDisabled === true && shell.apply === es.apply,
         { getAps: callsTo(snapshot, 'omada:get-aps').length, getWlans: callsTo(snapshot, 'omada:get-wlans').length, shell }
       );
     }); // End of check "[es] AP move -> UI updates: lists reloaded, the AP shows its new gr..."
+
+    await check('[es] empty AP group as a move target: zNinguna is selectable (selected option, selection bar, Apply enabled) and Apply opens the confirm modal naming it', async () => {
+      await page.click(`#apList .list-item[data-mac="${MOVE_AP.mac}"]`);
+      const apOnly = await readShell(page);
+      await page.click(`#wlanList .list-item[data-wlan-id="${EMPTY_GROUP.wlanId}"]`);
+      const shell = await readShell(page);
+      const selected = (await readWlanItems(page)).find((item) => item.wlanId === EMPTY_GROUP.wlanId)?.selected;
+      await page.click('#applyBtn');
+      await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
+      const message = await page.textContent('#confirmMessage');
+      const expected = `¿Asignar "${EMPTY_GROUP.wlanName}" al AP "${MOVE_AP.name}"?`;
+      return verdict(
+        apOnly.selectionMuted === es.selectGroup.apGroup && selected === 'true' && shell.selectionAp === MOVE_AP.name &&
+        shell.selectionWlan === EMPTY_GROUP.wlanName && shell.applyDisabled === false && message === expected,
+        { apOnly: apOnly.selectionMuted, selected, shell, message, expected }
+      );
+    }); // End of check "[es] empty AP group as a move target..."
+
+    await check('[es] empty AP group as a move target -> Confirm: OMADA_SET_WLAN carries its id (the unchanged move call) and the AP then reports the group', async () => {
+      await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
+      await page.click('#confirmConfirmBtn');
+      await page.waitForFunction(({ mac, subtitle }) =>
+        document.querySelector(`#apList .list-item[data-mac="${mac}"] .item-subtitle`)?.textContent === subtitle,
+      { mac: MOVE_AP.mac, subtitle: `${es.groupLabel.apGroup}: ${EMPTY_GROUP.wlanName}` }, { timeout: WAIT_MS });
+      await page.waitForFunction(() => !document.getElementById('refreshBtn').classList.contains('spinning'), null, { timeout: WAIT_MS });
+      const sets = callsTo(await stubState(session), 'omada:set-wlan');
+      return verdict(sets.length === 2 && isDeepStrictEqual(sets[1].args, [MOVE_AP.mac, EMPTY_GROUP.wlanId]), sets);
+    }); // End of check "[es] empty AP group as a move target -> Confirm..."
 
     await check('[es] Refresh: spinner while loading, then both lists reload with the controller\'s current data', async () => {
       const before = await stubState(session);
@@ -840,7 +899,7 @@ async function runSpanishFirstRun(electronInfo) {
       const shell = await readShell(page);
       return verdict(
         disconnects.length === 1 && disconnects[0].args[0] == null && snapshot.connected === false &&
-        shell.apEmpty === es.connectToSeeAPs && shell.wlanEmpty === es.connectToSeeWLANs && shell.connect === es.connect &&
+        shell.apEmpty === es.connectToSeeAPs && shell.wlanEmpty === es.connectToSeeGroups && shell.connect === es.connect &&
         shell.refreshDisabled === true && shell.applyDisabled === true,
         { disconnects, shell }
       );
@@ -867,10 +926,29 @@ async function runSpanishFirstRun(electronInfo) {
       await page.click('#connectBtn');
       await waitForStatus(page, CONTROLLER_HOST);
       const scenario = (await stubState(session)).scenario;
-      const expected = expectedApRows(scenario.accessPoints, 'es');
+      const expected = expectedApRows(scenario.accessPoints, 'es', 'apGroup');
       await waitForApCount(page, expected.length);
       return compareApRows(await readApItems(page), expected);
     });
+
+    await check('[es] legacy controller (5.x) after a refresh: the panel says "Grupos WLAN (heredado)", AP rows say "WLAN:", the selection bar asks for a "grupo WLAN"', async () => {
+      await page.waitForFunction(() => document.getElementById('refreshBtn').disabled === false, null, { timeout: WAIT_MS });
+      await configureStub(session, { controllerVersion: data.legacyControllerVersion, wlanGroups: data.legacyWlanGroups });
+      await page.click('#refreshBtn');
+      await page.waitForFunction((title) => document.querySelector('.panel:last-child .panel-title')?.textContent === title,
+        es.groupsTitle.wlanGroup, { timeout: WAIT_MS });
+      await page.waitForFunction(() => !document.getElementById('refreshBtn').classList.contains('spinning'), null, { timeout: WAIT_MS });
+      const scenario = (await stubState(session)).scenario;
+      const apVerdict = compareApRows(await readApItems(page), expectedApRows(scenario.accessPoints, 'es', 'wlanGroup'));
+      const wlans = (await readWlanItems(page)).map(({ name, subtitle }) => ({ name, subtitle }));
+      const expectedWlans = expectedWlanRows(data.legacyWlanGroups, 'es');
+      const shell = await readShell(page);
+      return verdict(
+        apVerdict.ok && isDeepStrictEqual(wlans, expectedWlans) && shell.wlanListLabel === es.groupsTitle.wlanGroup &&
+        shell.selectionPlaceholder === es.selectApAndGroup.wlanGroup,
+        { aps: apVerdict.detail, wlans, expectedWlans, shell }
+      );
+    }); // End of check "[es] legacy controller (5.x) after a refresh..."
 
     await check('[es] settings opened from the gear button: focus moves into the URL field, background inert', async () => {
       await page.click('#settingsBtn');
@@ -940,8 +1018,9 @@ async function runEnglishMultiSite(electronInfo) {
     config: { url: CONTROLLER_URL, username: 'admin', language: 'en', hasPassword: true },
     connect: { needsSiteSelection: true },
     sites: data.sites,
+    controllerVersion: data.legacyControllerVersion,
     accessPoints: data.accessPoints,
-    wlanGroups: data.wlanGroups,
+    wlanGroups: data.legacyWlanGroups,
   });
   const { page } = session;
   const en = TEXT.en;
@@ -1000,21 +1079,34 @@ async function runEnglishMultiSite(electronInfo) {
       );
     }); // End of check "[en] picking a site calls OMADA_SELECT_SITE with the site id and th..."
 
-    await check('[en] lists render after the site selection, with English status and group labels', async () => {
-      const expectedAps = expectedApRows(data.accessPoints, 'en');
+    await check('[en] lists render after the site selection, with English status and legacy "WLAN:" group labels', async () => {
+      const expectedAps = expectedApRows(data.accessPoints, 'en', 'wlanGroup');
       await waitForApCount(page, expectedAps.length);
       const apVerdict = compareApRows(await readApItems(page), expectedAps);
-      const expectedWlans = expectedWlanRows(data.wlanGroups, 'en');
+      const expectedWlans = expectedWlanRows(data.legacyWlanGroups, 'en');
       const wlans = (await readWlanItems(page)).map(({ name, subtitle }) => ({ name, subtitle }));
       return verdict(apVerdict.ok && isDeepStrictEqual(wlans, expectedWlans), { aps: apVerdict.detail, wlans, expectedWlans });
     });
+
+    await check('[en] legacy controller (5.x): the group panel and its list are labelled "WLAN groups (legacy)"; the selection bar asks for "an AP and a WLAN group", then "a WLAN group"', async () => {
+      const shell = await readShell(page);
+      const firstMac = (await readApItems(page))[0]?.mac;
+      await page.click(`#apList .list-item[data-mac="${firstMac}"]`);
+      const apOnly = await readShell(page);
+      await page.click(`#apList .list-item[data-mac="${firstMac}"]`);
+      return verdict(
+        shell.wlanTitle === en.groupsTitle.wlanGroup && shell.wlanListLabel === en.groupsTitle.wlanGroup &&
+        shell.selectionPlaceholder === en.selectApAndGroup.wlanGroup && apOnly.selectionMuted === en.selectGroup.wlanGroup,
+        { shell, apOnly: apOnly.selectionMuted }
+      );
+    }); // End of check "[en] legacy controller (5.x)..."
 
     await check('[en] reconnect reuses the remembered site (no site modal, no new selection)', async () => {
       await page.click('#connectBtn');
       await waitForStatus(page, en.disconnected);
       await page.click('#connectBtn');
       await waitForStatus(page, CONTROLLER_HOST);
-      await waitForApCount(page, expectedApRows(data.accessPoints, 'en').length);
+      await waitForApCount(page, expectedApRows(data.accessPoints, 'en', 'wlanGroup').length);
       const snapshot = await stubState(session);
       return verdict(
         callsTo(snapshot, 'omada:connect').length === 3 && snapshot.issuedNonces.length === 2 &&
@@ -1042,6 +1134,7 @@ async function runEnglishMultiSite(electronInfo) {
         await waitForStatus(page, en.disconnected);
         return verdict(
           rowsDuring === 0 && during.apEmpty === en.connectToSeeAPs && during.status === en.connecting &&
+          during.wlanTitle === en.groupsTitle.apGroup && during.wlanEmpty === en.connectToSeeGroups &&
           afterSave.connected === false && afterSave.storedSiteId === '' &&
           afterSave.scenario.config.url === 'https://other-controller.invalid:8043',
           { rowsDuring, during, connected: afterSave.connected, storedSiteId: afterSave.storedSiteId }
@@ -1074,13 +1167,14 @@ async function runCertificatePinning(electronInfo) {
     config: { url: CONTROLLER_URL, username: 'admin', language: 'en', hasPassword: true, pinnedFingerprint: null },
     connect: { success: true },
     presentedFingerprint: FINGERPRINT_A,
+    controllerVersion: data.controllerVersion,
     accessPoints: data.accessPoints,
     wlanGroups: data.wlanGroups,
   });
   const { page } = session;
   const en = TEXT.en;
   const text = CERT_TEXT.en;
-  const expectedAps = expectedApRows(data.accessPoints, 'en');
+  const expectedAps = expectedApRows(data.accessPoints, 'en', 'apGroup');
 
   try {
     await checkWindowLikeRealApp(session);
@@ -1134,6 +1228,19 @@ async function runCertificatePinning(electronInfo) {
         { trusts, nonces: snapshot.issuedTrustNonces, connects: callsTo(snapshot, 'omada:connect').length, aps: apVerdict.detail }
       );
     }); // End of check "[tofu] Connect again -> first-use dialog again..."
+
+    await check('[tofu] Omada 6.3 in English: "AP groups" panel and list label, and the empty group zNinguna listed with "No Wi-Fi networks — silences these APs"', async () => {
+      const shell = await readShell(page);
+      const items = await readWlanItems(page);
+      const empty = items.find((item) => item.wlanId === EMPTY_GROUP.wlanId);
+      const wlans = items.map(({ name, subtitle }) => ({ name, subtitle }));
+      const expectedWlans = expectedWlanRows(data.wlanGroups, 'en');
+      return verdict(
+        shell.wlanTitle === en.groupsTitle.apGroup && shell.wlanListLabel === en.groupsTitle.apGroup &&
+        empty?.subtitle === en.emptyGroup && isDeepStrictEqual(wlans, expectedWlans),
+        { shell, empty, wlans, expectedWlans }
+      );
+    }); // End of check "[tofu] Omada 6.3 in English..."
 
     await check('[tofu] Settings shows the pinned fingerprint and an enabled reset button', async () => {
       await page.click('#settingsBtn');

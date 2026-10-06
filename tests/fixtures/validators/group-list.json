@@ -1,0 +1,79 @@
+{
+  "validator": "validateGroupList",
+  "error": "Unsupported API response (groups)",
+  "valid": [
+    {
+      "name": "Omada 6.3 setting/wlans payload (every AP group, empty ones included), extra fields ignored",
+      "result": {
+        "data": [
+          {
+            "id": "6512a0e1f3b2c41d2e3f4a5b", "name": "Default", "primary": true, "site": "64f0c0ffee0000000000a001", "clone": false, "resource": 0,
+            "remainingBinding": { "2.4GHz": 14, "5GHz": 14, "6GHz": 16, "mlo": 16 }, "maxSsids2G": 16, "maxSsids5G": 16, "maxSsids6G": 16, "maxSsidsMlo": 16
+          },
+          {
+            "id": "6512a0e1f3b2c41d2e3f4a5e", "name": "zNinguna", "primary": false, "site": "64f0c0ffee0000000000a001", "clone": false, "resource": 0,
+            "remainingBinding": { "2.4GHz": 16, "5GHz": 16, "6GHz": 16, "mlo": 16 }, "maxSsids2G": 16, "maxSsids5G": 16, "maxSsids6G": 16, "maxSsidsMlo": 16
+          }
+        ]
+      },
+      "expected": [
+        { "id": "6512a0e1f3b2c41d2e3f4a5b", "name": "Default" },
+        { "id": "6512a0e1f3b2c41d2e3f4a5e", "name": "zNinguna" }
+      ]
+    },
+    {
+      "name": "entries whose deviceType is not the AP type are ignored (even without an id); 'ap' in any case and untagged entries are kept",
+      "result": {
+        "data": [
+          { "id": "group-ap", "name": "Tagged", "deviceType": "ap" },
+          { "name": "Gateway Wi-Fi", "deviceType": "gateway" },
+          { "id": "group-gw", "name": "Gateway group", "deviceType": "osg" },
+          { "id": "group-upper", "name": "Upper case", "deviceType": "AP" },
+          { "id": "group-null", "name": "Null tag", "deviceType": null },
+          { "id": "group-untagged", "name": "Untagged" },
+          { "id": "group-number", "name": "Numeric tag", "deviceType": 1 }
+        ]
+      },
+      "expected": [
+        { "id": "group-ap", "name": "Tagged" },
+        { "id": "group-upper", "name": "Upper case" },
+        { "id": "group-null", "name": "Null tag" },
+        { "id": "group-untagged", "name": "Untagged" }
+      ]
+    },
+    {
+      "name": "a repeated id keeps its first entry; missing or non-string names become empty",
+      "result": {
+        "data": [
+          { "id": "group-x", "name": "First" },
+          { "id": "group-x", "name": "Second" },
+          { "id": "group-no-name" },
+          { "id": "group-bad-name", "name": 12 }
+        ]
+      },
+      "expected": [
+        { "id": "group-x", "name": "First" },
+        { "id": "group-no-name", "name": "" },
+        { "id": "group-bad-name", "name": "" }
+      ]
+    },
+    {
+      "name": "empty group list",
+      "result": { "data": [] },
+      "expected": []
+    }
+  ],
+  "invalid": [
+    { "name": "result is a bare array", "result": [{ "id": "abc", "name": "Default" }] },
+    { "name": "result is null", "result": null },
+    { "name": "result is absent" },
+    { "name": "result has no data field (setting/ssids shape)", "result": { "ssids": [] } },
+    { "name": "data is an object", "result": { "data": { "id": "abc" } } },
+    { "name": "entry is a string", "result": { "data": ["Default"] } },
+    { "name": "entry is null", "result": { "data": [null] } },
+    { "name": "entry has no id", "result": { "data": [{ "name": "Default", "primary": true }] } },
+    { "name": "entry has an empty id", "result": { "data": [{ "id": "", "name": "Default" }] } },
+    { "name": "entry id is a number", "result": { "data": [{ "id": 7, "name": "Default" }] } },
+    { "name": "AP-tagged entry has no id", "result": { "data": [{ "name": "Default", "deviceType": "ap" }] } }
+  ]
+}

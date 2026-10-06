@@ -22,6 +22,7 @@ import {
   ConfigSaveResult,
   IPC_CHANNELS,
   ConnectionResult,
+  GroupListing,
   RendererConfig
 } from '../shared/types';
 
@@ -404,8 +405,10 @@ ipcMain.handle(IPC_CHANNELS.OMADA_GET_APS, async (event) => {
   return requireController().getAccessPoints();
 });
 
-// Get WLAN groups
-ipcMain.handle(IPC_CHANNELS.OMADA_GET_WLANS, async (event) => {
+// Get the group listing: the groups APs can be assigned to (AP groups on
+// Omada 6.3+, WLAN groups before, empty groups included) plus the controller
+// version and group model they belong to (OmadaController.getWlanGroups())
+ipcMain.handle(IPC_CHANNELS.OMADA_GET_WLANS, async (event): Promise<GroupListing> => {
   assertTrustedIpcSender(event);
   return requireController().getWlanGroups();
 });
