@@ -282,4 +282,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 8: `9f147ad`, pushed.
 - Phase 9: `65dcf1a` ("Add unit tests and a GUI smoke harness"), pushed to origin/main (`f0a891e..65dcf1a`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 10: `388791f` ("Upgrade Electron to 44 and the build toolchain"), pushed to origin/main (`73ae8ed..388791f`). A follow-up commit records this SHA. Tree clean after it.
-- Phase 11: commit "Scope credentials to the controller URL and pin its certificate" (SHA recorded by the follow-up commit).
+- Phase 11: `29be7d9` ("Scope credentials to the controller URL and pin its certificate"), pushed to origin/main (`4b82bd9..29be7d9`). A follow-up commit records this SHA. Tree clean after it.

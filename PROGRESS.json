@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-06T21:16:02Z",
+ "updated": "2026-10-06T21:16:26Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -82,7 +82,8 @@
    "risk": "high",
    "summary": "Clears credentials and the pin when the controller URL changes, and pins its certificate on first use before any login.",
    "review": "docs/reviews/phase11.md",
-   "narrative": "docs/progress-archive/phase-11.md"
+   "narrative": "docs/progress-archive/phase-11.md",
+   "commit": "29be7d9"
   },
   {
    "id": "12",
