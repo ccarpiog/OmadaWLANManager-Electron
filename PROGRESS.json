@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-06T23:20:57Z",
+ "updated": "2026-10-06T23:21:16Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -112,7 +112,8 @@
    "risk": "high",
    "summary": "Adds the always-visible destination pane, a review dialog and sequential bulk moves with per-AP results and Retry failed.",
    "review": "docs/reviews/phase13b.md",
-   "narrative": "docs/progress-archive/phase-13b.md"
+   "narrative": "docs/progress-archive/phase-13b.md",
+   "commit": "b3ecb65"
   },
   {
    "id": "14",

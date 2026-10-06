@@ -318,4 +318,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 11: `29be7d9` ("Scope credentials to the controller URL and pin its certificate"), pushed to origin/main (`4b82bd9..29be7d9`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 12: `c7b251f` ("List empty AP groups and detect the controller's group model"), pushed to origin/main (`7a848ab..c7b251f`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 13a: `0a7f7d1` ("Add the sidebar shell and checkbox multi-select for access points"), pushed to origin/main (`7bf0e6b..0a7f7d1`). A follow-up commit records this SHA. Tree clean after it.
-- Phase 13b: committed as "Add the destination pane, move review and sequential bulk moves"; its SHA and push result are recorded by the follow-up commit.
+- Phase 13b: `b3ecb65` ("Add the destination pane, move review and sequential bulk moves"), pushed to origin/main (`17dcba5..b3ecb65`). A follow-up commit records this SHA. Tree clean after it.
