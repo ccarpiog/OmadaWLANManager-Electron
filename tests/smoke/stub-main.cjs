@@ -92,8 +92,12 @@ function defaultScenario() {
     // Value OMADA_SET_WLAN resolves with (the real handler resolves true or throws)
     setWlanResult: true,
     // MACs whose OMADA_SET_WLAN resolves false whatever setWlanResult says
-    // (a partially failing bulk move)
+    // (a partially failing bulk move whose failure carries no message)
     setWlanFailMacs: [],
+    // MACs whose OMADA_SET_WLAN throws, mapped to the error message, like the
+    // real handler when the controller rejects the PATCH (it throws the
+    // response's `msg`); checked before setWlanFailMacs
+    setWlanErrors: {},
     // IPC channels that throw a simulated controller error (e.g. a refresh
     // that fails: ['omada:get-aps'])
     failChannels: [],
@@ -373,9 +377,11 @@ const handlers = {
   }, // End of the OMADA_GET_WLANS handler
 
   /**
-   * OMADA_SET_WLAN: same format guards as the real handler; on success the
-   * stub "applies" the move (the AP now reports the group's name), so a
-   * reload shows the change like a real controller would.
+   * OMADA_SET_WLAN: same format guards as the real handler; a MAC listed in
+   * setWlanErrors throws its message (a controller rejection) and one in
+   * setWlanFailMacs resolves false; on success the stub "applies" the move
+   * (the AP now reports the group's name), so a reload shows the change like
+   * a real controller would.
    * @param {unknown} mac - AP MAC address.
    * @param {unknown} wlanId - Target group id.
    * @returns {boolean} The configured result.
@@ -389,6 +395,10 @@ const handlers = {
     }
     if (!stub.connected) {
       throw new Error('Not connected to the controller');
+    }
+    const errorMessage = (stub.scenario.setWlanErrors || {})[mac];
+    if (typeof errorMessage === 'string') {
+      throw new Error(errorMessage);
     }
     if ((stub.scenario.setWlanFailMacs || []).includes(mac)) {
       return false;

@@ -48,12 +48,11 @@ const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const TEXT = {
   es: {
     disconnected: 'Desconectado', connecting: 'Conectando...', connect: 'Conectar', disconnect: 'Desconectar', connected: 'Conectado',
-    apply: 'Aplicar cambio', unassigned: 'Sin asignar',
+    unassigned: 'Sin asignar', cancel: 'Cancelar', close: 'Cerrar',
     emptyGroup: 'Sin redes Wi-Fi — silencia estos AP', more: 'más', configureHint: 'Configura la conexión en Ajustes para empezar',
     connectToSeeAPs: 'Conecta al controlador para ver los puntos de acceso',
     connectToSeeGroups: 'Conecta al controlador para ver los grupos de AP',
     groupsTitle: { apGroup: 'Grupos de AP', wlanGroup: 'Grupos WLAN (heredado)' },
-    selectApAndGroup: { apGroup: 'Selecciona un AP y un grupo de AP', wlanGroup: 'Selecciona un AP y un grupo WLAN' },
     selectGroup: { apGroup: 'Selecciona un grupo de AP', wlanGroup: 'Selecciona un grupo WLAN' },
     groupLabel: { apGroup: 'Grupo de AP', wlanGroup: 'WLAN' },
     status: ['Desconectado', 'Conectado', 'Adoptando', 'Sin respuesta', 'Aislado'], statusUnknown: 'Estado desconocido',
@@ -65,20 +64,40 @@ const TEXT = {
     selNone: 'Ningún AP seleccionado', selOne: '1 seleccionado', selMany: '{count} seleccionados',
     hiddenOne: '1 oculto por los filtros', hiddenMany: '{count} ocultos por los filtros',
     selectAll: 'Seleccionar los {count} AP', selectAllFiltered: 'Seleccionar los {count} AP filtrados',
-    noMatching: 'Ningún punto de acceso coincide con los filtros', clearFilters: 'Borrar filtros', selectedAps: '{count} AP seleccionados',
-    confirmOne: '¿Asignar "{wlan}" al AP "{ap}"?', confirmMany: '¿Asignar "{wlan}" a {count} AP ({aps})?',
-    changeApplied: 'Cambio aplicado correctamente', appliedMany: '{count} AP movidos a "{wlan}"',
-    partial: 'No se pudieron mover {failed} de {total} AP; siguen seleccionados para reintentarlo',
+    noMatching: 'Ningún punto de acceso coincide con los filtros', clearFilters: 'Borrar filtros',
     loadError: 'Error al cargar los datos del controlador',
+    // Destination pane, review dialog and per-AP results (phase 13b)
+    destinationTitle: 'Mover los AP seleccionados', silence: 'Silenciar',
+    noDestinationResults: 'Ningún grupo ni red coincide con "{query}"', clearSearch: 'Borrar búsqueda',
+    moveNoSelection: 'Selecciona los puntos de acceso que quieres mover', moveDestination: 'Destino: {group}',
+    alreadyOne: '1 ya está en este grupo', alreadyMany: '{count} ya están en este grupo', willMoveOne: '1 se moverá', willMoveMany: '{count} se moverán',
+    allAlreadyOne: 'El AP seleccionado ya está en este grupo', allAlreadyMany: 'Los {count} AP seleccionados ya están en este grupo',
+    hiddenNoteOne: 'Incluye 1 AP oculto por los filtros', hiddenNoteMany: 'Incluye {count} AP ocultos por los filtros',
+    gains: 'Gana', loses: 'Pierde', unchanged: 'Sin cambios', none: 'Ninguna', partialNetwork: '{name} ({count} de {total})',
+    unknownOne: 'No se conocen las redes actuales de 1 AP (sin grupo o con un grupo no reconocido): no se incluye arriba',
+    moveNone: 'Mover AP', moveOne: 'Mover AP', moveMany: 'Mover {count} AP',
+    reviewTitle: 'Revisar el movimiento', reviewOne: '"{ap}" se moverá a "{group}".', reviewMany: 'Se moverán {count} AP a "{group}".',
+    from: 'Desde', to: 'Hacia', apOne: '1 AP', apMany: '{count} AP',
+    skippedOne: '1 ya está en este grupo y no se moverá', skippedMany: '{count} ya están en este grupo y no se moverán',
+    clientsMissingOne: '(1 AP no informa de sus clientes)', clientsMissingMany: '({count} AP no informan de sus clientes)',
+    notAtomic: 'Los AP se mueven de uno en uno y la operación no es atómica: si alguno falla, los demás se mueven igualmente.',
+    overrides: 'No se pueden mostrar las redes personalizadas de cada AP: la API interna del controlador no informa de ellas.',
+    resultsTitle: 'Resultado del movimiento', resultsAllOne: 'Se movió el AP a "{group}".', resultsAllMany: 'Se movieron los {count} AP a "{group}".',
+    resultsPartial: 'Se movieron {moved} de {total} AP a "{group}". Los que fallaron siguen seleccionados.',
+    resultOk: 'Movido', resultFailed: 'Error', rejected: 'El controlador no aceptó el cambio', retryFailed: 'Reintentar los fallidos',
+    // Phase 13b review fixes: ambiguous (same-named) groups and the retry contract after the reload
+    ambiguous: 'Otro grupo tiene el mismo nombre — cambia el nombre de uno en Omada para mover AP aquí',
+    retryMissingOne: '1 AP fallido ya no está en el controlador y no se reintentará.',
+    retryRemainingOne: '"{action}" solo reintentará el AP restante.',
+    retryDestinationGone: 'No se puede reintentar: el grupo "{group}" ya no está en el controlador.',
   },
   en: {
     disconnected: 'Disconnected', connecting: 'Connecting...', connect: 'Connect', disconnect: 'Disconnect', connected: 'Connected',
-    apply: 'Apply change', unassigned: 'Unassigned',
+    unassigned: 'Unassigned', cancel: 'Cancel', close: 'Close',
     emptyGroup: 'No Wi-Fi networks — silences these APs', more: 'more', configureHint: 'Set up the connection in Settings to get started',
     connectToSeeAPs: 'Connect to the controller to see access points',
     connectToSeeGroups: 'Connect to the controller to see AP groups',
     groupsTitle: { apGroup: 'AP groups', wlanGroup: 'WLAN groups (legacy)' },
-    selectApAndGroup: { apGroup: 'Select an AP and an AP group', wlanGroup: 'Select an AP and a WLAN group' },
     selectGroup: { apGroup: 'Select an AP group', wlanGroup: 'Select a WLAN group' },
     groupLabel: { apGroup: 'AP group', wlanGroup: 'WLAN' },
     status: ['Disconnected', 'Connected', 'Adopting', 'Heartbeat missed', 'Isolated'], statusUnknown: 'Unknown status',
@@ -90,11 +109,13 @@ const TEXT = {
     selNone: 'No APs selected', selOne: '1 selected', selMany: '{count} selected',
     hiddenOne: '1 hidden by filters', hiddenMany: '{count} hidden by filters',
     selectAll: 'Select all {count} APs', selectAllFiltered: 'Select all {count} filtered APs',
-    noMatching: 'No access points match the filters', clearFilters: 'Clear filters', selectedAps: '{count} APs selected',
-    confirmOne: 'Assign "{wlan}" to AP "{ap}"?', confirmMany: 'Assign "{wlan}" to {count} APs ({aps})?',
-    changeApplied: 'Change applied successfully', appliedMany: '{count} APs moved to "{wlan}"',
-    partial: 'Could not move {failed} of {total} APs; they stay selected so you can retry',
+    noMatching: 'No access points match the filters', clearFilters: 'Clear filters',
     loadError: 'Error loading data from the controller',
+    // Destination pane (phase 13b)
+    destinationTitle: 'Move selected APs', silence: 'Silence',
+    moveNoSelection: 'Select the access points to move', moveDestination: 'Destination: {group}',
+    moveNone: 'Move APs', moveOne: 'Move AP', moveMany: 'Move {count} APs',
+    ambiguous: 'Another group has the same name — rename one in Omada to move APs here',
   },
 };
 const STATUS_CLASSES = ['offline', 'online', 'pending', 'warning', 'isolated'];
@@ -436,21 +457,141 @@ function readApItems(page) {
 } // End of function readApItems()
 
 /**
- * Reads the rendered WLAN group list items.
+ * Reads the destination pane's options: group id, name, details, section
+ * ('networks' or the pinned 'silence'), the native radio's type, name,
+ * state (checked, disabled) and accessible name (its aria-labelledby text),
+ * the reason shown for a disabled (ambiguous) group, and the radio's
+ * description (its aria-describedby texts, space-joined).
  * @param {import('playwright-core').Page} page - The renderer page.
- * @returns {Promise<Array<{ wlanId: string; name: string; subtitle: string; selected: string }>>}
+ * @returns {Promise<Array<{ wlanId: string; name: string; detail: string; section: string; checked: boolean | null; disabled: boolean | null; type: string | null; radioName: string | null; accessibleName: string | null; reason: string | null; description: string }>>}
  */
-function readWlanItems(page) {
-  return page.evaluate(() => Array.from(document.querySelectorAll('#wlanList .list-item')).map((item) => ({
-    wlanId: item.dataset.wlanId,
-    name: item.querySelector('.item-name')?.textContent || '',
-    subtitle: item.querySelector('.item-subtitle')?.textContent || '',
-    selected: item.getAttribute('aria-selected'),
-  })));
-}
+function readDestinations(page) {
+  return page.evaluate(() => Array.from(document.querySelectorAll('#destinationList .destination-option')).map((option) => {
+    const radio = option.querySelector('input');
+    const labelId = radio?.getAttribute('aria-labelledby');
+    const describedBy = (radio?.getAttribute('aria-describedby') || '').split(' ').filter(Boolean);
+    return {
+      wlanId: option.dataset.wlanId,
+      name: option.querySelector('.destination-name')?.textContent || '',
+      detail: option.querySelector('.destination-detail')?.textContent || '',
+      section: option.closest('.destination-silence') ? 'silence' : 'networks',
+      checked: radio ? radio.checked : null,
+      disabled: radio ? radio.disabled : null,
+      type: radio?.type ?? null,
+      radioName: radio?.name ?? null,
+      accessibleName: labelId ? document.getElementById(labelId)?.textContent ?? null : null,
+      reason: option.querySelector('.destination-reason')?.textContent ?? null,
+      description: describedBy.map((id) => document.getElementById(id)?.textContent ?? '').join(' '),
+    };
+  })); // End of the in-page destination probe
+} // End of function readDestinations()
 
 /**
- * Reads the status bar, buttons, panel placeholders and selection bar.
+ * Reads the destination pane's structure: the "Silence" heading, listbox
+ * remnants, the empty / no-results state and the search field.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The pane's state.
+ */
+function readDestinationPane(page) {
+  return page.evaluate(() => ({
+    silenceTitle: document.querySelector('#destinationList .destination-silence .destination-section-title')?.textContent ?? null,
+    silenceLabelledBy: document.querySelector('#destinationList .destination-silence')?.getAttribute('aria-labelledby') ?? null,
+    listboxes: document.querySelectorAll('#destinationList [role="listbox"], #destinationList [role="option"]').length,
+    emptyText: document.querySelector('#destinationList .empty-state p')?.textContent ?? null,
+    clearSearch: document.getElementById('clearDestinationSearchBtn')?.textContent ?? null,
+    search: document.getElementById('destinationSearch')?.value ?? null,
+    activeId: document.activeElement?.id || '',
+  }));
+} // End of function readDestinationPane()
+
+/**
+ * Reads the move preview and the move button: the aria-live status line,
+ * the destination line, the notes, the networks diff rows (label and value
+ * per kind) and the button's label and state.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The preview.
+ */
+function readPreview(page) {
+  return page.evaluate(() => {
+    const preview = document.getElementById('movePreview');
+    const diff = {};
+    for (const row of preview.querySelectorAll('.move-diff-row')) {
+      const kind = ['gained', 'lost', 'unchanged'].find((name) => row.classList.contains(`is-${name}`));
+      diff[kind] = { label: row.querySelector('dt')?.textContent ?? '', value: row.querySelector('dd')?.textContent ?? '' };
+    }
+    const button = document.getElementById('moveBtn');
+    return {
+      status: document.getElementById('moveStatus')?.textContent ?? '',
+      live: document.getElementById('moveStatus')?.getAttribute('aria-live') ?? null,
+      destination: preview.querySelector('.move-destination')?.textContent ?? null,
+      hiddenNote: preview.querySelector('.move-hidden-note')?.textContent ?? null,
+      unknownNote: preview.querySelector('.move-unknown-note')?.textContent ?? null,
+      warning: preview.querySelector('.move-warning')?.textContent ?? null,
+      diff: Object.keys(diff).length > 0 ? diff : null,
+      button: button?.textContent ?? '',
+      disabled: button?.disabled ?? null,
+    };
+  }); // End of the in-page preview probe
+} // End of function readPreview()
+
+/**
+ * Reads the move dialog: its dialog attributes, title, summary, review rows
+ * (label, value, details and warnings by data-row), per-AP results, notes,
+ * visible buttons (text, or null when hidden) and the focused element.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The dialog's content.
+ */
+function readMoveModal(page) {
+  return page.evaluate(() => {
+    const modal = document.getElementById('moveModal');
+    /**
+     * A footer button's text while it is shown, else null.
+     * @param {string} id - The button id.
+     * @returns {string | null} The text or null.
+     */
+    const shown = (id) => {
+      const button = document.getElementById(id);
+      return button && !button.hidden ? button.textContent : null;
+    };
+    const rows = {};
+    for (const row of document.querySelectorAll('#moveReview .move-review-row')) {
+      rows[row.dataset.row] = {
+        label: row.querySelector('dt')?.textContent ?? '',
+        value: row.querySelector('.move-review-value')?.textContent ?? null,
+        details: Array.from(row.querySelectorAll('.move-review-detail')).map((element) => element.textContent),
+        warnings: Array.from(row.querySelectorAll('.move-review-detail.is-warning')).map((element) => element.textContent),
+      };
+    }
+    const active = document.activeElement;
+    return {
+      open: Boolean(modal?.classList.contains('visible')),
+      role: modal?.getAttribute('role') ?? null,
+      ariaModal: modal?.getAttribute('aria-modal') ?? null,
+      labelledBy: modal?.getAttribute('aria-labelledby') ?? null,
+      describedBy: modal?.getAttribute('aria-describedby') ?? null,
+      title: document.getElementById('moveModalHeading')?.textContent ?? '',
+      summary: document.getElementById('moveModalSummary')?.textContent ?? '',
+      rows,
+      results: Array.from(document.querySelectorAll('#moveResults .move-result')).map((item) => ({
+        mac: item.dataset.mac,
+        ok: item.classList.contains('is-ok'),
+        status: item.querySelector('.move-result-status')?.textContent ?? '',
+        name: item.querySelector('.move-result-name')?.textContent ?? '',
+        macText: item.querySelector('.move-result-mac')?.textContent ?? '',
+        error: item.querySelector('.move-result-error')?.textContent ?? null,
+      })),
+      notes: Array.from(document.querySelectorAll('#moveNotes .move-note')).map((element) => element.textContent),
+      buttons: { cancel: shown('cancelMoveBtn'), confirm: shown('confirmMoveBtn'), retry: shown('retryFailedBtn'), close: shown('closeMoveBtn') },
+      activeId: active?.id || '',
+      activeVisible: active instanceof HTMLElement && getComputedStyle(active).visibility === 'visible',
+      inert: document.querySelector('.app-container')?.hasAttribute('inert'),
+    };
+  }); // End of the in-page move dialog probe
+} // End of function readMoveModal()
+
+/**
+ * Reads the status bar, buttons, list placeholders, the destination pane's
+ * labels, the move button and which modals are open.
  * @param {import('playwright-core').Page} page - The renderer page.
  * @returns {Promise<object>} The current shell state.
  */
@@ -464,22 +605,19 @@ function readShell(page) {
     settingsDisabled: document.getElementById('settingsBtn')?.disabled,
     refreshDisabled: document.getElementById('refreshBtn')?.disabled,
     refreshSpinning: document.getElementById('refreshBtn')?.classList.contains('spinning'),
-    apply: document.getElementById('applyBtn')?.textContent || '',
     host: document.getElementById('controllerHost')?.hidden ? null : document.getElementById('controllerHost')?.textContent ?? null,
     site: document.getElementById('siteName')?.hidden ? null : document.getElementById('siteName')?.textContent ?? null,
-    applyDisabled: document.getElementById('applyBtn')?.disabled,
+    move: document.getElementById('moveBtn')?.textContent || '',
+    moveDisabled: document.getElementById('moveBtn')?.disabled,
+    moveStatus: document.getElementById('moveStatus')?.textContent ?? '',
     apEmpty: document.querySelector('#apList .empty-state p')?.textContent ?? null,
-    wlanEmpty: document.querySelector('#wlanList .empty-state p')?.textContent ?? null,
-    selectionPlaceholder: document.querySelector('#selectionInfo .selection-placeholder')?.textContent ?? null,
-    selectionAp: document.querySelector('#selectionInfo .ap-name')?.textContent ?? null,
-    selectionWlan: document.querySelector('#selectionInfo .wlan-name')?.textContent ?? null,
-    selectionMuted: document.querySelector('#selectionInfo .muted-text')?.textContent ?? null,
-    wlanTitle: document.getElementById('wlanPanelTitle')?.textContent ?? null,
-    wlanListLabel: document.getElementById('wlanList')?.getAttribute('aria-label') ?? null,
+    destinationEmpty: document.querySelector('#destinationList .empty-state p')?.textContent ?? null,
+    destinationTitle: document.getElementById('destinationPanelTitle')?.textContent ?? null,
+    destinationListLabel: document.getElementById('destinationList')?.getAttribute('aria-label') ?? null,
     inert: document.querySelector('.app-container')?.hasAttribute('inert'),
     activeId: document.activeElement?.id || '',
     settingsOpen: document.getElementById('settingsModal')?.classList.contains('visible'),
-    confirmOpen: document.getElementById('confirmModal')?.classList.contains('visible'),
+    moveOpen: document.getElementById('moveModal')?.classList.contains('visible'),
     siteOpen: document.getElementById('siteModal')?.classList.contains('visible'),
     certOpen: document.getElementById('certModal')?.classList.contains('visible'),
   })); // End of the in-page shell probe
@@ -766,23 +904,35 @@ function expectedApRows(accessPoints, language, groupModel, wlanGroups) {
 } // End of function expectedApRows()
 
 /**
- * The group rows the renderer must show: malformed ids dropped, sorted by
- * name, SSID preview "a, b, c +N more" or the empty-group label.
+ * The destination options the pane must show: malformed ids dropped, sorted
+ * by name, the groups with networks first ("N networks · a, b, c +N more"),
+ * then the empty ones in the "Silence" section with the strong label.
  * @param {object[]} wlanGroups - WlanGroup DTOs served by the stub.
  * @param {'es' | 'en'} language - UI language.
- * @returns {Array<{ name: string; subtitle: string }>}
+ * @returns {Array<{ name: string; detail: string; section: string }>}
  */
-function expectedWlanRows(wlanGroups, language) {
+function expectedDestinations(wlanGroups, language) {
   const text = TEXT[language];
-  return wlanGroups
+  const groups = wlanGroups
     .filter((group) => WLAN_ID_REGEX.test(group.wlanId))
-    .sort((a, b) => a.wlanName.localeCompare(b.wlanName))
-    .map((group) => {
-      const ssids = group.ssidList.map((ssid) => ssid.ssidName);
-      const preview = ssids.length > 3 ? `${ssids.slice(0, 3).join(', ')} +${ssids.length - 3} ${text.more}` : ssids.join(', ');
-      return { name: group.wlanName, subtitle: preview || text.emptyGroup };
-    });
-}
+    .sort((a, b) => a.wlanName.localeCompare(b.wlanName));
+  /**
+   * One option's expected details.
+   * @param {object} group - The group.
+   * @returns {string} The details text.
+   */
+  const detail = (group) => {
+    const names = [...new Set(group.ssidList.map((ssid) => ssid.ssidName))];
+    if (names.length === 0) return text.emptyGroup;
+    const count = names.length === 1 ? text.networksOne : fmt(text.networksMany, { count: names.length });
+    const shown = names.slice(0, 3).join(', ');
+    return `${count} · ${names.length > 3 ? `${shown} +${names.length - 3} ${text.more}` : shown}`;
+  };
+  return [
+    ...groups.filter((group) => group.ssidList.length > 0).map((group) => ({ name: group.wlanName, detail: detail(group), section: 'networks' })),
+    ...groups.filter((group) => group.ssidList.length === 0).map((group) => ({ name: group.wlanName, detail: detail(group), section: 'silence' })),
+  ];
+} // End of function expectedDestinations()
 
 /**
  * Compares rendered AP items with the expected rows.
@@ -921,13 +1071,65 @@ async function checkShellAfterConnect(session, language, expected) {
 } // End of function checkShellAfterConnect()
 
 /**
- * Waits until the action bar shows its placeholder again (a fully successful
- * move clears both selections) and the reload has finished.
+ * Checks a destination group in the pane (a click on its option's label).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} wlanId - The group id.
+ * @returns {Promise<void>}
+ */
+async function pickDestination(page, wlanId) {
+  await page.click(`#destinationList .destination-option[data-wlan-id="${wlanId}"]`);
+}
+
+/**
+ * Waits until the move dialog shows its review phase with focus on Cancel.
  * @param {import('playwright-core').Page} page - The renderer page.
  * @returns {Promise<void>}
  */
-async function waitForMoveDone(page) {
-  await page.waitForFunction(() => document.querySelector('#selectionInfo .selection-placeholder') !== null, null, { timeout: WAIT_MS });
+async function waitForReview(page) {
+  await page.waitForSelector('#moveModal.visible', { timeout: WAIT_MS });
+  await page.waitForFunction(() => document.activeElement?.id === 'cancelMoveBtn' && !document.getElementById('confirmMoveBtn').hidden, null, { timeout: WAIT_MS });
+}
+
+/**
+ * Clicks the move button and waits for the review.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function openReview(page) {
+  await page.click('#moveBtn');
+  await waitForReview(page);
+}
+
+/**
+ * Waits until the move dialog shows the per-AP results (after the run and
+ * the reload) with focus on Close.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function waitForResults(page) {
+  await page.waitForFunction(() =>
+    document.getElementById('moveModal').classList.contains('visible') &&
+    !document.getElementById('closeMoveBtn').hidden && document.activeElement?.id === 'closeMoveBtn',
+  null, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the move dialog is closed.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function waitForMoveDialogClosed(page) {
+  await page.waitForFunction(() => !document.getElementById('moveModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+}
+
+/**
+ * Closes the results with Close and waits until no load is in flight.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function closeResults(page) {
+  await page.click('#closeMoveBtn');
+  await waitForMoveDialogClosed(page);
   await waitForLoadIdle(page);
 }
 
@@ -959,28 +1161,28 @@ async function runSelectionChecks(session) {
    */
   const macs = (names) => names.map((name) => AP[name].mac);
 
-  await check('[es] checkbox selection: clicking a checkbox checks it, the aria-live summary goes from "Ningún AP seleccionado" to "1 seleccionado", the action bar names the AP', async () => {
+  await check('[es] checkbox selection: clicking a checkbox checks it, the aria-live summary goes from "Ningún AP seleccionado" to "1 seleccionado"; the destination pane asks for a group ("Mover AP" disabled)', async () => {
     const initial = await readSelection(page);
     await page.click(box('Altillo'));
     const selection = await readSelection(page);
-    const shell = await readShell(page);
+    const preview = await readPreview(page);
     return verdict(
       initial.summary === expectedSummary('es', 0, 0) && initial.toolbarHidden === false && initial.selectAll === fmt(es.selectAll, { count: 7 }) &&
       selection.live === 'polite' && selection.summary === expectedSummary('es', 1, 0) &&
       isDeepStrictEqual(selection.checked, macs(['Altillo'])) && selection.activeMac === AP.Altillo.mac &&
-      shell.selectionAp === 'Altillo' && shell.applyDisabled === true,
-      { initial, selection, shell }
+      preview.status === es.selectGroup.apGroup && preview.live === 'polite' && preview.button === es.moveOne && preview.disabled === true,
+      { initial, selection, preview }
     );
   }); // End of check "[es] checkbox selection..."
 
-  await check('[es] Shift-click range: Shift-clicking Garaje\'s checkbox selects Altillo through Garaje; the action bar says "4 AP seleccionados"', async () => {
+  await check('[es] Shift-click range: Shift-clicking Garaje\'s checkbox selects Altillo through Garaje; the move button says "Mover 4 AP"', async () => {
     await page.click(box('Garaje'), { modifiers: ['Shift'] });
     const selection = await readSelection(page);
-    const shell = await readShell(page);
+    const preview = await readPreview(page);
     return verdict(
       isDeepStrictEqual(selection.checked, macs(['Altillo', 'Bodega', 'EAP Carpio', 'Garaje'])) &&
-      selection.summary === expectedSummary('es', 4, 0) && shell.selectionAp === fmt(es.selectedAps, { count: 4 }),
-      { selection, shell }
+      selection.summary === expectedSummary('es', 4, 0) && preview.button === fmt(es.moveMany, { count: 4 }),
+      { selection, preview }
     );
   }); // End of check "[es] Shift-click range..."
 
@@ -1031,12 +1233,12 @@ async function runSelectionChecks(session) {
     const before = await readSelection(page);
     await page.click('#selectAllApsBtn');
     const after = await readSelection(page);
-    const shell = await readShell(page);
+    const preview = await readPreview(page);
     return verdict(
       before.selectAll === fmt(es.selectAllFiltered, { count: 3 }) && before.summary === expectedSummary('es', 3, 2) &&
       isDeepStrictEqual(after.checked, macs(['Garaje', 'Porche', 'Salón'])) && after.summary === expectedSummary('es', 5, 2) &&
-      shell.selectionAp === fmt(es.selectedAps, { count: 5 }),
-      { before, after, shell }
+      preview.button === fmt(es.moveMany, { count: 5 }),
+      { before, after, preview }
     );
   }); // End of check "[es] Seleccionar los 3 AP filtrados..."
 
@@ -1086,11 +1288,20 @@ async function runSelectionChecks(session) {
 } // End of function runSelectionChecks()
 
 /**
- * Spanish launch, moves over the checkbox selection through the existing
- * confirm -> OMADA_SET_WLAN flow: a two-AP move where one AP is hidden by the
- * group filter, Enter right after the confirmation opens cancelling (Cancel
- * has the initial focus), a keyboard-only move, and a partial failure whose
- * failed AP stays selected for a retry. Runs after runSelectionChecks().
+ * Spanish launch, moves through the destination pane and the move dialog
+ * (review -> one OMADA_SET_WLAN per AP -> per-AP results): a bulk move with
+ * an AP hidden by the group filter (all succeed), a bulk cancel from the
+ * review opened with Enter on a destination radio (no PATCH), the no-op and
+ * mixed selections ("2 ya están en este grupo; 1 se moverá", only the third
+ * AP PATCHed), the destination search by network name, a keyboard-only move,
+ * a partial failure with per-AP results and "Reintentar los fallidos", the
+ * retry contract after a reload that dropped a failed AP or the destination,
+ * Enter on a focused radio other than the checked (search-hidden) one, and
+ * two same-named groups (disabled radios with the reason). The stub's
+ * scenario is restored after each reconfiguration. Runs after
+ * runSelectionChecks(); expects Altillo zGrupo B, Bodega none, EAP Carpio
+ * zNinguna, Garaje Default, Jardín zNinguna, Porche Default, Salón Default,
+ * and no destination checked.
  * @param {object} session - The Spanish launch.
  * @returns {Promise<void>}
  */
@@ -1114,36 +1325,53 @@ async function runBulkMoveChecks(session) {
    * @returns {string} E.g. "Grupo de AP: Default".
    */
   const groupText = (name) => `${es.groupLabel.apGroup}: ${name}`;
+  /**
+   * A network annotated with how many of the moving APs it applies to.
+   * @param {string} name - Network name.
+   * @param {number} count - APs it applies to.
+   * @param {number} total - Moving APs with a known group.
+   * @returns {string} E.g. "Casa (1 de 2)".
+   */
+  const partial = (name, count, total) => fmt(es.partialNetwork, { name, count, total });
 
-  await check('[es] move of a selection with an AP hidden by the group filter: the action bar says "2 AP seleccionados" and the confirmation names both ("¿Asignar "Exterior" a 2 AP (Altillo, Garaje)?")', async () => {
+  await check('[es] bulk move with an AP hidden by the group filter: Altillo (zGrupo B) + Garaje (Default) -> Exterior (Silenciar); the preview says "Incluye 1 AP oculto por los filtros", the per-AP losses ("Oficina (1 de 2)") and the silence label; the review lists both sources, both APs and their clients', async () => {
     await page.click('#clearApSelectionBtn');
     await page.click(box('Altillo'));
     await page.click(box('Garaje'));
     await page.selectOption('#apGroupFilter', GROUP['zGrupo B'].wlanId);
-    const selection = await readSelection(page);
     const rows = (await readApItems(page)).map((item) => item.name);
-    await page.click(`#wlanList .list-item[data-wlan-id="${GROUP.Exterior.wlanId}"]`);
-    const shell = await readShell(page);
-    await page.click('#applyBtn');
-    await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
-    const message = await page.textContent('#confirmMessage');
-    const expected = fmt(es.confirmMany, { wlan: 'Exterior', count: 2, aps: 'Altillo, Garaje' });
+    await pickDestination(page, GROUP.Exterior.wlanId);
+    const preview = await readPreview(page);
+    await openReview(page);
+    const modal = await readMoveModal(page);
+    const lost = ['Oficina', 'Taller', 'Almacén', 'Tienda', 'IoT', 'Casa', 'Invitados'].map((name) => partial(name, 1, 2)).join(', ');
     return verdict(
-      isDeepStrictEqual(rows, ['Altillo']) && selection.summary === expectedSummary('es', 2, 1) &&
-      shell.selectionAp === fmt(es.selectedAps, { count: 2 }) && shell.selectionWlan === 'Exterior' && shell.applyDisabled === false &&
-      message === expected,
-      { rows, selection, shell, message, expected }
+      isDeepStrictEqual(rows, ['Altillo']) && preview.status === fmt(es.willMoveMany, { count: 2 }) &&
+      preview.hiddenNote === es.hiddenNoteOne && preview.warning === es.emptyGroup && preview.unknownNote === null &&
+      isDeepStrictEqual(preview.diff, {
+        gained: { label: es.gains, value: es.none },
+        lost: { label: es.loses, value: `−7 · ${lost}` },
+        unchanged: { label: es.unchanged, value: es.none },
+      }) && preview.button === fmt(es.moveMany, { count: 2 }) && preview.disabled === false &&
+      modal.summary === fmt(es.reviewMany, { count: 2, group: 'Exterior' }) &&
+      modal.rows.from?.value === `zGrupo B (${es.apOne}) · Default (${es.apOne})` &&
+      isDeepStrictEqual(modal.rows.to, { label: es.to, value: 'Exterior', details: [es.emptyGroup], warnings: [es.emptyGroup] }) &&
+      isDeepStrictEqual(modal.rows.aps, { label: `${es.accessPoints} (${fmt(es.apMany, { count: 2 })})`, value: 'Altillo, Garaje', details: [es.hiddenNoteOne], warnings: [] }) &&
+      modal.rows.clients?.value === `${fmt(es.clientsMany, { count: 0 })} ${es.clientsMissingOne}` &&
+      modal.buttons.confirm === fmt(es.moveMany, { count: 2 }) && modal.activeId === 'cancelMoveBtn',
+      { rows, preview, modal }
     );
-  }); // End of check "[es] move of a selection with an AP hidden by the group filter..."
+  }); // End of check "[es] bulk move with an AP hidden by the group filter..."
 
-  await check('[es] that move -> Confirm: one OMADA_SET_WLAN per AP in list order (the hidden one included), "2 AP movidos a "Exterior"", selection cleared, both APs now in Exterior', async () => {
+  await check('[es] that bulk move -> confirm: one OMADA_SET_WLAN per AP in list order (the hidden one included), then "Se movieron los 2 AP a "Exterior"." with two "Movido" rows and no "Reintentar"; after Close the selection is empty and both APs are in Exterior', async () => {
     const before = (await setCalls()).length;
-    await page.click('#confirmConfirmBtn');
-    await waitForToast(page, 'success', fmt(es.appliedMany, { count: 2, wlan: 'Exterior' }));
-    await waitForMoveDone(page);
+    await page.click('#confirmMoveBtn');
+    await waitForResults(page);
+    const modal = await readMoveModal(page);
     const sets = (await setCalls()).slice(before);
+    await closeResults(page);
     const selection = await readSelection(page);
-    const shell = await readShell(page);
+    const preview = await readPreview(page);
     await page.click('#clearApFiltersBtn');
     const rows = await readApItems(page);
     /**
@@ -1154,55 +1382,121 @@ async function runBulkMoveChecks(session) {
     const groupOf = (name) => rows.find((row) => row.name === name)?.group;
     return verdict(
       isDeepStrictEqual(sets.map((call) => call.args), [[AP.Altillo.mac, GROUP.Exterior.wlanId], [AP.Garaje.mac, GROUP.Exterior.wlanId]]) &&
-      selection.summary === expectedSummary('es', 0, 0) && shell.selectionPlaceholder === es.selectApAndGroup.apGroup &&
-      shell.applyDisabled === true && groupOf('Altillo') === groupText('Exterior') && groupOf('Garaje') === groupText('Exterior'),
-      { sets, selection, shell, rows }
+      modal.title === es.resultsTitle && modal.summary === fmt(es.resultsAllMany, { count: 2, group: 'Exterior' }) &&
+      isDeepStrictEqual(modal.results.map((row) => [row.name, row.macText, row.ok, row.status, row.error]), [
+        ['Altillo', AP.Altillo.mac, true, es.resultOk, null], ['Garaje', AP.Garaje.mac, true, es.resultOk, null],
+      ]) &&
+      isDeepStrictEqual(modal.buttons, { cancel: null, confirm: null, retry: null, close: es.close }) && isDeepStrictEqual(modal.notes, [es.notAtomic]) &&
+      selection.summary === expectedSummary('es', 0, 0) && preview.status === es.moveNoSelection && preview.disabled === true &&
+      groupOf('Altillo') === groupText('Exterior') && groupOf('Garaje') === groupText('Exterior'),
+      { sets, modal, selection, preview, rows }
     );
-  }); // End of check "[es] that move -> Confirm..."
+  }); // End of check "[es] that bulk move -> confirm..."
 
-  await check('[es] Enter right after a two-AP move confirmation opens does not move: Enter on Apply opens it with Cancel focused, a second Enter cancels (no OMADA_SET_WLAN), focus returns to Apply, both selections stay', async () => {
+  await check('[es] bulk cancel: Bodega + Jardín -> Exterior; Enter on the checked Exterior radio opens the review with Cancel focused, a second Enter cancels (no OMADA_SET_WLAN), focus returns to the radio, selection and destination stay', async () => {
     const before = (await setCalls()).length;
     await page.click(box('Bodega'));
     await page.click(box('Jardín'));
-    await page.click(`#wlanList .list-item[data-wlan-id="${GROUP.Exterior.wlanId}"]`);
-    await page.focus('#applyBtn');
+    await pickDestination(page, GROUP.Exterior.wlanId);
+    await page.focus(`#destinationList .destination-radio[value="${GROUP.Exterior.wlanId}"]`);
     await page.keyboard.press('Enter');
-    await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
-    await page.waitForFunction(() => document.activeElement?.id === 'cancelConfirmBtn', null, { timeout: WAIT_MS });
-    const message = await page.textContent('#confirmMessage');
+    await waitForReview(page);
+    const modal = await readMoveModal(page);
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => !document.getElementById('confirmModal').classList.contains('visible'), null, { timeout: WAIT_MS });
-    await page.waitForFunction(() => document.activeElement?.id === 'applyBtn', null, { timeout: WAIT_MS });
+    await waitForMoveDialogClosed(page);
+    await page.waitForFunction((id) => document.activeElement?.classList.contains('destination-radio') && document.activeElement.value === id,
+      GROUP.Exterior.wlanId, { timeout: WAIT_MS });
     const sets = (await setCalls()).slice(before);
     const selection = await readSelection(page);
+    const preview = await readPreview(page);
     const shell = await readShell(page);
-    // Leave both selections empty for the keyboard-only move (a second click
-    // on the selected group deselects it)
     await page.click('#clearApSelectionBtn');
-    await page.click(`#wlanList .list-item[data-wlan-id="${GROUP.Exterior.wlanId}"]`);
-    await page.waitForFunction(() => document.querySelector('#selectionInfo .selection-placeholder') !== null, null, { timeout: WAIT_MS });
     return verdict(
-      message === fmt(es.confirmMany, { wlan: 'Exterior', count: 2, aps: 'Bodega, Jardín' }) && sets.length === 0 &&
-      isDeepStrictEqual(selection.checked, [AP.Bodega.mac, AP['Jardín'].mac]) && selection.summary === expectedSummary('es', 2, 0) &&
-      shell.selectionWlan === 'Exterior' && shell.apply === es.apply && shell.applyDisabled === false &&
-      shell.confirmOpen === false && shell.inert === false,
-      { message, sets, selection, shell }
+      modal.summary === fmt(es.reviewMany, { count: 2, group: 'Exterior' }) && modal.rows.aps?.value === 'Bodega, Jardín' &&
+      modal.activeId === 'cancelMoveBtn' && sets.length === 0 &&
+      isDeepStrictEqual(selection.checked, [AP.Bodega.mac, AP['Jardín'].mac]) && preview.destination === fmt(es.moveDestination, { group: 'Exterior' }) &&
+      preview.button === fmt(es.moveMany, { count: 2 }) && preview.disabled === false && shell.moveOpen === false && shell.inert === false,
+      { modal, sets, selection, preview, shell }
     );
-  }); // End of check "[es] Enter right after a two-AP move confirmation opens..."
+  }); // End of check "[es] bulk cancel..."
 
-  await check('[es] keyboard-only move: Tab into the list, arrows to Porche, Space, Tab to the group list, arrows to zGrupo B, Enter, Tab to Apply, Enter (Cancel has focus), Tab to Confirm, Enter', async () => {
+  await check('[es] no-op move: Altillo + Garaje are both in Exterior already -> "Los 2 AP seleccionados ya están en este grupo", no networks diff, the move button disabled', async () => {
+    await page.click(box('Altillo'));
+    await page.click(box('Garaje'));
+    const preview = await readPreview(page);
+    return verdict(
+      preview.status === fmt(es.allAlreadyMany, { count: 2 }) && preview.disabled === true && preview.button === es.moveNone &&
+      preview.diff === null && preview.destination === fmt(es.moveDestination, { group: 'Exterior' }),
+      preview
+    );
+  }); // End of check "[es] no-op move..."
+
+  await check('[es] mixed selection: adding Salón says "2 ya están en este grupo; 1 se moverá"; the review says the 2 are skipped, and the move PATCHes only Salón', async () => {
+    const before = (await setCalls()).length;
+    await page.click(box('Salón'));
+    const preview = await readPreview(page);
+    await openReview(page);
+    const modal = await readMoveModal(page);
+    await page.click('#confirmMoveBtn');
+    await waitForResults(page);
+    const results = await readMoveModal(page);
+    await closeResults(page);
+    const sets = (await setCalls()).slice(before);
+    const selection = await readSelection(page);
+    return verdict(
+      preview.status === `${fmt(es.alreadyMany, { count: 2 })}; ${es.willMoveOne}` && preview.button === es.moveOne && preview.disabled === false &&
+      modal.summary === fmt(es.reviewOne, { ap: 'Salón', group: 'Exterior' }) &&
+      isDeepStrictEqual(modal.rows.aps, { label: `${es.accessPoints} (${es.apOne})`, value: 'Salón', details: [fmt(es.skippedMany, { count: 2 })], warnings: [] }) &&
+      modal.rows.clients?.value === fmt(es.clientsMany, { count: 12 }) &&
+      sets.length === 1 && isDeepStrictEqual(sets[0].args, [AP['Salón'].mac, GROUP.Exterior.wlanId]) &&
+      results.summary === fmt(es.resultsAllOne, { group: 'Exterior' }) && isDeepStrictEqual(results.results.map((row) => row.mac), [AP['Salón'].mac]) &&
+      selection.summary === expectedSummary('es', 0, 0),
+      { preview, modal, sets, results, selection }
+    );
+  }); // End of check "[es] mixed selection..."
+
+  await check('[es] destination search by network name: "taller" leaves only zGrupo B (its preview lists "Taller" first) and no Silence section; "NINGU" leaves only zNinguna under "Silenciar"; "zzz" says "Ningún grupo ni red coincide con "zzz"" with "Borrar búsqueda"; Escape clears a search', async () => {
+    await page.fill('#destinationSearch', 'taller');
+    const byNetwork = await readDestinations(page);
+    const paneByNetwork = await readDestinationPane(page);
+    await page.fill('#destinationSearch', 'NINGU');
+    const bySilence = await readDestinations(page);
+    const paneBySilence = await readDestinationPane(page);
+    await page.fill('#destinationSearch', 'zzz');
+    const none = await readDestinationPane(page);
+    await page.click('#clearDestinationSearchBtn');
+    const cleared = await readDestinations(page);
+    const paneCleared = await readDestinationPane(page);
+    await page.fill('#destinationSearch', 'casa');
+    const byCasa = (await readDestinations(page)).map((item) => item.name);
+    await page.keyboard.press('Escape');
+    const afterEscape = await readDestinationPane(page);
+    const all = (await readDestinations(page)).length;
+    return verdict(
+      isDeepStrictEqual(byNetwork.map((item) => [item.name, item.section, item.detail]), [
+        ['zGrupo B', 'networks', `${fmt(es.networksMany, { count: 5 })} · Taller, Oficina, Almacén +2 ${es.more}`],
+      ]) && paneByNetwork.silenceTitle === null &&
+      isDeepStrictEqual(bySilence.map((item) => [item.name, item.section]), [['zNinguna', 'silence']]) && paneBySilence.silenceTitle === es.silence &&
+      none.emptyText === fmt(es.noDestinationResults, { query: 'zzz' }) && none.clearSearch === es.clearSearch &&
+      cleared.length === 4 && paneCleared.search === '' && paneCleared.activeId === 'destinationSearch' &&
+      isDeepStrictEqual(byCasa, ['Default']) && afterEscape.search === '' && afterEscape.activeId === 'destinationSearch' && all === 4,
+      { byNetwork, bySilence, none, cleared: cleared.length, paneCleared, byCasa, afterEscape, all }
+    );
+  }); // End of check "[es] destination search by network name..."
+
+  await check('[es] keyboard-only move: Tab into the list, arrows to Porche, Space, Tab to the destination radios, ArrowDown to zGrupo B (the arrows check it), Tab to "Mover AP", Enter (Cancel has focus), Tab to the move button, Enter, then Enter on Close', async () => {
     const before = (await setCalls()).length;
     /**
-     * Describes the focused element (id, AP checkbox MAC, group option id).
-     * @returns {Promise<{ id: string; checkbox: boolean; mac: string | null; wlanId: string | null }>}
+     * Describes the focused element (id, AP checkbox MAC, destination radio value).
+     * @returns {Promise<{ id: string; checkbox: boolean; mac: string | null; radio: string | null }>}
      */
     const active = () => page.evaluate(() => {
       const element = document.activeElement;
       return {
         id: element?.id || '',
         checkbox: Boolean(element?.classList.contains('ap-checkbox')),
-        mac: element?.dataset?.mac ?? null,
-        wlanId: element?.closest('#wlanList') ? element.dataset?.wlanId ?? null : null,
+        mac: element?.classList.contains('ap-checkbox') ? element.dataset.mac ?? null : null,
+        radio: element?.classList.contains('destination-radio') ? element.value : null,
       };
     });
     /**
@@ -1225,71 +1519,286 @@ async function runBulkMoveChecks(session) {
     const reachedAp = await pressUntil('ArrowDown', (focus) => focus.mac === AP.Porche.mac);
     await page.keyboard.press('Space');
     const checked = (await readSelection(page)).checked;
-    const reachedGroups = await pressUntil('Tab', (focus) => focus.wlanId !== null);
-    const reachedGroup = await pressUntil('ArrowDown', (focus) => focus.wlanId === MOVE_GROUP.wlanId);
+    const reachedRadios = await pressUntil('Tab', (focus) => focus.radio !== null);
+    const reachedGroup = await pressUntil('ArrowDown', (focus) => focus.radio === MOVE_GROUP.wlanId);
+    const radio = (await readDestinations(page)).find((item) => item.wlanId === MOVE_GROUP.wlanId)?.checked;
+    const preview = await readPreview(page);
+    const reachedMove = await pressUntil('Tab', (focus) => focus.id === 'moveBtn');
     await page.keyboard.press('Enter');
-    const reachedApply = await pressUntil('Tab', (focus) => focus.id === 'applyBtn');
-    await page.keyboard.press('Enter');
-    await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
-    await page.waitForFunction(() => document.activeElement?.id === 'cancelConfirmBtn', null, { timeout: WAIT_MS });
-    const message = await page.textContent('#confirmMessage');
-    const reachedConfirm = await pressUntil('Tab', (focus) => focus.id === 'confirmConfirmBtn', 3);
+    await waitForReview(page);
+    const modal = await readMoveModal(page);
+    const reachedConfirm = await pressUntil('Tab', (focus) => focus.id === 'confirmMoveBtn', 3);
     const setsBeforeConfirm = (await setCalls()).length - before;
     await page.keyboard.press('Enter');
-    await waitForMoveDone(page);
+    await waitForResults(page);
+    const results = await readMoveModal(page);
+    await page.keyboard.press('Enter');
+    await waitForMoveDialogClosed(page);
+    await waitForLoadIdle(page);
     const sets = (await setCalls()).slice(before);
     const porche = (await readApItems(page)).find((row) => row.mac === AP.Porche.mac);
+    const focusAfter = await active();
     return verdict(
-      reachedList && reachedAp && isDeepStrictEqual(checked, [AP.Porche.mac]) && reachedGroups && reachedGroup && reachedApply &&
-      message === fmt(es.confirmOne, { wlan: MOVE_GROUP.wlanName, ap: 'Porche' }) && reachedConfirm && setsBeforeConfirm === 0 &&
-      sets.length === 1 && isDeepStrictEqual(sets[0].args, [AP.Porche.mac, MOVE_GROUP.wlanId]) && porche?.group === groupText(MOVE_GROUP.wlanName),
-      { reachedList, reachedAp, checked, reachedGroups, reachedGroup, reachedApply, message, reachedConfirm, setsBeforeConfirm, sets, porche }
+      reachedList && reachedAp && isDeepStrictEqual(checked, [AP.Porche.mac]) && reachedRadios && reachedGroup && radio === true &&
+      preview.destination === fmt(es.moveDestination, { group: MOVE_GROUP.wlanName }) && preview.button === es.moveOne && reachedMove &&
+      modal.summary === fmt(es.reviewOne, { ap: 'Porche', group: MOVE_GROUP.wlanName }) && reachedConfirm && setsBeforeConfirm === 0 &&
+      results.results.length === 1 && results.results[0].ok === true && sets.length === 1 &&
+      isDeepStrictEqual(sets[0].args, [AP.Porche.mac, MOVE_GROUP.wlanId]) && porche?.group === groupText(MOVE_GROUP.wlanName) &&
+      focusAfter.checkbox === true,
+      { reachedList, reachedAp, checked, reachedRadios, reachedGroup, radio, preview, reachedMove, modal, reachedConfirm, setsBeforeConfirm, results, sets, porche, focusAfter }
     );
   }); // End of check "[es] keyboard-only move..."
 
-  await check('[es] partial failure of a two-AP move: "No se pudieron mover 1 de 2 AP…", the moved AP shows its new group, only the failed AP stays selected with the group (Apply enabled to retry)', async () => {
-    await configureStub(session, { setWlanFailMacs: [AP['Salón'].mac] });
-    const before = (await setCalls()).length;
+  await check('[es] partial failure, preview and review: Bodega (no group), EAP Carpio + Jardín (zNinguna) and Porche (zGrupo B) -> Default: gains "Casa, Invitados", loses Porche\'s networks "(1 de 3)", the unknown networks of Bodega stated, "Mover 4 AP"; the review lists the three sources and the clients that are reported', async () => {
     await page.click(box('Bodega'));
-    await page.click(box('Salón'));
-    await page.click(`#wlanList .list-item[data-wlan-id="${GROUP.Default.wlanId}"]`);
-    await page.click('#applyBtn');
-    await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
-    const message = await page.textContent('#confirmMessage');
-    await page.click('#confirmConfirmBtn');
-    await waitForToast(page, 'error', fmt(es.partial, { failed: 1, total: 2 }));
-    await waitForLoadIdle(page);
-    await page.waitForFunction(({ mac, group }) =>
-      document.querySelector(`#apList .ap-row[data-mac="${mac}"] .ap-row-group`)?.textContent === group,
-    { mac: AP.Bodega.mac, group: groupText('Default') }, { timeout: WAIT_MS });
-    const sets = (await setCalls()).slice(before);
-    const selection = await readSelection(page);
-    const shell = await readShell(page);
+    await page.click(box('EAP Carpio'));
+    await page.click(box('Jardín'));
+    await page.click(box('Porche'));
+    await pickDestination(page, GROUP.Default.wlanId);
+    const preview = await readPreview(page);
+    await openReview(page);
+    const modal = await readMoveModal(page);
+    const lost = ['Oficina', 'Taller', 'Almacén', 'Tienda', 'IoT'].map((name) => partial(name, 1, 3)).join(', ');
     return verdict(
-      message === fmt(es.confirmMany, { wlan: 'Default', count: 2, aps: 'Bodega, Salón' }) &&
-      isDeepStrictEqual(sets.map((call) => call.args), [[AP.Bodega.mac, GROUP.Default.wlanId], [AP['Salón'].mac, GROUP.Default.wlanId]]) &&
-      isDeepStrictEqual(selection.checked, [AP['Salón'].mac]) && selection.summary === expectedSummary('es', 1, 0) &&
-      shell.selectionAp === 'Salón' && shell.selectionWlan === 'Default' && shell.applyDisabled === false,
-      { message, sets, selection, shell }
+      preview.status === fmt(es.willMoveMany, { count: 4 }) && preview.button === fmt(es.moveMany, { count: 4 }) &&
+      isDeepStrictEqual(preview.diff, {
+        gained: { label: es.gains, value: '+2 · Casa, Invitados' },
+        lost: { label: es.loses, value: `−5 · ${lost}` },
+        unchanged: { label: es.unchanged, value: es.none },
+      }) && preview.unknownNote === es.unknownOne && preview.warning === null && preview.hiddenNote === null &&
+      modal.rows.from?.value === `${es.unassigned} (${es.apOne}) · zNinguna (${fmt(es.apMany, { count: 2 })}) · zGrupo B (${es.apOne})` &&
+      modal.rows.aps?.value === 'Bodega, EAP Carpio, Jardín, Porche' &&
+      isDeepStrictEqual(modal.rows.networks?.details, [
+        `${es.gains}: +2 · Casa, Invitados`, `${es.loses}: −5 · ${lost}`, `${es.unchanged}: ${es.none}`, es.unknownOne,
+      ]) &&
+      modal.rows.clients?.value === `${fmt(es.clientsMany, { count: 4 })} ${fmt(es.clientsMissingMany, { count: 2 })}`,
+      { preview, modal }
     );
-  }); // End of check "[es] partial failure of a two-AP move..."
+  }); // End of check "[es] partial failure, preview and review..."
 
-  await check('[es] retry after the partial failure: Apply moves only the failed AP (one OMADA_SET_WLAN), then both selections clear', async () => {
-    await configureStub(session, { setWlanFailMacs: [] });
+  await check('[es] partial failure -> confirm: 4 OMADA_SET_WLAN calls in list order; the results show Bodega failed ("El controlador no aceptó el cambio"), Jardín failed with the controller message, the other two moved; "Reintentar los fallidos" offered; the failed APs stay selected and the moved ones show Default', async () => {
+    await configureStub(session, { setWlanFailMacs: [AP.Bodega.mac], setWlanErrors: { [AP['Jardín'].mac]: 'Device is busy' } });
     const before = (await setCalls()).length;
-    await page.click('#applyBtn');
-    await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
-    const message = await page.textContent('#confirmMessage');
-    await page.click('#confirmConfirmBtn');
-    await waitForMoveDone(page);
+    await page.click('#confirmMoveBtn');
+    await waitForResults(page);
+    const modal = await readMoveModal(page);
     const sets = (await setCalls()).slice(before);
     const selection = await readSelection(page);
+    const rows = await readApItems(page);
+    /**
+     * Group text of a row by AP name.
+     * @param {string} name - AP name.
+     * @returns {string | undefined} The row's group text.
+     */
+    const groupOf = (name) => rows.find((row) => row.name === name)?.group;
     return verdict(
-      message === fmt(es.confirmOne, { wlan: 'Default', ap: 'Salón' }) && sets.length === 1 &&
-      isDeepStrictEqual(sets[0].args, [AP['Salón'].mac, GROUP.Default.wlanId]) && selection.summary === expectedSummary('es', 0, 0),
-      { message, sets, selection }
+      isDeepStrictEqual(sets.map((call) => call.args[0]), [AP.Bodega.mac, AP['EAP Carpio'].mac, AP['Jardín'].mac, AP.Porche.mac]) &&
+      sets.every((call) => call.args[1] === GROUP.Default.wlanId) &&
+      modal.summary === fmt(es.resultsPartial, { moved: 2, total: 4, group: 'Default' }) &&
+      isDeepStrictEqual(modal.results.map((row) => [row.name, row.ok, row.status, row.error]), [
+        ['Bodega', false, es.resultFailed, es.rejected],
+        ['EAP Carpio', true, es.resultOk, null],
+        ['Jardín', false, es.resultFailed, 'Device is busy'],
+        ['Porche', true, es.resultOk, null],
+      ]) &&
+      isDeepStrictEqual(modal.buttons, { cancel: null, confirm: null, retry: es.retryFailed, close: es.close }) && modal.activeId === 'closeMoveBtn' &&
+      isDeepStrictEqual(selection.checked, [AP.Bodega.mac, AP['Jardín'].mac]) &&
+      groupOf('EAP Carpio') === groupText('Default') && groupOf('Porche') === groupText('Default') && groupOf('Jardín') === groupText('zNinguna'),
+      { sets, modal, selection, rows }
     );
-  }); // End of check "[es] retry after the partial failure..."
+  }); // End of check "[es] partial failure -> confirm..."
+
+  await check('[es] "Reintentar los fallidos" reruns only the failed APs through the same review (Cancel focused, "Se moverán 2 AP a "Default"."), two OMADA_SET_WLAN calls, all moved; after Close the selection is empty', async () => {
+    await configureStub(session, { setWlanFailMacs: [], setWlanErrors: {} });
+    const before = (await setCalls()).length;
+    await page.click('#retryFailedBtn');
+    await waitForReview(page);
+    const modal = await readMoveModal(page);
+    await page.click('#confirmMoveBtn');
+    await waitForResults(page);
+    const results = await readMoveModal(page);
+    await closeResults(page);
+    const sets = (await setCalls()).slice(before);
+    const selection = await readSelection(page);
+    const rows = await readApItems(page);
+    return verdict(
+      modal.title === es.reviewTitle && modal.summary === fmt(es.reviewMany, { count: 2, group: 'Default' }) &&
+      modal.rows.aps?.value === 'Bodega, Jardín' && modal.activeId === 'cancelMoveBtn' &&
+      isDeepStrictEqual(sets.map((call) => call.args), [[AP.Bodega.mac, GROUP.Default.wlanId], [AP['Jardín'].mac, GROUP.Default.wlanId]]) &&
+      results.summary === fmt(es.resultsAllMany, { count: 2, group: 'Default' }) && results.results.every((row) => row.ok) &&
+      selection.summary === expectedSummary('es', 0, 0) &&
+      rows.find((row) => row.name === 'Bodega')?.group === groupText('Default') && rows.find((row) => row.name === 'Jardín')?.group === groupText('Default'),
+      { modal, sets, results, selection }
+    );
+  }); // End of check "[es] Reintentar los fallidos..."
+
+  await check('[es] retry after a reload that dropped a failed AP: Bodega + Jardín fail moving to zGrupo B and Bodega leaves the controller meanwhile -> the results say "1 AP fallido ya no está en el controlador…" and that the retry covers only the remaining AP; "Reintentar los fallidos" reviews and PATCHes only Jardín', async () => {
+    const scenario = (await stubState(session)).scenario;
+    const bodega = scenario.accessPoints.find((entry) => entry.mac === AP.Bodega.mac);
+    await page.click(box('Bodega'));
+    await page.click(box('Jardín'));
+    await page.click(box('Porche'));
+    await pickDestination(page, GROUP['zGrupo B'].wlanId);
+    await openReview(page);
+    // Both fail, and the reload after the run no longer lists Bodega
+    await configureStub(session, {
+      setWlanErrors: { [AP.Bodega.mac]: 'Device is busy', [AP['Jardín'].mac]: 'Device is busy' },
+      accessPoints: scenario.accessPoints.filter((entry) => entry.mac !== AP.Bodega.mac),
+    });
+    const before = (await setCalls()).length;
+    await page.click('#confirmMoveBtn');
+    await waitForResults(page);
+    const results = await readMoveModal(page);
+    const selection = await readSelection(page);
+    const sets = (await setCalls()).slice(before);
+    await configureStub(session, { setWlanErrors: {} });
+    await page.click('#retryFailedBtn');
+    await waitForReview(page);
+    const review = await readMoveModal(page);
+    await page.click('#confirmMoveBtn');
+    await waitForResults(page);
+    const retried = await readMoveModal(page);
+    const retrySets = (await setCalls()).slice(before + sets.length);
+    await closeResults(page);
+    // Bodega comes back (still in Default) for the checks that follow
+    const current = (await stubState(session)).scenario.accessPoints;
+    await configureStub(session, { accessPoints: [...current, bodega] });
+    await page.click('#refreshBtn');
+    await waitForApCount(page, 7);
+    await waitForLoadIdle(page);
+    const zB = GROUP['zGrupo B'].wlanId;
+    return verdict(
+      isDeepStrictEqual(sets.map((call) => call.args), [[AP.Bodega.mac, zB], [AP['Jardín'].mac, zB], [AP.Porche.mac, zB]]) &&
+      results.summary === fmt(es.resultsPartial, { moved: 1, total: 3, group: 'zGrupo B' }) &&
+      isDeepStrictEqual(results.results.map((row) => [row.name, row.ok]), [['Bodega', false], ['Jardín', false], ['Porche', true]]) &&
+      isDeepStrictEqual(results.notes, [es.retryMissingOne, fmt(es.retryRemainingOne, { action: es.retryFailed }), es.notAtomic]) &&
+      results.buttons.retry === es.retryFailed && isDeepStrictEqual(selection.checked, [AP['Jardín'].mac]) &&
+      review.summary === fmt(es.reviewOne, { ap: 'Jardín', group: 'zGrupo B' }) && review.rows.aps?.value === 'Jardín' &&
+      review.activeId === 'cancelMoveBtn' && isDeepStrictEqual(retrySets.map((call) => call.args), [[AP['Jardín'].mac, zB]]) &&
+      retried.summary === fmt(es.resultsAllOne, { group: 'zGrupo B' }),
+      { sets, results, selection, review, retrySets, retried }
+    );
+  }); // End of check "[es] retry after a reload that dropped a failed AP..."
+
+  await check('[es] retry unavailable once the destination is gone: Jardín fails moving to Exterior and the reload no longer lists Exterior -> no "Reintentar los fallidos", the results say why; Exterior leaves the pane, the destination is cleared and Jardín stays selected', async () => {
+    await page.click(box('Jardín'));
+    await page.click(box('Porche'));
+    await pickDestination(page, GROUP.Exterior.wlanId);
+    await openReview(page);
+    await configureStub(session, {
+      setWlanErrors: { [AP['Jardín'].mac]: 'Device is busy' },
+      wlanGroups: data.wlanGroups.filter((entry) => entry.wlanId !== GROUP.Exterior.wlanId),
+    });
+    const before = (await setCalls()).length;
+    await page.click('#confirmMoveBtn');
+    await waitForResults(page);
+    const results = await readMoveModal(page);
+    const sets = (await setCalls()).slice(before);
+    const destinations = (await readDestinations(page)).map((item) => item.name);
+    const preview = await readPreview(page);
+    await closeResults(page);
+    const selection = await readSelection(page);
+    // The full group listing comes back for the checks that follow
+    await configureStub(session, { setWlanErrors: {}, wlanGroups: data.wlanGroups });
+    await page.click('#refreshBtn');
+    await page.waitForSelector(`#destinationList .destination-option[data-wlan-id="${GROUP.Exterior.wlanId}"]`, { timeout: WAIT_MS });
+    await waitForLoadIdle(page);
+    await page.click('#clearApSelectionBtn');
+    const exterior = GROUP.Exterior.wlanId;
+    return verdict(
+      isDeepStrictEqual(sets.map((call) => call.args), [[AP['Jardín'].mac, exterior], [AP.Porche.mac, exterior]]) &&
+      results.summary === fmt(es.resultsPartial, { moved: 1, total: 2, group: 'Exterior' }) &&
+      isDeepStrictEqual(results.notes, [fmt(es.retryDestinationGone, { group: 'Exterior' }), es.notAtomic]) &&
+      isDeepStrictEqual(results.buttons, { cancel: null, confirm: null, retry: null, close: es.close }) && results.activeId === 'closeMoveBtn' &&
+      !destinations.includes('Exterior') && destinations.length === 3 && preview.destination === null &&
+      isDeepStrictEqual(selection.checked, [AP['Jardín'].mac]),
+      { sets, results, destinations, preview, selection }
+    );
+  }); // End of check "[es] retry unavailable once the destination is gone..."
+
+  await check('[es] Enter on a focused destination radio moves into THAT group: with Default checked and hidden by the search "taller", Enter on the focused zGrupo B radio checks it and opens the review naming zGrupo B (Cancel focused); Escape cancels (no PATCH) back to that radio; Enter on a radio whose move is a no-op (Exterior: Altillo is there) does nothing', async () => {
+    const before = (await setCalls()).length;
+    /**
+     * The rendered destination options as [name, checked] pairs.
+     * @returns {Promise<Array<[string, boolean | null]>>} The pairs, in order.
+     */
+    const radioStates = async () => (await readDestinations(page)).map((item) => [item.name, item.checked]);
+    await page.click(box('Altillo'));
+    await pickDestination(page, GROUP.Default.wlanId);
+    await page.fill('#destinationSearch', 'taller');
+    const hiddenRadios = await radioStates();
+    const hiddenPreview = await readPreview(page);
+    await page.focus(`#destinationList .destination-radio[value="${GROUP['zGrupo B'].wlanId}"]`);
+    await page.keyboard.press('Enter');
+    await waitForReview(page);
+    const modal = await readMoveModal(page);
+    const radios = await radioStates();
+    const preview = await readPreview(page);
+    await page.keyboard.press('Escape');
+    await waitForMoveDialogClosed(page);
+    await page.waitForFunction((id) => document.activeElement?.classList.contains('destination-radio') && document.activeElement.value === id,
+      GROUP['zGrupo B'].wlanId, { timeout: WAIT_MS });
+    await page.fill('#destinationSearch', 'exterior');
+    await page.focus(`#destinationList .destination-radio[value="${GROUP.Exterior.wlanId}"]`);
+    await page.keyboard.press('Enter');
+    const noopShell = await readShell(page);
+    const noopRadios = await radioStates();
+    const noopPreview = await readPreview(page);
+    const sets = (await setCalls()).slice(before);
+    await page.fill('#destinationSearch', '');
+    await page.click('#clearApSelectionBtn');
+    return verdict(
+      isDeepStrictEqual(hiddenRadios, [['zGrupo B', false]]) && hiddenPreview.destination === fmt(es.moveDestination, { group: 'Default' }) &&
+      modal.summary === fmt(es.reviewOne, { ap: 'Altillo', group: 'zGrupo B' }) && modal.rows.to?.value === 'zGrupo B' &&
+      modal.activeId === 'cancelMoveBtn' && isDeepStrictEqual(radios, [['zGrupo B', true]]) &&
+      preview.destination === fmt(es.moveDestination, { group: 'zGrupo B' }) &&
+      noopShell.moveOpen === false && isDeepStrictEqual(noopRadios, [['Exterior', false]]) &&
+      noopPreview.destination === fmt(es.moveDestination, { group: 'zGrupo B' }) && sets.length === 0,
+      { hiddenRadios, hiddenPreview, modal, radios, preview, noopShell, noopRadios, noopPreview, sets }
+    );
+  }); // End of check "[es] Enter on a focused destination radio..."
+
+  await check('[es] two groups named "Default" (a twin appears on refresh): both radios stay listed but disabled, never checked, with "Otro grupo tiene el mismo nombre — …" shown and in their description; the checked Default destination is dropped ("Selecciona un grupo de AP", move disabled); clicking a twin checks nothing; an AP in the ambiguous Default can still move to the unique zGrupo B, its current networks stated as unknown', async () => {
+    const twin = { wlanId: '6512a0e1f3b2c41d2e3f4a60', wlanName: 'Default', ssidList: [{ ssidName: 'Casa' }] };
+    await page.click(box('Altillo'));
+    await pickDestination(page, GROUP.Default.wlanId);
+    const beforeTwin = await readPreview(page);
+    await configureStub(session, { wlanGroups: [...data.wlanGroups, twin] });
+    await page.click('#refreshBtn');
+    await page.waitForSelector(`#destinationList .destination-option[data-wlan-id="${twin.wlanId}"]`, { timeout: WAIT_MS });
+    await waitForLoadIdle(page);
+    const options = await readDestinations(page);
+    const preview = await readPreview(page);
+    // A click on the twin's label (its radio is disabled) must check nothing
+    await page.click(`#destinationList .destination-option[data-wlan-id="${GROUP.Default.wlanId}"]`, { force: true });
+    const clickedOptions = await readDestinations(page);
+    const clickedPreview = await readPreview(page);
+    await page.click(box('EAP Carpio'));
+    await pickDestination(page, GROUP['zGrupo B'].wlanId);
+    const unique = await readPreview(page);
+    // The listing without the twin comes back for the checks that follow
+    await configureStub(session, { wlanGroups: data.wlanGroups });
+    await page.click('#refreshBtn');
+    await page.waitForFunction((id) => document.querySelector(`#destinationList .destination-option[data-wlan-id="${id}"]`) === null,
+      twin.wlanId, { timeout: WAIT_MS });
+    await waitForLoadIdle(page);
+    const restored = await readDestinations(page);
+    await page.click('#clearApSelectionBtn');
+    const twins = options.filter((item) => item.name === 'Default');
+    const others = options.filter((item) => item.name !== 'Default');
+    return verdict(
+      beforeTwin.status === es.willMoveOne && beforeTwin.disabled === false &&
+      twins.length === 2 && twins.every((item) => item.disabled === true && item.checked === false && item.reason === es.ambiguous &&
+        item.description === `${item.detail} ${es.ambiguous}`) &&
+      others.length === 3 && others.every((item) => item.disabled === false && item.reason === null) &&
+      preview.destination === null && preview.status === es.selectGroup.apGroup && preview.disabled === true &&
+      clickedOptions.every((item) => item.checked === false) && clickedPreview.status === es.selectGroup.apGroup && clickedPreview.disabled === true &&
+      unique.status === fmt(es.willMoveMany, { count: 2 }) && unique.unknownNote === es.unknownOne &&
+      unique.button === fmt(es.moveMany, { count: 2 }) && unique.disabled === false &&
+      restored.length === 4 && restored.every((item) => item.disabled === false && item.reason === null),
+      { beforeTwin, options, preview, clickedOptions, clickedPreview, unique, restored }
+    );
+  }); // End of check "[es] two groups named Default..."
 } // End of function runBulkMoveChecks()
 
 // ============================================================================
@@ -1297,9 +1806,11 @@ async function runBulkMoveChecks(session) {
 // ============================================================================
 
 /**
- * Spanish first-run launch: settings modal, save, connect, lists, AP move
- * (cancel + confirm), refresh, disconnect, connect failure and recovery,
- * save rejected by main.
+ * Spanish first-run launch: settings modal, save, connect, lists and the
+ * destination pane, a single move through the review dialog (cancel, Escape,
+ * confirm, results) and into the Silence section, the selection and bulk-move
+ * checks, refresh, the 700×500 layout, disconnect, connect failure and
+ * recovery, save rejected by main.
  * @param {{ binary: string }} electronInfo - Resolved Electron binary.
  * @returns {Promise<void>}
  */
@@ -1326,12 +1837,12 @@ async function runSpanishFirstRun(electronInfo) {
       return verdict(focusInside && shell.inert === true, { focusInside, shell });
     });
 
-    await check('[es] first run: status, buttons and "configure" hints are in Spanish', async () => {
+    await check('[es] first run: status, buttons and "configure" hints are in Spanish; the move button is disabled ("Mover AP") and the move preview is empty', async () => {
       const shell = await readShell(page);
       return verdict(
-        shell.status === es.disconnected && shell.connect === es.connect && shell.apply === es.apply &&
-        shell.applyDisabled === true && shell.refreshDisabled === true && shell.apEmpty === es.configureHint &&
-        shell.wlanEmpty === es.configureHint && shell.selectionPlaceholder === es.selectApAndGroup.apGroup,
+        shell.status === es.disconnected && shell.connect === es.connect && shell.move === es.moveNone &&
+        shell.moveDisabled === true && shell.refreshDisabled === true && shell.apEmpty === es.configureHint &&
+        shell.destinationEmpty === es.configureHint && shell.moveStatus === '' && shell.destinationTitle === es.destinationTitle,
         shell
       );
     });
@@ -1378,23 +1889,30 @@ async function runSpanishFirstRun(electronInfo) {
       return compareApRows(await readApItems(page), expectedAps);
     });
 
-    await check('[es] group list rendered from the fixtures (sorted, malformed id dropped, SSID previews, empty groups labelled)', async () => {
-      const expected = expectedWlanRows(data.wlanGroups, 'es');
-      const actual = (await readWlanItems(page)).map(({ name, subtitle }) => ({ name, subtitle }));
+    await check('[es] destination pane rendered from the fixtures: one native radio per group (one radio group, named by the group, no listbox roles), sorted, malformed id dropped, network previews; the empty groups pinned under "Silenciar"', async () => {
+      const expected = expectedDestinations(data.wlanGroups, 'es');
+      const items = await readDestinations(page);
+      const actual = items.map(({ name, detail, section }) => ({ name, detail, section }));
+      const pane = await readDestinationPane(page);
       const shell = await readShell(page);
-      return verdict(isDeepStrictEqual(actual, expected) && shell.refreshDisabled === false, { actual, expected, refreshDisabled: shell.refreshDisabled });
-    });
-
-    await check('[es] Omada 6.3 vocabulary: the group panel and its list are labelled "Grupos de AP", AP rows say "Grupo de AP:", and the empty AP group zNinguna is listed with "Sin redes Wi-Fi — silencia estos AP"', async () => {
-      const shell = await readShell(page);
-      const empty = (await readWlanItems(page)).find((item) => item.wlanId === EMPTY_GROUP.wlanId);
-      const apRow = (await readApItems(page)).find((item) => item.mac === MOVE_AP.mac);
       return verdict(
-        shell.wlanTitle === es.groupsTitle.apGroup && shell.wlanListLabel === es.groupsTitle.apGroup &&
-        shell.selectionPlaceholder === es.selectApAndGroup.apGroup && empty?.name === EMPTY_GROUP.wlanName &&
-        empty?.subtitle === es.emptyGroup && empty?.selected === 'false' &&
+        isDeepStrictEqual(actual, expected) && pane.listboxes === 0 &&
+        items.every((item) => item.type === 'radio' && item.radioName === items[0].radioName && item.checked === false && item.accessibleName === item.name) &&
+        pane.silenceTitle === es.silence && pane.silenceLabelledBy === 'destinationSilenceTitle' && shell.refreshDisabled === false,
+        { actual, expected, items, pane, refreshDisabled: shell.refreshDisabled }
+      );
+    }); // End of check "[es] destination pane rendered from the fixtures..."
+
+    await check('[es] Omada 6.3 vocabulary: the destination list is labelled "Grupos de AP", AP rows say "Grupo de AP:", the empty AP group zNinguna sits under "Silenciar" with "Sin redes Wi-Fi — silencia estos AP", and the preview asks for APs', async () => {
+      const shell = await readShell(page);
+      const empty = (await readDestinations(page)).find((item) => item.wlanId === EMPTY_GROUP.wlanId);
+      const apRow = (await readApItems(page)).find((item) => item.mac === MOVE_AP.mac);
+      const preview = await readPreview(page);
+      return verdict(
+        shell.destinationListLabel === es.groupsTitle.apGroup && preview.status === es.moveNoSelection && preview.disabled === true &&
+        empty?.name === EMPTY_GROUP.wlanName && empty?.detail === es.emptyGroup && empty?.section === 'silence' && empty?.checked === false &&
         Boolean(apRow?.group.startsWith(`${es.groupLabel.apGroup}: `)),
-        { shell, empty, apRow }
+        { shell, empty, apRow, preview }
       );
     }); // End of check "[es] Omada 6.3 vocabulary..."
 
@@ -1438,123 +1956,140 @@ async function runSpanishFirstRun(electronInfo) {
       );
     }); // End of check "[es] navigation..."
 
-    await check('[es] AP move: clicking an AP row checks its checkbox; with a group picked, the selection bar is filled and Apply enabled', async () => {
+    await check('[es] single move: clicking an AP row checks it ("Selecciona un grupo de AP"); picking zGrupo B previews Default -> zGrupo B (gains +5, loses -2, unchanged none) and enables "Mover AP"', async () => {
       await page.click(`#apList .ap-row[data-mac="${MOVE_AP.mac}"] .item-name`);
-      await page.click(`#wlanList .list-item[data-wlan-id="${MOVE_GROUP.wlanId}"]`);
-      const shell = await readShell(page);
+      const apOnly = await readPreview(page);
+      await pickDestination(page, MOVE_GROUP.wlanId);
+      const preview = await readPreview(page);
       const apSelected = (await readApItems(page)).find((item) => item.mac === MOVE_AP.mac)?.checked;
-      const wlanSelected = (await readWlanItems(page)).find((item) => item.wlanId === MOVE_GROUP.wlanId)?.selected;
+      const radio = (await readDestinations(page)).find((item) => item.wlanId === MOVE_GROUP.wlanId)?.checked;
       return verdict(
-        shell.selectionAp === MOVE_AP.name && shell.selectionWlan === MOVE_GROUP.wlanName && shell.applyDisabled === false &&
-        apSelected === true && wlanSelected === 'true',
-        { shell, apSelected, wlanSelected }
+        apOnly.status === es.selectGroup.apGroup && apOnly.disabled === true && apOnly.button === es.moveOne &&
+        preview.status === es.willMoveOne && preview.destination === fmt(es.moveDestination, { group: MOVE_GROUP.wlanName }) &&
+        isDeepStrictEqual(preview.diff, {
+          gained: { label: es.gains, value: '+5 · Oficina, Taller, Almacén, Tienda, IoT' },
+          lost: { label: es.loses, value: '−2 · Casa, Invitados' },
+          unchanged: { label: es.unchanged, value: es.none },
+        }) && preview.hiddenNote === null && preview.unknownNote === null && preview.warning === null &&
+        preview.button === es.moveOne && preview.disabled === false && apSelected === true && radio === true,
+        { apOnly, preview, apSelected, radio }
       );
-    }); // End of check "[es] AP move: picking an AP and a group fills the selection bar and..."
+    }); // End of check "[es] single move: clicking an AP row checks it..."
 
-    await check('[es] AP move: Apply opens the confirm modal with the right question as its description (aria-describedby) and focus on Cancel, not the destructive Confirm', async () => {
-      await page.click('#applyBtn');
-      await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
-      await page.waitForFunction(() => document.activeElement?.id === 'cancelConfirmBtn', null, { timeout: WAIT_MS });
-      const message = await page.textContent('#confirmMessage');
-      const shell = await readShell(page);
-      const dialog = await page.evaluate(() => {
-        const modal = document.getElementById('confirmModal');
-        const active = document.activeElement;
-        return {
-          labelledBy: modal?.getAttribute('aria-labelledby') ?? null,
-          describedBy: modal?.getAttribute('aria-describedby') ?? null,
-          activeId: active?.id || '',
-          activeVisible: active instanceof HTMLElement && getComputedStyle(active).visibility === 'visible',
-        };
-      });
-      const expected = `¿Asignar "${MOVE_GROUP.wlanName}" al AP "${MOVE_AP.name}"?`;
+    await check('[es] single move: "Mover AP" opens the review dialog (role=dialog, aria-modal, described by its summary, inert background) with focus on Cancel, showing Default -> zGrupo B, the AP, the networks gained/lost/unchanged, its clients, and the not-atomic and no-overrides notes', async () => {
+      await openReview(page);
+      const modal = await readMoveModal(page);
       return verdict(
-        message === expected && shell.inert === true && dialog.labelledBy === 'confirmModalHeading' &&
-        dialog.describedBy === 'confirmMessage' && dialog.activeId === 'cancelConfirmBtn' && dialog.activeVisible === true,
-        { message, expected, inert: shell.inert, dialog }
+        modal.role === 'dialog' && modal.ariaModal === 'true' && modal.labelledBy === 'moveModalHeading' && modal.describedBy === 'moveModalSummary' &&
+        modal.inert === true && modal.activeId === 'cancelMoveBtn' && modal.activeVisible === true &&
+        modal.title === es.reviewTitle && modal.summary === fmt(es.reviewOne, { ap: MOVE_AP.name, group: MOVE_GROUP.wlanName }) &&
+        isDeepStrictEqual(modal.rows.from, { label: es.from, value: `Default (${es.apOne})`, details: [], warnings: [] }) &&
+        isDeepStrictEqual(modal.rows.to, { label: es.to, value: MOVE_GROUP.wlanName, details: [fmt(es.networksMany, { count: 5 })], warnings: [] }) &&
+        isDeepStrictEqual(modal.rows.aps, { label: `${es.accessPoints} (${es.apOne})`, value: MOVE_AP.name, details: [], warnings: [] }) &&
+        isDeepStrictEqual(modal.rows.networks?.details, [
+          `${es.gains}: +5 · Oficina, Taller, Almacén, Tienda, IoT`, `${es.loses}: −2 · Casa, Invitados`, `${es.unchanged}: ${es.none}`,
+        ]) &&
+        modal.rows.clients?.value === es.clientsOne && isDeepStrictEqual(modal.notes, [es.notAtomic, es.overrides]) &&
+        isDeepStrictEqual(modal.buttons, { cancel: es.cancel, confirm: es.moveOne, retry: null, close: null }),
+        modal
       );
-    }); // End of check "[es] AP move: Apply opens the confirm modal..."
+    }); // End of check "[es] single move: Mover AP opens the review dialog..."
 
-    await check('[es] AP move -> Cancel: modal closes, no OMADA_SET_WLAN call, selection kept', async () => {
-      await page.click('#cancelConfirmBtn');
-      await page.waitForFunction(() => !document.getElementById('confirmModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+    await check('[es] single move -> Cancel: the dialog closes, no OMADA_SET_WLAN call, focus back on the move button, selection and destination kept', async () => {
+      await page.click('#cancelMoveBtn');
+      await waitForMoveDialogClosed(page);
+      await page.waitForFunction(() => document.activeElement?.id === 'moveBtn', null, { timeout: WAIT_MS });
       const sets = callsTo(await stubState(session), 'omada:set-wlan');
       const shell = await readShell(page);
+      const preview = await readPreview(page);
       return verdict(
-        sets.length === 0 && shell.selectionAp === MOVE_AP.name && shell.selectionWlan === MOVE_GROUP.wlanName &&
-        shell.applyDisabled === false && shell.inert === false,
-        { sets, shell }
+        sets.length === 0 && shell.inert === false && shell.moveOpen === false && preview.status === es.willMoveOne &&
+        preview.destination === fmt(es.moveDestination, { group: MOVE_GROUP.wlanName }) && preview.disabled === false,
+        { sets, shell, preview }
       );
-    });
+    }); // End of check "[es] single move -> Cancel..."
 
-    await check('[es] AP move via keyboard: Enter on Apply opens the confirm modal with Cancel focused, Escape cancels (no IPC)', async () => {
-      await page.focus('#applyBtn');
+    await check('[es] single move via keyboard: Enter on "Mover AP" opens the review with Cancel focused, Escape cancels (no IPC), focus returns to the button', async () => {
+      await page.focus('#moveBtn');
       await page.keyboard.press('Enter');
-      await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
-      await page.waitForFunction(() => document.activeElement?.id === 'cancelConfirmBtn', null, { timeout: WAIT_MS });
+      await waitForReview(page);
       await page.keyboard.press('Escape');
-      await page.waitForFunction(() => !document.getElementById('confirmModal').classList.contains('visible'), null, { timeout: WAIT_MS });
-      await page.waitForFunction(() => document.activeElement?.id === 'applyBtn', null, { timeout: WAIT_MS });
+      await waitForMoveDialogClosed(page);
+      await page.waitForFunction(() => document.activeElement?.id === 'moveBtn', null, { timeout: WAIT_MS });
       const sets = callsTo(await stubState(session), 'omada:set-wlan');
       const shell = await readShell(page);
-      return verdict(sets.length === 0 && shell.inert === false && shell.selectionAp === MOVE_AP.name, { sets, shell });
-    }); // End of check "[es] AP move via keyboard: Enter on Apply opens the confirm modal f..."
+      return verdict(sets.length === 0 && shell.inert === false && shell.moveOpen === false && shell.moveDisabled === false, { sets, shell });
+    }); // End of check "[es] single move via keyboard..."
 
-    await check('[es] AP move -> Confirm: OMADA_SET_WLAN called once with the AP MAC and the group id', async () => {
-      await page.click('#applyBtn');
-      await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
-      await page.click('#confirmConfirmBtn');
-      await waitForToast(page, 'success', 'Cambio aplicado correctamente');
+    await check('[es] single move -> "Mover AP" in the review: one OMADA_SET_WLAN with the AP MAC and the group id, then the results "Se movió el AP a "zGrupo B"." with one "Movido" row (name and MAC) and Close focused', async () => {
+      await openReview(page);
+      await page.click('#confirmMoveBtn');
+      await waitForResults(page);
+      const modal = await readMoveModal(page);
       const sets = callsTo(await stubState(session), 'omada:set-wlan');
-      return verdict(sets.length === 1 && isDeepStrictEqual(sets[0].args, [MOVE_AP.mac, MOVE_GROUP.wlanId]), sets);
-    });
+      return verdict(
+        sets.length === 1 && isDeepStrictEqual(sets[0].args, [MOVE_AP.mac, MOVE_GROUP.wlanId]) &&
+        modal.title === es.resultsTitle && modal.summary === fmt(es.resultsAllOne, { group: MOVE_GROUP.wlanName }) &&
+        isDeepStrictEqual(modal.results, [{ mac: MOVE_AP.mac, ok: true, status: es.resultOk, name: MOVE_AP.name, macText: MOVE_AP.mac, error: null }]) &&
+        isDeepStrictEqual(modal.buttons, { cancel: null, confirm: null, retry: null, close: es.close }) && modal.activeId === 'closeMoveBtn',
+        { sets, modal }
+      );
+    }); // End of check "[es] single move -> Mover AP in the review..."
 
-    await check('[es] AP move -> UI updates: lists reloaded, the AP shows its new group, selection reset', async () => {
-      await page.waitForFunction(({ mac, group }) =>
-        document.querySelector(`#apList .ap-row[data-mac="${mac}"] .ap-row-group`)?.textContent === group,
-      { mac: MOVE_AP.mac, group: `${es.groupLabel.apGroup}: ${MOVE_GROUP.wlanName}` }, { timeout: WAIT_MS });
-      await page.waitForFunction(() => !document.getElementById('refreshBtn').classList.contains('spinning'), null, { timeout: WAIT_MS });
+    await check('[es] single move -> Close: lists reloaded, the AP shows its new group, selection and destination cleared ("Mover AP" disabled), focus back in the AP list', async () => {
+      await closeResults(page);
       const snapshot = await stubState(session);
-      const shell = await readShell(page);
+      const row = (await readApItems(page)).find((item) => item.mac === MOVE_AP.mac);
+      const preview = await readPreview(page);
+      const radios = await readDestinations(page);
+      const focusInList = await page.evaluate(() => Boolean(document.activeElement?.classList.contains('ap-checkbox')));
       return verdict(
         callsTo(snapshot, 'omada:get-aps').length === 2 && callsTo(snapshot, 'omada:get-wlans').length === 2 &&
-        shell.selectionPlaceholder === es.selectApAndGroup.apGroup && shell.applyDisabled === true && shell.apply === es.apply,
-        { getAps: callsTo(snapshot, 'omada:get-aps').length, getWlans: callsTo(snapshot, 'omada:get-wlans').length, shell }
+        row?.group === `${es.groupLabel.apGroup}: ${MOVE_GROUP.wlanName}` && row?.checked === false &&
+        preview.status === es.moveNoSelection && preview.disabled === true && preview.button === es.moveNone && preview.destination === null &&
+        radios.every((item) => item.checked === false) && focusInList,
+        { getAps: callsTo(snapshot, 'omada:get-aps').length, getWlans: callsTo(snapshot, 'omada:get-wlans').length, row, preview, focusInList }
       );
-    }); // End of check "[es] AP move -> UI updates: lists reloaded, the AP shows its new gr..."
+    }); // End of check "[es] single move -> Close..."
 
-    await check('[es] empty AP group as a move target: zNinguna is selectable (selected option, selection bar, Apply enabled) and Apply opens the confirm modal naming it', async () => {
+    await check('[es] Silence as a move target: zNinguna (pinned under "Silenciar") is selectable; the preview shows every network lost and "Sin redes Wi-Fi — silencia estos AP", the review shows it as the destination warning', async () => {
       await page.click(`#apList .ap-row[data-mac="${MOVE_AP.mac}"]`);
-      const apOnly = await readShell(page);
-      await page.click(`#wlanList .list-item[data-wlan-id="${EMPTY_GROUP.wlanId}"]`);
-      const shell = await readShell(page);
-      const selected = (await readWlanItems(page)).find((item) => item.wlanId === EMPTY_GROUP.wlanId)?.selected;
-      await page.click('#applyBtn');
-      await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
-      const message = await page.textContent('#confirmMessage');
-      const expected = `¿Asignar "${EMPTY_GROUP.wlanName}" al AP "${MOVE_AP.name}"?`;
+      await pickDestination(page, EMPTY_GROUP.wlanId);
+      const preview = await readPreview(page);
+      const radio = (await readDestinations(page)).find((item) => item.wlanId === EMPTY_GROUP.wlanId);
+      await openReview(page);
+      const modal = await readMoveModal(page);
       return verdict(
-        apOnly.selectionMuted === es.selectGroup.apGroup && selected === 'true' && shell.selectionAp === MOVE_AP.name &&
-        shell.selectionWlan === EMPTY_GROUP.wlanName && shell.applyDisabled === false && message === expected,
-        { apOnly: apOnly.selectionMuted, selected, shell, message, expected }
+        radio?.section === 'silence' && radio?.checked === true &&
+        isDeepStrictEqual(preview.diff, {
+          gained: { label: es.gains, value: es.none },
+          lost: { label: es.loses, value: '−5 · Oficina, Taller, Almacén, Tienda, IoT' },
+          unchanged: { label: es.unchanged, value: es.none },
+        }) && preview.warning === es.emptyGroup && preview.button === es.moveOne && preview.disabled === false &&
+        modal.summary === fmt(es.reviewOne, { ap: MOVE_AP.name, group: EMPTY_GROUP.wlanName }) &&
+        isDeepStrictEqual(modal.rows.from, { label: es.from, value: `${MOVE_GROUP.wlanName} (${es.apOne})`, details: [], warnings: [] }) &&
+        isDeepStrictEqual(modal.rows.to, { label: es.to, value: EMPTY_GROUP.wlanName, details: [es.emptyGroup], warnings: [es.emptyGroup] }),
+        { preview, radio, modal }
       );
-    }); // End of check "[es] empty AP group as a move target..."
+    }); // End of check "[es] Silence as a move target..."
 
-    await check('[es] empty AP group as a move target -> Confirm: OMADA_SET_WLAN carries its id (the unchanged move call) and the AP then reports the group', async () => {
-      await page.waitForSelector('#confirmModal.visible', { timeout: WAIT_MS });
-      await page.click('#confirmConfirmBtn');
+    await check('[es] Silence move -> confirm: OMADA_SET_WLAN carries the empty group id (the unchanged move call) and the AP then reports the group', async () => {
+      await page.click('#confirmMoveBtn');
+      await waitForResults(page);
+      const modal = await readMoveModal(page);
+      await closeResults(page);
       await page.waitForFunction(({ mac, group }) =>
         document.querySelector(`#apList .ap-row[data-mac="${mac}"] .ap-row-group`)?.textContent === group,
       { mac: MOVE_AP.mac, group: `${es.groupLabel.apGroup}: ${EMPTY_GROUP.wlanName}` }, { timeout: WAIT_MS });
-      await waitForLoadIdle(page);
       const sets = callsTo(await stubState(session), 'omada:set-wlan');
       const row = (await readApItems(page)).find((item) => item.mac === MOVE_AP.mac);
       return verdict(
         sets.length === 2 && isDeepStrictEqual(sets[1].args, [MOVE_AP.mac, EMPTY_GROUP.wlanId]) &&
+        modal.summary === fmt(es.resultsAllOne, { group: EMPTY_GROUP.wlanName }) && modal.results.length === 1 && modal.results[0].ok === true &&
         row?.counts === ` · ${es.networksNone} · ${es.clientsOne}`,
-        { sets, row }
+        { sets, modal, row }
       );
-    }); // End of check "[es] empty AP group as a move target -> Confirm..."
+    }); // End of check "[es] Silence move -> confirm..."
 
     await runSelectionChecks(session);
     await runBulkMoveChecks(session);
@@ -1573,7 +2108,7 @@ async function runSpanishFirstRun(electronInfo) {
         rows: document.querySelectorAll('#apList .ap-row').length,
         loading: document.querySelector('#apList .loading') !== null,
         busy: document.getElementById('apList').getAttribute('aria-busy'),
-        groupsBusy: document.getElementById('wlanList').getAttribute('aria-busy'),
+        groupsBusy: document.getElementById('destinationList').getAttribute('aria-busy'),
         updated: document.getElementById('lastUpdated').textContent,
       }));
       await page.waitForFunction((name) => Array.from(document.querySelectorAll('#apList .item-name')).some((el) => el.textContent === name),
@@ -1619,7 +2154,10 @@ async function runSpanishFirstRun(electronInfo) {
       );
     }); // End of check "[es] failed refresh..."
 
-    await check('[es] 700×500 minimum window: no overflow; the sidebar (Settings included), AP rows, selection summary and Apply stay inside the window', async () => {
+    await check('[es] 700×500 minimum window: no overflow; the sidebar (Settings included), AP rows, the selection summary, a destination radio, the move preview and the move button stay inside the window; the review dialog keeps Cancel and the move button visible', async () => {
+      // A selection and a destination, so the preview is at its fullest
+      await page.click(`#apList .ap-checkbox[data-mac="${AP.Altillo.mac}"]`);
+      await pickDestination(page, GROUP.Default.wlanId);
       await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(700, 500));
       try {
         await page.waitForFunction(() => window.innerWidth <= 700 && window.innerHeight <= 500, null, { timeout: WAIT_MS });
@@ -1634,40 +2172,71 @@ async function runSpanishFirstRun(electronInfo) {
             return Boolean(rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 &&
               rect.right <= window.innerWidth && rect.bottom <= window.innerHeight);
           };
+          /**
+           * Tells whether at least one of the elements is fully visible inside
+           * its scrolling container and the window.
+           * @param {string} itemSelector - CSS selector of the items.
+           * @param {DOMRect} box - The container's rectangle.
+           * @returns {boolean} True when one item is in view.
+           */
+          const oneInView = (itemSelector, box) => Array.from(document.querySelectorAll(itemSelector)).some((item) => {
+            const rect = item.getBoundingClientRect();
+            return rect.top >= box.top && rect.bottom <= box.bottom && rect.left >= box.left && rect.right <= box.right && rect.bottom <= window.innerHeight;
+          });
           const list = document.getElementById('apList').getBoundingClientRect();
+          const destinations = document.getElementById('destinationList').getBoundingClientRect();
           return {
             scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight,
             width: window.innerWidth, height: window.innerHeight,
-            settings: inside('#settingsBtn'), apply: inside('#applyBtn'), summary: inside('#apSelectionSummary'),
+            settings: inside('#settingsBtn'), move: inside('#moveBtn'), preview: inside('.move-summary'), summary: inside('#apSelectionSummary'),
             nav: inside('#navNetworks'), refresh: inside('#refreshBtn'), connect: inside('#connectBtn'),
-            rowInView: Array.from(document.querySelectorAll('#apList .ap-row')).some((row) => {
-              const rect = row.getBoundingClientRect();
-              return rect.top >= list.top && rect.bottom <= list.bottom && rect.left >= list.left && rect.right <= list.right && rect.bottom <= window.innerHeight;
-            }),
-            listHeight: list.height,
+            rowInView: oneInView('#apList .ap-row', list), radioInView: oneInView('#destinationList .destination-option', destinations),
+            listHeight: list.height, destinationHeight: destinations.height,
           };
         }); // End of the in-page layout probe
+        await openReview(page);
+        const dialog = await page.evaluate(() => {
+          /**
+           * Tells whether an element is rendered entirely inside the window.
+           * @param {string} id - The element id.
+           * @returns {boolean} True when it has a size and fits the viewport.
+           */
+          const inside = (id) => {
+            const rect = document.getElementById(id)?.getBoundingClientRect();
+            return Boolean(rect && rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= window.innerHeight && rect.right <= window.innerWidth);
+          };
+          return { cancel: inside('cancelMoveBtn'), confirm: inside('confirmMoveBtn') };
+        });
+        await page.keyboard.press('Escape');
+        await waitForMoveDialogClosed(page);
         return verdict(
-          layout.scrollWidth <= layout.width && layout.scrollHeight <= layout.height && layout.settings && layout.apply &&
-          layout.summary && layout.nav && layout.refresh && layout.connect && layout.rowInView && layout.listHeight >= 100,
-          layout
+          layout.scrollWidth <= layout.width && layout.scrollHeight <= layout.height && layout.settings && layout.move && layout.preview &&
+          layout.summary && layout.nav && layout.refresh && layout.connect && layout.rowInView && layout.radioInView &&
+          layout.listHeight >= 100 && layout.destinationHeight >= 90 && dialog.cancel && dialog.confirm,
+          { layout, dialog }
         );
       } finally {
+        if (await page.evaluate(() => document.getElementById('moveModal').classList.contains('visible'))) {
+          await page.keyboard.press('Escape');
+        }
         await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
+        await page.click('#clearApSelectionBtn');
       }
     }); // End of check "[es] 700×500 minimum window..."
 
-    await check('[es] Disconnect: OMADA_DISCONNECT called, lists cleared, status back to disconnected', async () => {
+    await check('[es] Disconnect: OMADA_DISCONNECT called, lists and destination cleared, the move button disabled, status back to disconnected', async () => {
       await page.click('#connectBtn');
       await waitForStatus(page, es.disconnected);
       const snapshot = await stubState(session);
       const disconnects = callsTo(snapshot, 'omada:disconnect');
       const shell = await readShell(page);
+      const preview = await readPreview(page);
       return verdict(
         disconnects.length === 1 && disconnects[0].args[0] == null && snapshot.connected === false &&
-        shell.apEmpty === es.connectToSeeAPs && shell.wlanEmpty === es.connectToSeeGroups && shell.connect === es.connect &&
-        shell.refreshDisabled === true && shell.applyDisabled === true,
-        { disconnects, shell }
+        shell.apEmpty === es.connectToSeeAPs && shell.destinationEmpty === es.connectToSeeGroups && shell.connect === es.connect &&
+        shell.refreshDisabled === true && shell.moveDisabled === true && shell.move === es.moveNone &&
+        preview.status === '' && preview.destination === null,
+        { disconnects, shell, preview }
       );
     }); // End of check "[es] Disconnect: OMADA_DISCONNECT called, lists cleared, status bac..."
 
@@ -1697,22 +2266,24 @@ async function runSpanishFirstRun(electronInfo) {
       return compareApRows(await readApItems(page), expected);
     });
 
-    await check('[es] legacy controller (5.x) after a refresh: the panel says "Grupos WLAN (heredado)", AP rows say "WLAN:", the selection bar asks for a "grupo WLAN"', async () => {
+    await check('[es] legacy controller (5.x) after a refresh: the destination list says "Grupos WLAN (heredado)", AP rows say "WLAN:", the preview asks for a "grupo WLAN"', async () => {
       await page.waitForFunction(() => document.getElementById('refreshBtn').disabled === false, null, { timeout: WAIT_MS });
       await configureStub(session, { controllerVersion: data.legacyControllerVersion, wlanGroups: data.legacyWlanGroups });
       await page.click('#refreshBtn');
-      await page.waitForFunction((title) => document.getElementById('wlanPanelTitle')?.textContent === title,
+      await page.waitForFunction((title) => document.getElementById('destinationList')?.getAttribute('aria-label') === title,
         es.groupsTitle.wlanGroup, { timeout: WAIT_MS });
       await waitForLoadIdle(page);
       const scenario = (await stubState(session)).scenario;
       const apVerdict = compareApRows(await readApItems(page), expectedApRows(scenario.accessPoints, 'es', 'wlanGroup', data.legacyWlanGroups));
-      const wlans = (await readWlanItems(page)).map(({ name, subtitle }) => ({ name, subtitle }));
-      const expectedWlans = expectedWlanRows(data.legacyWlanGroups, 'es');
-      const shell = await readShell(page);
+      const destinations = (await readDestinations(page)).map(({ name, detail, section }) => ({ name, detail, section }));
+      const expectedGroups = expectedDestinations(data.legacyWlanGroups, 'es');
+      const firstMac = (await readApItems(page))[0]?.mac;
+      await page.click(`#apList .ap-checkbox[data-mac="${firstMac}"]`);
+      const preview = await readPreview(page);
+      await page.click(`#apList .ap-checkbox[data-mac="${firstMac}"]`);
       return verdict(
-        apVerdict.ok && isDeepStrictEqual(wlans, expectedWlans) && shell.wlanListLabel === es.groupsTitle.wlanGroup &&
-        shell.selectionPlaceholder === es.selectApAndGroup.wlanGroup,
-        { aps: apVerdict.detail, wlans, expectedWlans, shell }
+        apVerdict.ok && isDeepStrictEqual(destinations, expectedGroups) && preview.status === es.selectGroup.wlanGroup,
+        { aps: apVerdict.detail, destinations, expectedGroups, preview }
       );
     }); // End of check "[es] legacy controller (5.x) after a refresh..."
 
@@ -1845,50 +2416,81 @@ async function runEnglishMultiSite(electronInfo) {
       );
     }); // End of check "[en] picking a site calls OMADA_SELECT_SITE with the site id and th..."
 
-    await check('[en] lists render after the site selection, with English status and legacy "WLAN:" group labels', async () => {
+    await check('[en] lists render after the site selection, with English status, legacy "WLAN:" group labels and the legacy groups as destinations (none empty, so no Silence section)', async () => {
       const expectedAps = expectedApRows(data.accessPoints, 'en', 'wlanGroup', data.legacyWlanGroups);
       await waitForApCount(page, expectedAps.length);
       const apVerdict = compareApRows(await readApItems(page), expectedAps);
-      const expectedWlans = expectedWlanRows(data.legacyWlanGroups, 'en');
-      const wlans = (await readWlanItems(page)).map(({ name, subtitle }) => ({ name, subtitle }));
-      return verdict(apVerdict.ok && isDeepStrictEqual(wlans, expectedWlans), { aps: apVerdict.detail, wlans, expectedWlans });
+      const expectedGroups = expectedDestinations(data.legacyWlanGroups, 'en');
+      const destinations = (await readDestinations(page)).map(({ name, detail, section }) => ({ name, detail, section }));
+      const pane = await readDestinationPane(page);
+      return verdict(
+        apVerdict.ok && isDeepStrictEqual(destinations, expectedGroups) && pane.silenceTitle === null,
+        { aps: apVerdict.detail, destinations, expectedGroups, pane }
+      );
     });
 
     await checkShellAfterConnect(session, 'en', {
       aps: data.accessPoints, groups: data.legacyWlanGroups, version: data.legacyControllerVersion, groupModel: 'wlanGroup', site: secondSite.name,
     });
 
-    await check('[en] legacy controller (5.x): the group panel and its list are labelled "WLAN groups (legacy)"; the selection bar asks for "an AP and a WLAN group", then "a WLAN group"', async () => {
+    await check('[en] legacy controller (5.x): the destination list is labelled "WLAN groups (legacy)" under "Move selected APs"; the preview asks for APs, then for "a WLAN group"', async () => {
       const shell = await readShell(page);
+      const preview = await readPreview(page);
       const firstMac = (await readApItems(page))[0]?.mac;
       await page.click(`#apList .ap-row[data-mac="${firstMac}"]`);
-      const apOnly = await readShell(page);
+      const apOnly = await readPreview(page);
       await page.click(`#apList .ap-row[data-mac="${firstMac}"]`);
       return verdict(
-        shell.wlanTitle === en.groupsTitle.wlanGroup && shell.wlanListLabel === en.groupsTitle.wlanGroup &&
-        shell.selectionPlaceholder === en.selectApAndGroup.wlanGroup && apOnly.selectionMuted === en.selectGroup.wlanGroup,
-        { shell, apOnly: apOnly.selectionMuted }
+        shell.destinationListLabel === en.groupsTitle.wlanGroup && shell.destinationTitle === en.destinationTitle &&
+        preview.status === en.moveNoSelection && preview.button === en.moveNone && preview.disabled === true &&
+        apOnly.status === en.selectGroup.wlanGroup && apOnly.button === en.moveOne && apOnly.disabled === true,
+        { shell, preview, apOnly }
       );
     }); // End of check "[en] legacy controller (5.x)..."
 
-    await check('[en] the selection survives filtering in English: "3 selected (1 hidden by filters)" and "Select all 4 filtered APs"; Clear selection empties it', async () => {
+    await check('[en] the selection survives filtering in English: "3 selected (1 hidden by filters)", "Select all 4 filtered APs" and "Move 3 APs"; Clear selection empties it', async () => {
       for (const name of ['Altillo', 'Garaje', 'Porche']) {
         await page.click(`#apList .ap-checkbox[data-mac="${AP[name].mac}"]`);
       }
       await page.selectOption('#apGroupFilter', LEGACY_GROUP.Default.wlanId);
       const selection = await readSelection(page);
-      const shell = await readShell(page);
+      const preview = await readPreview(page);
       await page.selectOption('#apGroupFilter', '');
       await page.click('#clearApSelectionBtn');
       const cleared = await readSelection(page);
       return verdict(
         selection.summary === '3 selected (1 hidden by filters)' && selection.summary === expectedSummary('en', 3, 1) &&
         selection.selectAll === fmt(en.selectAllFiltered, { count: 4 }) && selection.live === 'polite' &&
-        isDeepStrictEqual(selection.checked, [AP.Garaje.mac, AP.Porche.mac]) && shell.selectionAp === fmt(en.selectedAps, { count: 3 }) &&
+        isDeepStrictEqual(selection.checked, [AP.Garaje.mac, AP.Porche.mac]) && preview.button === fmt(en.moveMany, { count: 3 }) &&
         cleared.summary === en.selNone && cleared.checked.length === 0,
-        { selection, shell, cleared }
+        { selection, preview, cleared }
       );
     }); // End of check "[en] the selection survives filtering in English..."
+
+    await check('[en] two legacy groups named "Aulas" (a twin appears on refresh): both radios disabled with "Another group has the same name — rename one in Omada to move APs here" (also in their description); the unique Default stays selectable', async () => {
+      const twin = { wlanId: '5f1a0c0ffee0000000000b03', wlanName: 'Aulas', ssidList: [{ ssidName: 'Profesores' }] };
+      await configureStub(session, { wlanGroups: [...data.legacyWlanGroups, twin] });
+      await page.click('#refreshBtn');
+      await page.waitForSelector(`#destinationList .destination-option[data-wlan-id="${twin.wlanId}"]`, { timeout: WAIT_MS });
+      await waitForLoadIdle(page);
+      const options = await readDestinations(page);
+      // The listing without the twin comes back for the checks that follow
+      await configureStub(session, { wlanGroups: data.legacyWlanGroups });
+      await page.click('#refreshBtn');
+      await page.waitForFunction((id) => document.querySelector(`#destinationList .destination-option[data-wlan-id="${id}"]`) === null,
+        twin.wlanId, { timeout: WAIT_MS });
+      await waitForLoadIdle(page);
+      const restored = await readDestinations(page);
+      const twins = options.filter((item) => item.name === 'Aulas');
+      const unique = options.find((item) => item.name === 'Default');
+      return verdict(
+        twins.length === 2 && twins.every((item) => item.disabled === true && item.checked === false && item.reason === en.ambiguous &&
+          item.description === `${item.detail} ${en.ambiguous}`) &&
+        unique?.disabled === false && unique?.reason === null &&
+        restored.length === 2 && restored.every((item) => item.disabled === false && item.reason === null),
+        { options, restored }
+      );
+    }); // End of check "[en] two legacy groups named Aulas..."
 
     await check('[en] reconnect reuses the remembered site (no site modal, no new selection)', async () => {
       await page.click('#connectBtn');
@@ -1928,7 +2530,7 @@ async function runEnglishMultiSite(electronInfo) {
         await waitForStatus(page, en.disconnected);
         return verdict(
           rowsDuring === 0 && during.apEmpty === en.connectToSeeAPs && during.status === en.connecting &&
-          during.wlanTitle === en.groupsTitle.apGroup && during.wlanEmpty === en.connectToSeeGroups &&
+          during.destinationListLabel === en.groupsTitle.apGroup && during.destinationEmpty === en.connectToSeeGroups && during.moveDisabled === true &&
           afterSave.connected === false && afterSave.storedSiteId === '' &&
           afterSave.scenario.config.url === 'https://other-controller.invalid:8043',
           { rowsDuring, during, connected: afterSave.connected, storedSiteId: afterSave.storedSiteId }
@@ -2023,16 +2625,17 @@ async function runCertificatePinning(electronInfo) {
       );
     }); // End of check "[tofu] Connect again -> first-use dialog again..."
 
-    await check('[tofu] Omada 6.3 in English: "AP groups" panel and list label, and the empty group zNinguna listed with "No Wi-Fi networks — silences these APs"', async () => {
+    await check('[tofu] Omada 6.3 in English: the destination list is labelled "AP groups", and the empty group zNinguna sits under "Silence" with "No Wi-Fi networks — silences these APs"', async () => {
       const shell = await readShell(page);
-      const items = await readWlanItems(page);
+      const items = await readDestinations(page);
+      const pane = await readDestinationPane(page);
       const empty = items.find((item) => item.wlanId === EMPTY_GROUP.wlanId);
-      const wlans = items.map(({ name, subtitle }) => ({ name, subtitle }));
-      const expectedWlans = expectedWlanRows(data.wlanGroups, 'en');
+      const destinations = items.map(({ name, detail, section }) => ({ name, detail, section }));
+      const expectedGroups = expectedDestinations(data.wlanGroups, 'en');
       return verdict(
-        shell.wlanTitle === en.groupsTitle.apGroup && shell.wlanListLabel === en.groupsTitle.apGroup &&
-        empty?.subtitle === en.emptyGroup && isDeepStrictEqual(wlans, expectedWlans),
-        { shell, empty, wlans, expectedWlans }
+        shell.destinationListLabel === en.groupsTitle.apGroup && pane.silenceTitle === en.silence &&
+        empty?.detail === en.emptyGroup && empty?.section === 'silence' && isDeepStrictEqual(destinations, expectedGroups),
+        { shell, pane, empty, destinations, expectedGroups }
       );
     }); // End of check "[tofu] Omada 6.3 in English..."
 

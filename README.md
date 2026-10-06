@@ -10,7 +10,9 @@ A modern desktop application for moving TP-Link Omada Controller access points b
   connected clients; search and filter them by status and group
 - View all AP groups with the Wi-Fi networks (SSIDs) each one broadcasts,
   including groups without any network (see [Controller versions](#controller-versions))
-- Move one or more access points into another group, including an empty one to silence them
+- Move one or more access points into another group, including an empty one to silence them,
+  after reviewing which Wi-Fi networks they gain and lose; access points are moved one at a time,
+  with a per-access-point result and **Retry failed**
 - Supports the self-signed certificates Omada controllers use, with
   trust-on-first-use pinning: you confirm the certificate's SHA-256
   fingerprint once, and a different certificate is refused afterwards
@@ -60,10 +62,23 @@ npm run dev
 4. In the **Access points** view, tick one or more access points (Shift-click or
    Shift+arrow keys select a range). Access points stay selected while a search or
    filter hides them; the count under the list says how many are hidden
-5. Select a group from the group panel (titled **AP groups** on Omada 6.3+,
-   **WLAN groups (legacy)** on older controllers)
-6. Click **Apply change** to move the selected access points into that group. They
-   are moved one after the other; any that fail stay selected so you can retry
+5. Pick the destination in the **Move selected APs** pane next to the list (one
+   option per AP group on Omada 6.3+, per WLAN group on older controllers). Its
+   search matches group names and Wi-Fi network names; groups without networks
+   are listed under **Silence**. The pane previews the networks the selected
+   access points gain, lose and keep, says how many are already in that group
+   (those are skipped), and how many the filters hide. Access points only
+   report their group's name, so a group whose name another group shares is
+   listed but cannot be picked: rename one of them in Omada
+6. Click **Move AP** / **Move N APs**. A review dialog shows the current groups,
+   the destination, the access points that move, the network changes and the
+   clients connected to them; it opens on **Cancel**, so press the move button
+   to confirm. The access points are moved one at a time (the move is not
+   atomic). The results list each access point as moved or failed, with the
+   controller's message; the failed ones stay selected, and **Retry failed**
+   moves only those, through the same review (the results say how many failed
+   access points left the controller meanwhile, and those are skipped; if the
+   destination group is gone, they say so instead of offering the retry)
 
 ## Controller versions
 
@@ -74,7 +89,7 @@ The app reads the controller version from `/api/info` when it connects:
   groups without Wi-Fi networks are shown too, labelled "No Wi-Fi networks —
   silences these APs": moving an access point there stops it broadcasting.
 - **Older controllers**, and any controller whose version is missing or cannot
-  be read, are treated as legacy: the panel is titled "WLAN groups (legacy)".
+  be read, are treated as legacy: the groups are called "WLAN groups (legacy)".
   The app still asks for the complete group list and, when the controller does
   not offer it, shows the groups that have Wi-Fi networks, as earlier versions
   of the app did.

@@ -19,7 +19,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 11 | 4.4 URL-scoped credentials + certificate TOFU pinning (completes 2.3b) — risk: high; worker: opus | **done** — `docs/progress-archive/phase-11.md` |
 | 12 | 4.5 Omada 6.3 correctness: `controllerVer`, `groupModel`, full group list from `setting/wlans` (empty groups), AP/WLAN terminology — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-12.md` |
 | 13a | 4.6 (first half) App shell (sidebar, counts, Updated hh:mm) + Access points list with checkbox multi-select surviving filters — risk: high; worker: opus | **done** — `docs/progress-archive/phase-13a.md` |
-| 13b | 4.6 (second half) Destination pane, review dialog, sequential bulk move with per-AP results + Retry failed — risk: high | pending |
+| 13b | 4.6 (second half) Destination pane, review dialog, sequential bulk move with per-AP results + Retry failed — risk: high; worker: opus | **done** — `docs/progress-archive/phase-13b.md` |
 | 14 | 4.7 Read-only AP groups & Wi-Fi networks views, cross-navigation, states, responsive layout — risk: routine | pending |
 | 15 | 4.8 Open API credentials, `OpenApiClient`, `ControllerSession`, capability detection — risk: high | pending |
 | 16 | 4.9 AP group management (create/rename/delete-if-empty, move APs here) — risk: high | pending |
@@ -236,7 +236,14 @@ validation, connect-without-config, console/main-process errors).
 - Acceptance met: build exit 0; `npm test` 357/357; smoke 83/83 (single, multi and hidden-by-filter moves, keyboard-only move, selection survives filtering, empty group selectable and labelled, nav items + counts, placeholders, Updated time); `npm run tls-probe` 21/21; no `innerHTML`/inline styles.
 - Review: Codex, `docs/reviews/phase13a.md`, ship-with-fixes. Blocker (confirm focused the Confirm button) → the confirm dialog now focuses Cancel, with `aria-describedby`; should-fix (filter-hidden range anchor) → `planRangeSelection()` re-anchors. Both fixed by an opus worker; orchestrator re-ran build, tests, smoke and probe, all green.
 
-## Plan status: ACTIVE — phases 8–13a done, phases 13b–20 pending
+### Phase 13b — destination pane, review dialog, bulk move (2026-10-07)
+
+- Risk: high. Workers: opus (phase), opus (review fixes). Full narrative: `docs/progress-archive/phase-13b.md`.
+- The old group panel, "Apply change" bar and confirm modal are gone. New: an always-visible destination pane (`destination-pane.ts`, native radios, search over group and SSID names, empty groups under "Silence"), pure move logic (`move-plan.ts`: gains/losses/unchanged, "N already in this group; M will move", no-op, move plan, results, `checkRetry()`), one review → progress → results dialog (`move-dialog.ts`, focus on Cancel, clients from `clientNum`, overrides stated as unavailable) and the sequential bulk move (`move-flow.ts`, one `OMADA_SET_WLAN` at a time, per-AP results, Retry failed). "Move AP" / "Move N APs". No new IPC channel.
+- Acceptance met: build exit 0; `npm test` 398/398; smoke 92/92 (single, bulk all-succeed / partial → Retry failed / cancel, SSID search, Silence, no-op + mixed, keyboard-only, Cancel focus, same-named group, Enter on a focused radio); `npm run tls-probe` 21/21; no `innerHTML`/inline styles.
+- Review: Codex, `docs/reviews/phase13b.md`, ship-with-fixes. Blocker (duplicate group names made no-op detection unverifiable, since AP records carry only the group name) → same-named groups are shown disabled with a reason and `planMove()` refuses them; should-fixes (Retry failed drifting after the post-move reload; Enter acting on the checked rather than the focused radio) → retry contract re-checked by `checkRetry()`, Enter selects the focused radio first. All fixed by an opus worker; orchestrator re-ran build, tests, smoke and probe, all green.
+
+## Plan status: ACTIVE — phases 8–13b done, phases 14–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -271,20 +278,23 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
   the site name, best in phase 15's `ControllerSession`; `clientNum` is unverified live (add it to
   the phase 20 checklist); the AP details pane (row click) is deferred to phase 14 (`todo.md` 4.7);
   a failed refresh now logs `console.warn` instead of `console.error`.
+- Phase 13b leftovers (none blocking): same-named groups cannot be move targets until renamed (the
+  internal AP list has only group names; per-AP ids need `GET eaps/{mac}`); the review states that
+  per-AP SSID overrides cannot be shown; a successful move still ends on a results dialog that needs
+  one Close.
 
 ## Next action
 
-**Phase 13b — todo 4.6 second half: destination pane + review dialog + bulk move results (risk: high).** First read `todo.md` item 4.6 (its 13b scope line), then `docs/management-design.md` §4.1, §4.3 and §4.7 only. 13a left the old right-hand group panel (still `role="listbox"`) and the old confirm → `OMADA_SET_WLAN` loop in `apply-change.ts` in place; 13b replaces them:
+**Phase 14 — todo 4.7: read-only AP groups & Wi-Fi networks views, cross-navigation, states, responsive layout (risk: routine).** First read `todo.md` item 4.7, then `docs/management-design.md` §4.4, §4.5, §4.6 and §4.7 only, and `docs/progress-archive/phase-13b.md` for the current Access points view.
 
-- An **always-visible destination pane** (native radios, no listbox simulation) with search matching group names **and** SSID names, empty groups pinned in a "Silence" section with the strong §4.1 label, and a gains/losses preview (networks gained / lost / unchanged) for the current checkbox selection (`ap-selection.ts`, hidden-by-filter APs included).
-- Mixed selections: "12 already in this group; 4 will move"; no-op moves disabled. Button labels "Move AP" / "Move N APs" (es "Mover AP" / "Mover N AP") instead of "Apply change".
-- A **review dialog** (initial focus on Cancel, as 13a made the confirm dialog): source group(s) → destination, networks gained/lost/unchanged, clients on the moving APs (optional `clientNum`; never per-SSID claims). Per-AP override data is not available from the internal API — omit or state it, never invent it.
-- **Sequential bulk move** (`PATCH eaps/{mac}` via `OMADA_SET_WLAN` only, not atomic) with a per-AP result list and **Retry failed**; keep the `sessionGeneration`/operation-flag guards (disconnect, refresh, URL change mid-move).
-- Acceptance: the smoke covers a single move, bulk moves (all succeed / partial failure → Retry failed / cancel), destination search by SSID name, the Silence section, the no-op case, and a keyboard-only move; existing checks keep passing. `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
+- Replace 13a's placeholder AP groups and Wi-Fi networks views with read-only views built from the internal data already loaded (group → SSID names; network → groups / APs), with cross-links and "Back to …".
+- The AP details pane deferred from 13a: row click → effective networks, link to its group. Today a row click toggles the checkbox (13a/13b smoke relies on it) — keep the checkbox itself as the toggle and update those checks. Override badges need per-AP data (`GET eaps/{mac}` returns `ssidOverrides[]`, live-verified): either add a read-only, sender-asserted, shape-guarded IPC for it (stub it in `tests/smoke/stub-main.cjs`) or state the overrides as unavailable — never invent them; record the choice.
+- All §4.6 states (first run, disconnected, loading, refreshing, no data vs no results, errors, read-only banner with the "no management credentials" reason); §4.7 breakpoints and keyboard rules (Cmd/Ctrl+F, Escape).
+- Acceptance: smoke at 1200, 900 and 720 px widths; a cross-navigation round trip; Cmd/Ctrl+F and Escape behavior; the read-only banner with its reason; existing checks keep passing. `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
 
 ## Key paths
 
-- `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `shell` (header + sidebar), `connection`, `ap-list` + pure `ap-selection`, `wlan-list`, `apply-change`, `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
+- `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `shell` (header + sidebar), `connection`, `ap-list` + `ap-filters` + pure `ap-selection`, `destination-pane`, pure `move-plan` + `move-text`, `move-dialog`, `move-flow` (bulk move), `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
 - `scripts/tsc.mjs` + `scripts/resolve-tsc.mjs` — run TypeScript 7 through Node (no `.bin` shim)
 - `tests/unit/` + `tests/fixtures/` — `npm test` (runner `scripts/run-unit-tests.mjs`); `tests/smoke/` — `npm run smoke` (`stub-main.cjs`, `run-smoke.mjs`)
 - `src/main/omada-transport.ts` (transport interface + hardened request logic), `net-transport.ts` (Electron `net`), `omada-validators.ts`, `cookie-jar.ts`, `url.ts`
@@ -308,3 +318,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 11: `29be7d9` ("Scope credentials to the controller URL and pin its certificate"), pushed to origin/main (`4b82bd9..29be7d9`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 12: `c7b251f` ("List empty AP groups and detect the controller's group model"), pushed to origin/main (`7a848ab..c7b251f`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 13a: `0a7f7d1` ("Add the sidebar shell and checkbox multi-select for access points"), pushed to origin/main (`7bf0e6b..0a7f7d1`). A follow-up commit records this SHA. Tree clean after it.
+- Phase 13b: committed as "Add the destination pane, move review and sequential bulk moves"; its SHA and push result are recorded by the follow-up commit.

@@ -43,15 +43,17 @@ export const selectAllApsBtn = document.getElementById('selectAllApsBtn') as HTM
 export const clearApSelectionBtn = document.getElementById('clearApSelectionBtn') as HTMLButtonElement;
 export const apSelectionSummary = document.getElementById('apSelectionSummary') as HTMLElement;
 
-// Group panel and the action bar
-export const wlanList = document.getElementById('wlanList') as HTMLElement;
-export const wlanFilterInput = document.getElementById('wlanFilter') as HTMLInputElement;
-export const selectionInfo = document.getElementById('selectionInfo') as HTMLElement;
-export const applyBtn = document.getElementById('applyBtn') as HTMLButtonElement;
+// Destination pane: group search, the radio list, the move preview and the
+// move button
+export const destinationSearchInput = document.getElementById('destinationSearch') as HTMLInputElement;
+export const destinationList = document.getElementById('destinationList') as HTMLElement;
+export const moveStatus = document.getElementById('moveStatus') as HTMLElement;
+export const movePreview = document.getElementById('movePreview') as HTMLElement;
+export const moveBtn = document.getElementById('moveBtn') as HTMLButtonElement;
 
 // Panel titles
 export const apPanelTitle = document.getElementById('apPanelTitle') as HTMLElement;
-export const wlanPanelTitle = document.getElementById('wlanPanelTitle') as HTMLElement;
+export const destinationPanelTitle = document.getElementById('destinationPanelTitle') as HTMLElement;
 
 // Settings Modal
 export const settingsModal = document.getElementById('settingsModal') as HTMLElement;
@@ -79,12 +81,17 @@ export const certResetMessage = document.getElementById('certResetMessage') as H
 export const cancelCertResetBtn = document.getElementById('cancelCertResetBtn') as HTMLButtonElement;
 export const confirmCertResetBtn = document.getElementById('confirmCertResetBtn') as HTMLButtonElement;
 
-// Confirm Modal
-export const confirmModal = document.getElementById('confirmModal') as HTMLElement;
-export const confirmModalTitle = confirmModal.querySelector('.modal-header h2') as HTMLElement;
-export const confirmMessage = document.getElementById('confirmMessage') as HTMLElement;
-export const cancelConfirmBtn = document.getElementById('cancelConfirmBtn') as HTMLButtonElement;
-export const confirmConfirmBtn = document.getElementById('confirmConfirmBtn') as HTMLButtonElement;
+// Move dialog (review, progress, per-AP results)
+export const moveModal = document.getElementById('moveModal') as HTMLElement;
+export const moveModalTitle = document.getElementById('moveModalHeading') as HTMLElement;
+export const moveModalSummary = document.getElementById('moveModalSummary') as HTMLElement;
+export const moveReview = document.getElementById('moveReview') as HTMLElement;
+export const moveResults = document.getElementById('moveResults') as HTMLElement;
+export const moveNotes = document.getElementById('moveNotes') as HTMLElement;
+export const cancelMoveBtn = document.getElementById('cancelMoveBtn') as HTMLButtonElement;
+export const confirmMoveBtn = document.getElementById('confirmMoveBtn') as HTMLButtonElement;
+export const retryFailedBtn = document.getElementById('retryFailedBtn') as HTMLButtonElement;
+export const closeMoveBtn = document.getElementById('closeMoveBtn') as HTMLButtonElement;
 
 // Site Selection Modal (multi-site controllers)
 export const siteModal = document.getElementById('siteModal') as HTMLElement;

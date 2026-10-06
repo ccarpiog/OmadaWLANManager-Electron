@@ -64,7 +64,7 @@ function buildDetailRows(rows: CertificateRow[]): HTMLElement[] {
 /**
  * Opens the certificate modal and resolves with the user's choice: true for
  * the confirming button, false for Cancel/Close or Escape. Same structure as
- * showConfirm(): every close path routes through a single finish() that hides
+ * showSiteSelection(): every close path routes through a single finish() that hides
  * the modal, removes all listeners (including the Escape and focus-trap ones),
  * lifts the background inertness, restores focus to the opener, and resolves
  * exactly once. Keyboard focus starts on the cancelling button, so Enter can

@@ -3,11 +3,11 @@
 // ============================================================================
 //
 // Pure (no DOM, no renderer state, no i18n): the Access points list
-// (ap-list.ts), the sidebar counts (shell.ts) and the move flow
-// (apply-change.ts) build on these, and the unit tests import this module
-// directly (tests/unit/renderer-ap-selection.test.ts). Selections are sets of
-// AP MAC addresses; "visible" lists are the MACs of the rows the current
-// filters show, in display order.
+// (ap-list.ts), the sidebar counts (shell.ts) and the destination pane and
+// move flow (destination-pane.ts, move-flow.ts) build on these, and the unit
+// tests import this module directly (tests/unit/renderer-ap-selection.test.ts).
+// Selections are sets of AP MAC addresses; "visible" lists are the MACs of the
+// rows the current filters show, in display order.
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
 

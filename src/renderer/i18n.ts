@@ -15,17 +15,12 @@ export interface Translations {
   connectionError: string;
   connect: string;
   disconnect: string;
-  apply: string;
-  applying: string;
   save: string;
   cancel: string;
-  confirm: string;
   settings: string;
   accessPoints: string;
   noAccessPoints: string;
   connectToSeeAPs: string;
-  noResultsFor: string;
-  selectAp: string;
   unassigned: string;
   // Group vocabulary (docs/management-design.md §4.1). Each concept has a
   // 6.3+ "AP groups" variant (...Ap) and a legacy "WLAN groups" variant
@@ -34,15 +29,13 @@ export interface Translations {
   groupsTitleLegacy: string;
   noGroupsAp: string;
   noGroupsLegacy: string;
-  selectApAndGroupAp: string;
-  selectApAndGroupLegacy: string;
   selectGroupAp: string;
   selectGroupLegacy: string;
   groupLabelAp: string;
   groupLabelLegacy: string;
   // Shown only while no controller data is loaded, hence 6.3+ vocabulary only
   connectToSeeGroups: string;
-  // Subtitle of a group without Wi-Fi networks (§4.1 "empty group label")
+  // Label of a group without Wi-Fi networks (§4.1 "empty group label")
   emptyGroup: string;
   more: string;
   connectionSettings: string;
@@ -55,11 +48,6 @@ export interface Translations {
   passwordUnchanged: string;
   invalidUrl: string;
   saveError: string;
-  confirmChange: string;
-  confirmAssign: string;
-  changeApplied: string;
-  changeError: string;
-  filter: string;
   refresh: string;
   loading: string;
   loadError: string;
@@ -129,17 +117,84 @@ export interface Translations {
   selectionMany: string;
   hiddenByFiltersOne: string;
   hiddenByFiltersMany: string;
-  selectedApsCount: string;
   networkCountOne: string;
   networkCountMany: string;
   networkCountNone: string;
   clientCountOne: string;
   clientCountMany: string;
-  // Moving several selected APs (apply-change.ts)
-  confirmAssignMany: string;
-  applyingProgress: string;
-  changeAppliedMany: string;
-  changePartial: string;
+  // Destination pane (destination-pane.ts, move-text.ts): the group search,
+  // the pinned "Silence" section, the move preview (mixed selections, the
+  // networks gained / lost / unchanged) and the "Move AP" / "Move N APs"
+  // button labels (§4.1)
+  destinationTitle: string;
+  destinationSearch: string;
+  destinationSearchLabel: string;
+  silenceSection: string;
+  noDestinationResults: string;
+  clearSearch: string;
+  moveNoSelection: string;
+  moveDestination: string;
+  alreadyInGroupOne: string;
+  alreadyInGroupMany: string;
+  willMoveOne: string;
+  willMoveMany: string;
+  allAlreadyInGroupOne: string;
+  allAlreadyInGroupMany: string;
+  includesHiddenOne: string;
+  includesHiddenMany: string;
+  networksGained: string;
+  networksLost: string;
+  networksUnchanged: string;
+  noneValue: string;
+  networkPartial: string;
+  unknownSourcesOne: string;
+  unknownSourcesMany: string;
+  moveNone: string;
+  moveOne: string;
+  moveMany: string;
+  // Why a group whose name another group shares cannot be a destination
+  // (its radio is disabled; move-plan.ts isAmbiguousGroup())
+  destinationAmbiguous: string;
+  // Review dialog, progress and per-AP results (move-dialog.ts)
+  moveReviewTitle: string;
+  moveReviewSummaryOne: string;
+  moveReviewSummaryMany: string;
+  moveFrom: string;
+  moveTo: string;
+  apCountOne: string;
+  apCountMany: string;
+  alreadySkippedOne: string;
+  alreadySkippedMany: string;
+  clientsOnMovingAps: string;
+  clientsMissingOne: string;
+  clientsMissingMany: string;
+  clientsUnknown: string;
+  moveNotAtomic: string;
+  overridesUnavailable: string;
+  moveProgress: string;
+  moveResultsTitle: string;
+  moveResultsAllOne: string;
+  moveResultsAllMany: string;
+  moveResultsPartial: string;
+  moveResultsNoneOne: string;
+  moveResultsNoneMany: string;
+  moveResultOk: string;
+  moveResultFailed: string;
+  moveRejected: string;
+  retryFailed: string;
+  // The results' notes on "Retry failed" after the reload (move-text.ts
+  // retryNotes()): failed APs no longer listed or already in the
+  // destination, what the retry covers, or why it is unavailable
+  retryMissingOne: string;
+  retryMissingMany: string;
+  retryInDestinationOne: string;
+  retryInDestinationMany: string;
+  retryRemainingOne: string;
+  retryRemainingMany: string;
+  retryDestinationGone: string;
+  retryDestinationAmbiguous: string;
+  retryNothingLeft: string;
+  moveError: string;
   // AP status categories (see AP_STATUS in ap-list.ts). Shown as text next to
   // the coloured dot of each AP row and as the status filter's options, so
   // the state is not conveyed by colour alone.
@@ -160,24 +215,17 @@ const translations: Record<Language, Translations> = {
     connectionError: 'Error de conexión',
     connect: 'Conectar',
     disconnect: 'Desconectar',
-    apply: 'Aplicar cambio',
-    applying: 'Aplicando...',
     save: 'Guardar',
     cancel: 'Cancelar',
-    confirm: 'Confirmar',
     settings: 'Ajustes',
     accessPoints: 'Puntos de acceso',
     noAccessPoints: 'No hay puntos de acceso disponibles',
     connectToSeeAPs: 'Conecta al controlador para ver los puntos de acceso',
-    noResultsFor: 'No hay resultados para',
-    selectAp: 'Selecciona un AP',
     unassigned: 'Sin asignar',
     groupsTitleAp: 'Grupos de AP',
     groupsTitleLegacy: 'Grupos WLAN (heredado)',
     noGroupsAp: 'No hay grupos de AP disponibles',
     noGroupsLegacy: 'No hay grupos WLAN disponibles',
-    selectApAndGroupAp: 'Selecciona un AP y un grupo de AP',
-    selectApAndGroupLegacy: 'Selecciona un AP y un grupo WLAN',
     selectGroupAp: 'Selecciona un grupo de AP',
     selectGroupLegacy: 'Selecciona un grupo WLAN',
     groupLabelAp: 'Grupo de AP',
@@ -195,11 +243,6 @@ const translations: Record<Language, Translations> = {
     passwordUnchanged: '(sin cambios)',
     invalidUrl: 'URL no válida: debe empezar por https:// y no contener credenciales ni fragmentos',
     saveError: 'Error al guardar la configuración',
-    confirmChange: 'Confirmar cambio',
-    confirmAssign: '¿Asignar "{wlan}" al AP "{ap}"?',
-    changeApplied: 'Cambio aplicado correctamente',
-    changeError: 'Error al aplicar el cambio',
-    filter: 'Filtrar...',
     refresh: 'Actualizar',
     loading: 'Cargando...',
     loadError: 'Error al cargar los datos del controlador',
@@ -261,16 +304,74 @@ const translations: Record<Language, Translations> = {
     selectionMany: '{count} seleccionados',
     hiddenByFiltersOne: '1 oculto por los filtros',
     hiddenByFiltersMany: '{count} ocultos por los filtros',
-    selectedApsCount: '{count} AP seleccionados',
     networkCountOne: '1 red',
     networkCountMany: '{count} redes',
     networkCountNone: 'Sin redes',
     clientCountOne: '1 cliente',
     clientCountMany: '{count} clientes',
-    confirmAssignMany: '¿Asignar "{wlan}" a {count} AP ({aps})?',
-    applyingProgress: 'Aplicando {done}/{total}...',
-    changeAppliedMany: '{count} AP movidos a "{wlan}"',
-    changePartial: 'No se pudieron mover {failed} de {total} AP; siguen seleccionados para reintentarlo',
+    destinationTitle: 'Mover los AP seleccionados',
+    destinationSearch: 'Buscar grupos o redes…',
+    destinationSearchLabel: 'Buscar grupos de destino o redes Wi-Fi',
+    silenceSection: 'Silenciar',
+    noDestinationResults: 'Ningún grupo ni red coincide con "{query}"',
+    clearSearch: 'Borrar búsqueda',
+    moveNoSelection: 'Selecciona los puntos de acceso que quieres mover',
+    moveDestination: 'Destino: {group}',
+    alreadyInGroupOne: '1 ya está en este grupo',
+    alreadyInGroupMany: '{count} ya están en este grupo',
+    willMoveOne: '1 se moverá',
+    willMoveMany: '{count} se moverán',
+    allAlreadyInGroupOne: 'El AP seleccionado ya está en este grupo',
+    allAlreadyInGroupMany: 'Los {count} AP seleccionados ya están en este grupo',
+    includesHiddenOne: 'Incluye 1 AP oculto por los filtros',
+    includesHiddenMany: 'Incluye {count} AP ocultos por los filtros',
+    networksGained: 'Gana',
+    networksLost: 'Pierde',
+    networksUnchanged: 'Sin cambios',
+    noneValue: 'Ninguna',
+    networkPartial: '{name} ({count} de {total})',
+    unknownSourcesOne: 'No se conocen las redes actuales de 1 AP (sin grupo o con un grupo no reconocido): no se incluye arriba',
+    unknownSourcesMany: 'No se conocen las redes actuales de {count} AP (sin grupo o con un grupo no reconocido): no se incluyen arriba',
+    moveNone: 'Mover AP',
+    moveOne: 'Mover AP',
+    moveMany: 'Mover {count} AP',
+    destinationAmbiguous: 'Otro grupo tiene el mismo nombre — cambia el nombre de uno en Omada para mover AP aquí',
+    moveReviewTitle: 'Revisar el movimiento',
+    moveReviewSummaryOne: '"{ap}" se moverá a "{group}".',
+    moveReviewSummaryMany: 'Se moverán {count} AP a "{group}".',
+    moveFrom: 'Desde',
+    moveTo: 'Hacia',
+    apCountOne: '1 AP',
+    apCountMany: '{count} AP',
+    alreadySkippedOne: '1 ya está en este grupo y no se moverá',
+    alreadySkippedMany: '{count} ya están en este grupo y no se moverán',
+    clientsOnMovingAps: 'Clientes conectados a estos AP',
+    clientsMissingOne: '(1 AP no informa de sus clientes)',
+    clientsMissingMany: '({count} AP no informan de sus clientes)',
+    clientsUnknown: 'Desconocido: el controlador no informa del número de clientes',
+    moveNotAtomic: 'Los AP se mueven de uno en uno y la operación no es atómica: si alguno falla, los demás se mueven igualmente.',
+    overridesUnavailable: 'No se pueden mostrar las redes personalizadas de cada AP: la API interna del controlador no informa de ellas.',
+    moveProgress: 'Moviendo {done} de {total}…',
+    moveResultsTitle: 'Resultado del movimiento',
+    moveResultsAllOne: 'Se movió el AP a "{group}".',
+    moveResultsAllMany: 'Se movieron los {count} AP a "{group}".',
+    moveResultsPartial: 'Se movieron {moved} de {total} AP a "{group}". Los que fallaron siguen seleccionados.',
+    moveResultsNoneOne: 'No se pudo mover el AP; sigue seleccionado.',
+    moveResultsNoneMany: 'No se pudo mover ninguno de los {count} AP; siguen seleccionados.',
+    moveResultOk: 'Movido',
+    moveResultFailed: 'Error',
+    moveRejected: 'El controlador no aceptó el cambio',
+    retryFailed: 'Reintentar los fallidos',
+    retryMissingOne: '1 AP fallido ya no está en el controlador y no se reintentará.',
+    retryMissingMany: '{count} AP fallidos ya no están en el controlador y no se reintentarán.',
+    retryInDestinationOne: '1 AP fallido ya aparece en "{group}" tras la recarga y no se reintentará.',
+    retryInDestinationMany: '{count} AP fallidos ya aparecen en "{group}" tras la recarga y no se reintentarán.',
+    retryRemainingOne: '"{action}" solo reintentará el AP restante.',
+    retryRemainingMany: '"{action}" solo reintentará los {count} AP restantes.',
+    retryDestinationGone: 'No se puede reintentar: el grupo "{group}" ya no está en el controlador.',
+    retryDestinationAmbiguous: 'No se puede reintentar: ahora otro grupo tiene el mismo nombre que "{group}".',
+    retryNothingLeft: 'No se puede reintentar: no queda ningún AP fallido que reintentar.',
+    moveError: 'Error al mover los puntos de acceso',
     statusApConnected: 'Conectado',
     statusApPending: 'Adoptando',
     statusApHeartbeatMissed: 'Sin respuesta',
@@ -286,24 +387,17 @@ const translations: Record<Language, Translations> = {
     connectionError: 'Connection error',
     connect: 'Connect',
     disconnect: 'Disconnect',
-    apply: 'Apply change',
-    applying: 'Applying...',
     save: 'Save',
     cancel: 'Cancel',
-    confirm: 'Confirm',
     settings: 'Settings',
     accessPoints: 'Access points',
     noAccessPoints: 'No access points available',
     connectToSeeAPs: 'Connect to the controller to see access points',
-    noResultsFor: 'No results for',
-    selectAp: 'Select an AP',
     unassigned: 'Unassigned',
     groupsTitleAp: 'AP groups',
     groupsTitleLegacy: 'WLAN groups (legacy)',
     noGroupsAp: 'No AP groups available',
     noGroupsLegacy: 'No WLAN groups available',
-    selectApAndGroupAp: 'Select an AP and an AP group',
-    selectApAndGroupLegacy: 'Select an AP and a WLAN group',
     selectGroupAp: 'Select an AP group',
     selectGroupLegacy: 'Select a WLAN group',
     groupLabelAp: 'AP group',
@@ -321,11 +415,6 @@ const translations: Record<Language, Translations> = {
     passwordUnchanged: '(unchanged)',
     invalidUrl: 'Invalid URL: it must start with https:// and contain no credentials or fragments',
     saveError: 'Error saving configuration',
-    confirmChange: 'Confirm change',
-    confirmAssign: 'Assign "{wlan}" to AP "{ap}"?',
-    changeApplied: 'Change applied successfully',
-    changeError: 'Error applying change',
-    filter: 'Filter...',
     refresh: 'Refresh',
     loading: 'Loading...',
     loadError: 'Error loading data from the controller',
@@ -387,16 +476,74 @@ const translations: Record<Language, Translations> = {
     selectionMany: '{count} selected',
     hiddenByFiltersOne: '1 hidden by filters',
     hiddenByFiltersMany: '{count} hidden by filters',
-    selectedApsCount: '{count} APs selected',
     networkCountOne: '1 network',
     networkCountMany: '{count} networks',
     networkCountNone: 'No networks',
     clientCountOne: '1 client',
     clientCountMany: '{count} clients',
-    confirmAssignMany: 'Assign "{wlan}" to {count} APs ({aps})?',
-    applyingProgress: 'Applying {done}/{total}...',
-    changeAppliedMany: '{count} APs moved to "{wlan}"',
-    changePartial: 'Could not move {failed} of {total} APs; they stay selected so you can retry',
+    destinationTitle: 'Move selected APs',
+    destinationSearch: 'Search groups or networks…',
+    destinationSearchLabel: 'Search destination groups or Wi-Fi networks',
+    silenceSection: 'Silence',
+    noDestinationResults: 'No groups or networks match "{query}"',
+    clearSearch: 'Clear search',
+    moveNoSelection: 'Select the access points to move',
+    moveDestination: 'Destination: {group}',
+    alreadyInGroupOne: '1 already in this group',
+    alreadyInGroupMany: '{count} already in this group',
+    willMoveOne: '1 will move',
+    willMoveMany: '{count} will move',
+    allAlreadyInGroupOne: 'The selected AP is already in this group',
+    allAlreadyInGroupMany: 'All {count} selected APs are already in this group',
+    includesHiddenOne: 'Includes 1 AP hidden by filters',
+    includesHiddenMany: 'Includes {count} APs hidden by filters',
+    networksGained: 'Gains',
+    networksLost: 'Loses',
+    networksUnchanged: 'Unchanged',
+    noneValue: 'None',
+    networkPartial: '{name} ({count} of {total})',
+    unknownSourcesOne: 'Current networks unknown for 1 AP (no group, or a group the app cannot identify): not included above',
+    unknownSourcesMany: 'Current networks unknown for {count} APs (no group, or a group the app cannot identify): not included above',
+    moveNone: 'Move APs',
+    moveOne: 'Move AP',
+    moveMany: 'Move {count} APs',
+    destinationAmbiguous: 'Another group has the same name — rename one in Omada to move APs here',
+    moveReviewTitle: 'Review the move',
+    moveReviewSummaryOne: '"{ap}" will move to "{group}".',
+    moveReviewSummaryMany: '{count} APs will move to "{group}".',
+    moveFrom: 'From',
+    moveTo: 'To',
+    apCountOne: '1 AP',
+    apCountMany: '{count} APs',
+    alreadySkippedOne: '1 is already in this group and will not move',
+    alreadySkippedMany: '{count} are already in this group and will not move',
+    clientsOnMovingAps: 'Clients connected to these APs',
+    clientsMissingOne: '(1 AP does not report its clients)',
+    clientsMissingMany: '({count} APs do not report their clients)',
+    clientsUnknown: 'Unknown: the controller does not report client counts',
+    moveNotAtomic: 'APs are moved one at a time and the operation is not atomic: if one fails, the others still move.',
+    overridesUnavailable: 'Per-AP Wi-Fi network overrides cannot be shown: the controller\'s internal API does not report them.',
+    moveProgress: 'Moving {done} of {total}…',
+    moveResultsTitle: 'Move results',
+    moveResultsAllOne: 'The AP was moved to "{group}".',
+    moveResultsAllMany: 'All {count} APs were moved to "{group}".',
+    moveResultsPartial: 'Moved {moved} of {total} APs to "{group}". The ones that failed stay selected.',
+    moveResultsNoneOne: 'The AP could not be moved; it stays selected.',
+    moveResultsNoneMany: 'None of the {count} APs could be moved; they stay selected.',
+    moveResultOk: 'Moved',
+    moveResultFailed: 'Failed',
+    moveRejected: 'The controller did not accept the change',
+    retryFailed: 'Retry failed',
+    retryMissingOne: '1 failed AP is no longer on the controller and will not be retried.',
+    retryMissingMany: '{count} failed APs are no longer on the controller and will not be retried.',
+    retryInDestinationOne: '1 failed AP already shows "{group}" after the reload and will not be retried.',
+    retryInDestinationMany: '{count} failed APs already show "{group}" after the reload and will not be retried.',
+    retryRemainingOne: '"{action}" retries only the remaining AP.',
+    retryRemainingMany: '"{action}" retries only the remaining {count} APs.',
+    retryDestinationGone: 'Retry is not available: the group "{group}" is no longer on the controller.',
+    retryDestinationAmbiguous: 'Retry is not available: another group now has the same name as "{group}".',
+    retryNothingLeft: 'Retry is not available: no failed AP is left to retry.',
+    moveError: 'Error moving the access points',
     statusApConnected: 'Connected',
     statusApPending: 'Adopting',
     statusApHeartbeatMissed: 'Heartbeat missed',
@@ -451,7 +598,6 @@ export function tFormat(key: keyof Translations, vars: Record<string, string>): 
 const GROUP_VOCABULARY = {
   groupsTitle: { apGroup: 'groupsTitleAp', wlanGroup: 'groupsTitleLegacy' },
   noGroups: { apGroup: 'noGroupsAp', wlanGroup: 'noGroupsLegacy' },
-  selectApAndGroup: { apGroup: 'selectApAndGroupAp', wlanGroup: 'selectApAndGroupLegacy' },
   selectGroup: { apGroup: 'selectGroupAp', wlanGroup: 'selectGroupLegacy' },
   groupLabel: { apGroup: 'groupLabelAp', wlanGroup: 'groupLabelLegacy' },
 } as const satisfies Record<string, Record<GroupModel, keyof Translations>>;

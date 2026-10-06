@@ -7,47 +7,50 @@ import {
   apFilterInput,
   apList,
   apPanelTitle,
-  applyBtn,
   cancelCertBtn,
   cancelCertResetBtn,
-  cancelConfirmBtn,
+  cancelMoveBtn,
   cancelSettingsBtn,
   cancelSiteBtn,
   certModalTitle,
+  closeMoveBtn,
   closeSettingsBtn,
   confirmCertBtn,
   confirmCertResetBtn,
-  confirmConfirmBtn,
-  confirmModalTitle,
+  confirmMoveBtn,
   connectBtn,
+  destinationPanelTitle,
+  destinationSearchInput,
   labelCertPin,
   labelLanguage,
   labelPassword,
   labelUrl,
   labelUsername,
+  moveModalTitle,
   refreshBtn,
   resetCertBtn,
+  retryFailedBtn,
   saveSettingsBtn,
   settingsBtn,
   settingsModalTitle,
   siteModalMessage,
   siteModalTitle,
   statusText,
-  wlanFilterInput,
 } from './elements';
 import { renderApFilterOptions, renderApList, renderApSelectionControls } from './ap-list';
+import { renderDestinationList, renderMovePreview } from './destination-pane';
 import { t } from './i18n';
-import { applyGroupVocabulary, showEmptyStates, updateSelectionInfo } from './panels';
+import { moveActionLabel } from './move-text';
+import { applyGroupVocabulary, showEmptyStates } from './panels';
 import { applyShellTranslations } from './shell';
 import { state } from './state';
 import { renderHeaderMeta } from './status';
-import { renderWlanList } from './wlan-list';
 
 /**
  * Writes every user-facing string of the static UI (titles, labels, button
  * texts, placeholders, accessible names) in the active language, then
  * re-renders the shell (sidebar, header details), the filter options, the
- * lists (or the empty states) and the selection info so the dynamic content
+ * lists (or the empty states) and the move preview so the dynamic content
  * follows the language too. Called at startup and after a settings save that
  * may have changed the language.
  */
@@ -55,16 +58,18 @@ export function applyTranslations() {
   // App shell: sidebar entries and counts, Settings entry, placeholder views
   applyShellTranslations();
 
-  // Panel titles and list labels for the (keyboard-navigable) list panels;
-  // the group panel's follow the controller's group model
+  // Panel titles and list labels; the destination list's follows the
+  // controller's group model
   apPanelTitle.textContent = t('accessPoints');
   apList.setAttribute('aria-label', t('accessPoints'));
+  destinationPanelTitle.textContent = t('destinationTitle');
   applyGroupVocabulary();
 
-  // Filter placeholders and accessible names (the AP search has no visible label)
+  // Search placeholders and accessible names (neither search has a visible label)
   apFilterInput.placeholder = t('searchAps');
   apFilterInput.setAttribute('aria-label', t('searchApsLabel'));
-  wlanFilterInput.placeholder = t('filter');
+  destinationSearchInput.placeholder = t('destinationSearch');
+  destinationSearchInput.setAttribute('aria-label', t('destinationSearchLabel'));
   renderApFilterOptions();
 
   // Icon-only buttons: tooltip + accessible name
@@ -82,9 +87,6 @@ export function applyTranslations() {
     connectBtn.textContent = t('connect');
   }
 
-  // Apply button
-  applyBtn.textContent = t('apply');
-
   // Settings modal
   settingsModalTitle.textContent = t('connectionSettings');
   labelUrl.textContent = t('controllerUrl');
@@ -100,10 +102,13 @@ export function applyTranslations() {
   cancelCertResetBtn.textContent = t('cancel');
   confirmCertResetBtn.textContent = t('certResetAction');
 
-  // Confirm modal
-  confirmModalTitle.textContent = t('confirmChange');
-  cancelConfirmBtn.textContent = t('cancel');
-  confirmConfirmBtn.textContent = t('confirm');
+  // Move dialog: review defaults (move-dialog.ts rewrites the title and the
+  // move button's label for each phase and plan)
+  moveModalTitle.textContent = t('moveReviewTitle');
+  cancelMoveBtn.textContent = t('cancel');
+  confirmMoveBtn.textContent = moveActionLabel(1);
+  retryFailedBtn.textContent = t('retryFailed');
+  closeMoveBtn.textContent = t('close');
 
   // Site selection modal (its option buttons are built per-open from the
   // controller's site names, see showSiteSelection())
@@ -122,13 +127,14 @@ export function applyTranslations() {
   statusText.title = statusText.textContent;
   renderHeaderMeta();
 
-  // Re-render dynamic content
+  // Re-render dynamic content (the move preview also writes the move
+  // button's label)
   if (state.accessPoints.length > 0 || state.wlanGroups.length > 0) {
     renderApList();
-    renderWlanList();
+    renderDestinationList();
   } else {
     showEmptyStates();
     renderApSelectionControls();
   }
-  updateSelectionInfo();
+  renderMovePreview();
 } // End of function applyTranslations()

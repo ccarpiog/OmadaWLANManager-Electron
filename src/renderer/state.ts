@@ -5,7 +5,7 @@
 
 import type { AccessPoint, GroupModel, Language, WlanGroup } from '../shared/types';
 import { GROUP_FILTER_ALL, STATUS_FILTER_ALL } from './ap-selection';
-import { apList, refreshBtn, wlanList } from './elements';
+import { apList, destinationList, refreshBtn } from './elements';
 
 // The three views of the app shell (docs/management-design.md §4.2); the
 // Access points view is the landing view
@@ -36,7 +36,10 @@ export interface RendererState {
   selectionAnchorMac: string | null;
   // The AP row whose checkbox is the list's single Tab stop (roving tabindex)
   apFocusMac: string | null;
-  selectedWlan: WlanGroup | null;
+  // The group checked in the destination pane (the move target); kept after
+  // a reload while its group still exists, cleared by a fully successful
+  // move or a disconnect
+  destinationGroup: WlanGroup | null;
   isConnected: boolean;
   // Access points list filters: search text, status filter (see
   // STATUS_FILTER_ALL in ap-selection.ts) and group filter (a group id,
@@ -44,7 +47,8 @@ export interface RendererState {
   apFilterText: string;
   apStatusFilter: string;
   apGroupFilter: string;
-  wlanFilterText: string;
+  // Destination pane search (matches group names and network names)
+  destinationSearchText: string;
   // The view the shell shows (sidebar navigation, shell.ts)
   currentView: AppView;
   // Time (ms since the epoch) of the last successful data load, shown as
@@ -68,8 +72,11 @@ export interface RendererState {
   // disconnect must not repopulate the disconnected UI.
   sessionGeneration: number;
 
-  // Per-operation in-flight flags serializing connect/disconnect/save/apply/
-  // refresh so they can never overlap (see isOperationInProgress())
+  // Per-operation in-flight flags serializing connect/disconnect/save/move/
+  // refresh so they can never overlap (see isOperationInProgress()).
+  // isApplyingChange covers a whole move flow (move-flow.ts): from opening
+  // the review dialog, through the one-AP-at-a-time run and the results
+  // (and any "Retry failed"), until the dialog closes
   isConnecting: boolean;
   isDisconnecting: boolean;
   isSavingSettings: boolean;
@@ -101,12 +108,12 @@ export const state: RendererState = {
   selectedApMacs: new Set<string>(),
   selectionAnchorMac: null,
   apFocusMac: null,
-  selectedWlan: null,
+  destinationGroup: null,
   isConnected: false,
   apFilterText: '',
   apStatusFilter: STATUS_FILTER_ALL,
   apGroupFilter: GROUP_FILTER_ALL,
-  wlanFilterText: '',
+  destinationSearchText: '',
   currentView: 'accessPoints',
   lastUpdatedAt: null,
   controllerHost: null,
@@ -127,7 +134,7 @@ export const state: RendererState = {
 
 /**
  * Reports whether any exclusive operation (connect, disconnect, settings
- * save, apply, data load, or certificate reset) is currently in flight. Used
+ * save, AP move, data load, or certificate reset) is currently in flight. Used
  * to serialize the operations: while one is pending, starting another is a
  * no-op.
  * @returns {boolean} True when an operation is in progress.
@@ -144,12 +151,13 @@ export function isOperationInProgress(): boolean {
 }
 
 /**
- * Marks both list panels as refreshing (or not): the loaded rows stay on
- * screen, dimmed and flagged aria-busy, while a refresh is in flight.
+ * Marks the AP list and the destination list as refreshing (or not): the
+ * loaded rows stay on screen, dimmed and flagged aria-busy, while a refresh
+ * is in flight.
  * @param {boolean} refreshing - True while a refresh is in flight.
  */
 export function setListsRefreshing(refreshing: boolean): void {
-  for (const list of [apList, wlanList]) {
+  for (const list of [apList, destinationList]) {
     list.classList.toggle('is-refreshing', refreshing);
     if (refreshing) {
       list.setAttribute('aria-busy', 'true');
@@ -161,7 +169,7 @@ export function setListsRefreshing(refreshing: boolean): void {
 
 /**
  * Invalidates the current session: bumps the generation token (so any
- * in-flight load or apply discards its result when it completes) and resets
+ * in-flight load or move discards its result when it completes) and resets
  * the loading indicators that a discarded operation will no longer clean up.
  * Called at the start of connect() and disconnect().
  */

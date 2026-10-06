@@ -13,7 +13,7 @@ import { createFocusTrap, updateBackgroundInert } from './modal-focus';
  * site names from the controller can never be interpreted as markup). Every
  * close path routes through a single finish() that hides the modal, removes
  * all listeners, lifts the background inertness, restores focus to the
- * opener, and resolves exactly once — same structure as showConfirm().
+ * opener, and resolves exactly once — same structure as the certificate modal.
  * @param {SiteInfo[]} sites - The (validated) authorized sites to offer.
  * @returns {Promise<string | null>} The chosen site id, or null on cancel.
  */

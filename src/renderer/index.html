@@ -77,8 +77,9 @@
 
       <div class="view-area">
         <!-- Access points view (landing view): the AP list with checkbox
-             multi-select (ap-list.ts), the group panel (wlan-list.ts) and the
-             action bar (panels.ts, apply-change.ts) -->
+             multi-select (ap-list.ts) and the always-visible destination
+             pane (destination-pane.ts), whose move button opens the review
+             dialog (move-flow.ts, move-dialog.ts) -->
         <section class="view" id="viewAccessPoints">
           <main class="main-content">
             <!-- Access points panel -->
@@ -99,21 +100,25 @@
               <p class="selection-summary" id="apSelectionSummary" aria-live="polite"></p>
             </section>
 
-            <!-- Group panel (AP groups on Omada 6.3+, WLAN groups before) -->
-            <section class="panel" aria-labelledby="wlanPanelTitle">
-              <h2 class="panel-title" id="wlanPanelTitle"></h2>
+            <!-- Destination pane: a search over group AND network names, one
+                 native radio per group (AP groups on Omada 6.3+, WLAN groups
+                 before; groups without networks pinned in the "Silence"
+                 section), the move preview and the move button -->
+            <section class="panel destination-panel" aria-labelledby="destinationPanelTitle">
+              <h2 class="panel-title" id="destinationPanelTitle"></h2>
               <div class="panel-filter">
-                <input type="text" id="wlanFilter" class="filter-input">
+                <input type="text" id="destinationSearch" class="filter-input">
               </div>
-              <div class="panel-content" id="wlanList" role="listbox"></div>
+              <div class="panel-content destination-list" id="destinationList" role="group"></div>
+              <div class="move-summary">
+                <p class="move-status" id="moveStatus" aria-live="polite"></p>
+                <div class="move-preview" id="movePreview"></div>
+              </div>
+              <div class="move-actions">
+                <button type="button" class="btn btn-success move-btn" id="moveBtn" disabled></button>
+              </div>
             </section>
           </main>
-
-          <!-- Action Bar -->
-          <footer class="action-bar">
-            <div class="selection-info" id="selectionInfo"></div>
-            <button class="btn btn-success" id="applyBtn" disabled></button>
-          </footer>
         </section>
 
         <!-- AP groups and Wi-Fi networks views: placeholders until the
@@ -184,19 +189,26 @@
     </div>
   </div>
 
-  <!-- Confirmation Modal (the question is its description; opens with focus
-       on Cancel, never on the destructive Confirm: spec §4.7) -->
-  <div class="modal-overlay" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmModalHeading" aria-describedby="confirmMessage">
-    <div class="modal modal-sm">
+  <!-- Move dialog, one per move flow, in three phases (move-dialog.ts fills
+       it): the review (the summary is its description; it opens with focus
+       on Cancel, never on the move button: spec §4.7), the progress of the
+       one-AP-at-a-time run, and the per-AP results with "Retry failed" -->
+  <div class="modal-overlay" id="moveModal" role="dialog" aria-modal="true" aria-labelledby="moveModalHeading" aria-describedby="moveModalSummary">
+    <div class="modal modal-move">
       <div class="modal-header">
-        <h2 id="confirmModalHeading"></h2>
+        <h2 id="moveModalHeading"></h2>
       </div>
       <div class="modal-body">
-        <p id="confirmMessage"></p>
+        <p class="move-modal-summary" id="moveModalSummary" tabindex="-1" aria-live="polite"></p>
+        <dl class="move-review" id="moveReview"></dl>
+        <ul class="move-results" id="moveResults" hidden></ul>
+        <div class="move-notes" id="moveNotes"></div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" id="cancelConfirmBtn"></button>
-        <button class="btn btn-primary" id="confirmConfirmBtn"></button>
+        <button type="button" class="btn btn-secondary" id="cancelMoveBtn"></button>
+        <button type="button" class="btn btn-primary" id="confirmMoveBtn"></button>
+        <button type="button" class="btn btn-secondary" id="retryFailedBtn" hidden></button>
+        <button type="button" class="btn btn-primary" id="closeMoveBtn" hidden></button>
       </div>
     </div>
   </div>

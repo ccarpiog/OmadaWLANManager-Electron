@@ -5,11 +5,13 @@
 // selection", and the selection summary ("3 selected (1 hidden by filters)")
 // announced through an aria-live region. The selection lives in
 // state.selectedApMacs and survives filtering; the pure logic is in
-// ap-selection.ts. Row clicks toggle the checkbox (an AP details pane is
-// planned for phase 14, todo.md 4.7).
+// ap-selection.ts. Every selection or filter change also refreshes the
+// destination pane's move preview (destination-pane.ts). Row clicks toggle
+// the checkbox (an AP details pane is planned for phase 14, todo.md 4.7).
 // ============================================================================
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
+import { currentApFilters, visibleApMacs } from './ap-filters';
 import {
   applySelection,
   countSelection,
@@ -22,8 +24,8 @@ import {
   planRangeSelection,
   STATUS_FILTER_ALL,
   STATUS_FILTER_UNKNOWN,
-  type ApFilters,
 } from './ap-selection';
+import { renderMovePreview } from './destination-pane';
 import { createEmptyState } from './dom-helpers';
 import {
   apFilterInput,
@@ -36,7 +38,6 @@ import {
   selectAllApsBtn,
 } from './elements';
 import { t, tFormat, tGroup, type Translations } from './i18n';
-import { updateSelectionInfo } from './panels';
 import { state } from './state';
 
 /**
@@ -80,36 +81,8 @@ function getApStatus(statusCategory: number): { className: string; labelKey: key
 } // End of function getApStatus()
 
 // ============================================================================
-// Filters
+// Filters (the current filters themselves are read by ap-filters.ts)
 // ============================================================================
-
-/**
- * Resolves the group filter (a group id, or one of the special values) to
- * the group name APs carry: null for no group filter, '' for "unassigned".
- * @returns {string | null} The group name the APs must have, or null.
- */
-function resolveGroupFilterName(): string | null {
-  if (state.apGroupFilter === GROUP_FILTER_ALL) return null;
-  if (state.apGroupFilter === GROUP_FILTER_UNASSIGNED) return '';
-  const group = state.wlanGroups.find(candidate => candidate.wlanId === state.apGroupFilter);
-  return group ? group.wlanName : null;
-}
-
-/**
- * Returns the current filters of the Access points list.
- * @returns {ApFilters} Search text, status filter and resolved group filter.
- */
-function currentApFilters(): ApFilters {
-  return { text: state.apFilterText, status: state.apStatusFilter, groupName: resolveGroupFilterName() };
-}
-
-/**
- * Returns the MACs of the APs the current filters show, in display order.
- * @returns {string[]} The visible MACs.
- */
-function visibleApMacs(): string[] {
-  return filterAccessPoints(state.accessPoints, currentApFilters()).map(ap => ap.mac);
-}
 
 /**
  * Creates one <option> element.
@@ -333,34 +306,30 @@ function focusApCheckbox(checkbox: HTMLInputElement): void {
 
 /**
  * Renders the access-point list for the current filters using DOM APIs,
- * plus the selection controls and summary. When a row's checkbox had focus,
- * focus returns to the same AP's checkbox if it is still visible (re-rendering
- * replaces every node).
+ * plus the selection controls and summary, and refreshes the move preview
+ * (which states how many moving APs the filters hide). When a row's checkbox
+ * had focus, focus returns to the same AP's checkbox if it is still visible
+ * (re-rendering replaces every node).
  */
 export function renderApList(): void {
   const active = document.activeElement;
   const focusedMac = active instanceof HTMLInputElement && apList.contains(active) ? active.dataset.mac ?? null : null;
 
+  const visible = filterAccessPoints(state.accessPoints, currentApFilters());
   if (state.accessPoints.length === 0) {
     apList.replaceChildren(createEmptyState(t('noAccessPoints')));
-    renderApSelectionControls();
-    return;
-  }
-
-  const visible = filterAccessPoints(state.accessPoints, currentApFilters());
-  if (visible.length === 0) {
+  } else if (visible.length === 0) {
     apList.replaceChildren(createNoResultsState());
-    renderApSelectionControls();
-    return;
+  } else {
+    const groupsByName = indexGroupsByName(state.wlanGroups);
+    const rows = document.createElement('ul');
+    rows.className = 'ap-rows';
+    rows.replaceChildren(...visible.map((ap, index) => createApRow(ap, index, groupsByName)));
+    apList.replaceChildren(rows);
+    applyApRovingTabindex();
   }
-
-  const groupsByName = indexGroupsByName(state.wlanGroups);
-  const rows = document.createElement('ul');
-  rows.className = 'ap-rows';
-  rows.replaceChildren(...visible.map((ap, index) => createApRow(ap, index, groupsByName)));
-  apList.replaceChildren(rows);
-  applyApRovingTabindex();
   renderApSelectionControls();
+  renderMovePreview();
 
   if (focusedMac !== null) {
     const checkbox = apList.querySelector<HTMLInputElement>(`.ap-checkbox[data-mac="${CSS.escape(focusedMac)}"]`);
@@ -420,7 +389,7 @@ export function renderApSelectionControls(): void {
 /**
  * Brings the rendered rows in line with state.selectedApMacs without
  * re-rendering them (focus stays where it is), then refreshes the selection
- * controls and the action bar.
+ * controls and the destination pane's move preview.
  */
 export function syncApSelection(): void {
   for (const row of apList.querySelectorAll<HTMLElement>('.ap-row')) {
@@ -430,7 +399,7 @@ export function syncApSelection(): void {
     if (checkbox) checkbox.checked = selected;
   }
   renderApSelectionControls();
-  updateSelectionInfo();
+  renderMovePreview();
 } // End of function syncApSelection()
 
 /**

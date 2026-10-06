@@ -1,9 +1,9 @@
 // ============================================================================
 // Modal Focus Containment (Tab focus trap + inert background), shared by the
-// settings, confirm, site-selection and certificate modals
+// settings, move, site-selection and certificate modals
 // ============================================================================
 
-import { appContainer, certModal, confirmModal, settingsModal, siteModal } from './elements';
+import { appContainer, certModal, moveModal, settingsModal, siteModal } from './elements';
 
 /**
  * Collects the keyboard-focusable elements currently inside a modal, in DOM
@@ -68,7 +68,7 @@ export function createFocusTrap(modal: HTMLElement): (e: KeyboardEvent) => void 
 export function updateBackgroundInert(): void {
   const anyModalOpen =
     settingsModal.classList.contains('visible') ||
-    confirmModal.classList.contains('visible') ||
+    moveModal.classList.contains('visible') ||
     siteModal.classList.contains('visible') ||
     certModal.classList.contains('visible');
   if (anyModalOpen) {

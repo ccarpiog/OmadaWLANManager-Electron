@@ -12,19 +12,25 @@
 //   toast.ts              toast notifications
 //   validation.ts         format guards (MAC, WLAN/site id, fingerprint),
 //                         controller-URL mirror of src/main/url.ts
-//   dom-helpers.ts        empty/loading blocks, listbox roving tabindex
-//   panels.ts             panel empty/loading states, selection info bar
+//   dom-helpers.ts        empty/loading blocks
+//   panels.ts             list empty/loading states, group vocabulary
 //   ap-selection.ts       pure AP filtering, range selection and counts
+//   ap-filters.ts         the AP list's current filters (from the state)
 //   ap-list.ts            Access points list (checkbox multi-select)
-//   wlan-list.ts          WLAN group list panel
+//   move-plan.ts          pure move planning (gains/losses, mixed
+//                         selections), destination search, move results
+//   move-text.ts          localized texts of a move plan
+//   destination-pane.ts   destination pane (group radios, search, Silence
+//                         section, move preview, move button)
 //   modal-focus.ts        modal Tab focus trap and inert background
 //   settings-modal.ts     settings modal (open/close/save, certificate reset)
-//   confirm-modal.ts      confirm modal
+//   move-dialog.ts        move review / progress / per-AP results dialog
 //   site-modal.ts         site-selection modal (multi-site controllers)
 //   cert-modal.ts         certificate first-use / "certificate changed" modal
 //   connection.ts         connect/disconnect, site selection, certificate
 //                         trust, load/refresh
-//   apply-change.ts       move the selected APs into the selected group
+//   move-flow.ts          moves the selected APs (review, sequential run,
+//                         results, Retry failed)
 // Shared types come from src/shared/types.ts (type-only imports), and the
 // window.omadaAPI bridge typing from global.d.ts.
 
@@ -35,21 +41,29 @@ import {
   renderApList,
   selectAllFilteredAps,
 } from './ap-list';
-import { applyChange } from './apply-change';
 import { applyTranslations } from './apply-translations';
 import { connect, refreshData, toggleConnection } from './connection';
+import {
+  handleDestinationChange,
+  handleDestinationSearchInput,
+  handleDestinationSearchKeydown,
+  isDestinationRadio,
+  selectDestinationForMove,
+} from './destination-pane';
 import {
   apFilterInput,
   apGroupFilterSelect,
   apList,
   apStatusFilterSelect,
-  applyBtn,
   cancelCertResetBtn,
   cancelSettingsBtn,
   clearApSelectionBtn,
   closeSettingsBtn,
   confirmCertResetBtn,
   connectBtn,
+  destinationList,
+  destinationSearchInput,
+  moveBtn,
   passwordInput,
   refreshBtn,
   resetCertBtn,
@@ -60,9 +74,9 @@ import {
   urlInput,
   usernameInput,
   viewNav,
-  wlanFilterInput,
 } from './elements';
 import { setLanguage, t } from './i18n';
+import { startMove } from './move-flow';
 import {
   cancelCertificateReset,
   closeSettings,
@@ -76,7 +90,6 @@ import { isAppView, showView } from './shell';
 import { state } from './state';
 import { setStatus } from './status';
 import { showToast } from './toast';
-import { renderWlanList } from './wlan-list';
 
 // ============================================================================
 // Event Listeners
@@ -114,15 +127,27 @@ apList.addEventListener('keydown', handleApListKeydown);
 selectAllApsBtn.addEventListener('click', selectAllFilteredAps);
 clearApSelectionBtn.addEventListener('click', clearApSelection);
 
-wlanFilterInput.addEventListener('input', () => {
-  state.wlanFilterText = wlanFilterInput.value;
-  renderWlanList();
+// Destination pane: the search (Escape clears it), the radios (delegated
+// change handler; Enter on a radio starts the move like a form's implicit
+// submission — into the FOCUSED radio's group, which becomes the checked
+// destination first; nothing happens for a no-op move — and the review
+// dialog still opens on Cancel) and the move button
+destinationSearchInput.addEventListener('input', handleDestinationSearchInput);
+destinationSearchInput.addEventListener('keydown', handleDestinationSearchKeydown);
+destinationList.addEventListener('change', handleDestinationChange);
+destinationList.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && isDestinationRadio(e.target)) {
+    e.preventDefault();
+    if (selectDestinationForMove(e.target)) {
+      startMove();
+    }
+  }
 });
+moveBtn.addEventListener('click', startMove);
 
 closeSettingsBtn.addEventListener('click', closeSettings);
 cancelSettingsBtn.addEventListener('click', closeSettings);
 saveSettingsBtn.addEventListener('click', saveSettings);
-applyBtn.addEventListener('click', applyChange);
 
 // Credentials are URL-scoped: editing the URL updates what a blank password
 // field means ("unchanged" vs "required for the new URL")
@@ -138,7 +163,7 @@ settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) closeSettings();
 });
 
-// Close the settings modal on Escape key. The confirm, site-selection and
+// Close the settings modal on Escape key. The move, site-selection and
 // certificate modals are NOT handled here: each installs its own Escape
 // listener that routes through its cancel path, so its pending promise is
 // always resolved (and they never open on top of the settings modal).
