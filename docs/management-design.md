@@ -248,3 +248,23 @@ passphrase, toggle enable while the group is empty → verify each §5 unknown �
 test group and back (restore in all cases) → unbind and delete the network → delete the group →
 confirm no `__OWM_TEST_` resources remain. Delete only by captured ids, never by name. Never use
 production groups (e.g. `zNinguna`) as test objects.
+
+## 7. Considered and dropped: several controllers and TP-Link cloud access (2026-10-06)
+
+The user's TP-Link Cloud Access portal lists three controllers, all on 6.3.0.45: "OC200 Planta 3",
+"OC200 Planta 4" (OC200 hardware) and "Omada red antigua (Proxmox)" (the software controller this app
+uses). The two OC200s are **not on the user's local network**.
+
+- TP-Link's documented Open API cloud domain (`https://euw1-omada-northbound.tplinkcloud.com`, token
+  path `/openapi/authorize/token`) does **not** know local controllers. A token request with the
+  software controller's `omadacId` (Cloud Access enabled) and fake client credentials returned
+  `{"errorCode":-7131,"msg":"Controller ID not exist."}`. That API serves TP-Link's cloud-hosted
+  Omada Central only, which matches the Home Assistant Open API integration README. The domain
+  `euw1-northbound-omada-controller.tplinkcloud.com` does not resolve.
+- The Cloud Access portal itself logs in with a TP-Link ID and proxies the web UI through undocumented
+  endpoints, which is too fragile to build on.
+- **User decision:** drop multi-controller support. The app stays **single-controller**, reached
+  directly (LAN or VPN). If this is revisited, the design was: saved controller profiles (config schema
+  v2 with migration), all secrets, site, pin and capabilities per profile, a controller switcher above
+  the site switcher, and one active connection at a time. It would fit as a new phase between the
+  Electron upgrade and TOFU pinning.
