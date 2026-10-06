@@ -4,7 +4,12 @@
 // `let`s. Nothing else in src/renderer declares module-level mutable state.
 
 import type { AccessPoint, GroupModel, Language, WlanGroup } from '../shared/types';
-import { refreshBtn } from './elements';
+import { GROUP_FILTER_ALL, STATUS_FILTER_ALL } from './ap-selection';
+import { apList, refreshBtn, wlanList } from './elements';
+
+// The three views of the app shell (docs/management-design.md §4.2); the
+// Access points view is the landing view
+export type AppView = 'accessPoints' | 'groups' | 'networks';
 
 /**
  * Shape of the renderer's mutable state (see the `state` object below).
@@ -19,14 +24,37 @@ export interface RendererState {
   // Group model and version of the controller the loaded groups come from
   // (getWlanGroups()); both null while no controller data is loaded. The
   // model picks the group vocabulary (tGroup() in i18n.ts); the version is
-  // kept for display by later views
+  // shown in the header (status.ts)
   groupModel: GroupModel | null;
   controllerVersion: string | null;
-  selectedAp: AccessPoint | null;
+  // Access points view selection: the MACs of the checked APs. It survives
+  // filtering (hidden APs stay selected) and reloads (pruned to the APs that
+  // still exist); a successful move or a disconnect clears it
+  selectedApMacs: Set<string>;
+  // Range anchor of Shift-click / Shift+Arrow selection: the AP of the last
+  // plain toggle (null = no anchor)
+  selectionAnchorMac: string | null;
+  // The AP row whose checkbox is the list's single Tab stop (roving tabindex)
+  apFocusMac: string | null;
   selectedWlan: WlanGroup | null;
   isConnected: boolean;
+  // Access points list filters: search text, status filter (see
+  // STATUS_FILTER_ALL in ap-selection.ts) and group filter (a group id,
+  // GROUP_FILTER_ALL or GROUP_FILTER_UNASSIGNED)
   apFilterText: string;
+  apStatusFilter: string;
+  apGroupFilter: string;
   wlanFilterText: string;
+  // The view the shell shows (sidebar navigation, shell.ts)
+  currentView: AppView;
+  // Time (ms since the epoch) of the last successful data load, shown as
+  // "Updated hh:mm"; null while no data is loaded. A failed refresh keeps it
+  lastUpdatedAt: number | null;
+  // Host (with port) of the connected controller, and the name of the site
+  // picked in the site-selection modal (null when the renderer does not know
+  // it: single-site controllers and remembered sites report no name)
+  controllerHost: string | null;
+  siteName: string | null;
   // True while loadData() is fetching (drives the Refresh button/spinners)
   isLoadingData: boolean;
   // True when a controller URL is stored; before first configuration the empty
@@ -70,11 +98,19 @@ export const state: RendererState = {
   wlanGroups: [],
   groupModel: null,
   controllerVersion: null,
-  selectedAp: null,
+  selectedApMacs: new Set<string>(),
+  selectionAnchorMac: null,
+  apFocusMac: null,
   selectedWlan: null,
   isConnected: false,
   apFilterText: '',
+  apStatusFilter: STATUS_FILTER_ALL,
+  apGroupFilter: GROUP_FILTER_ALL,
   wlanFilterText: '',
+  currentView: 'accessPoints',
+  lastUpdatedAt: null,
+  controllerHost: null,
+  siteName: null,
   isLoadingData: false,
   hasStoredConfig: false,
   sessionGeneration: 0,
@@ -108,6 +144,22 @@ export function isOperationInProgress(): boolean {
 }
 
 /**
+ * Marks both list panels as refreshing (or not): the loaded rows stay on
+ * screen, dimmed and flagged aria-busy, while a refresh is in flight.
+ * @param {boolean} refreshing - True while a refresh is in flight.
+ */
+export function setListsRefreshing(refreshing: boolean): void {
+  for (const list of [apList, wlanList]) {
+    list.classList.toggle('is-refreshing', refreshing);
+    if (refreshing) {
+      list.setAttribute('aria-busy', 'true');
+    } else {
+      list.removeAttribute('aria-busy');
+    }
+  }
+} // End of function setListsRefreshing()
+
+/**
  * Invalidates the current session: bumps the generation token (so any
  * in-flight load or apply discards its result when it completes) and resets
  * the loading indicators that a discarded operation will no longer clean up.
@@ -117,4 +169,5 @@ export function invalidateSession(): void {
   state.sessionGeneration++;
   state.isLoadingData = false;
   refreshBtn.classList.remove('spinning');
+  setListsRefreshing(false);
 }

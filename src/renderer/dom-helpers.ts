@@ -1,7 +1,8 @@
 // ============================================================================
-// DOM helpers for the list panels: empty/loading blocks and listbox keyboard
-// navigation (roving tabindex). Everything is built with DOM APIs, never HTML
-// strings.
+// DOM helpers for the list panels: empty/loading blocks and the group
+// listbox's keyboard navigation (roving tabindex; the Access points list uses
+// native checkboxes, see ap-list.ts). Everything is built with DOM APIs, never
+// HTML strings.
 // ============================================================================
 
 import { t } from './i18n';
@@ -42,7 +43,7 @@ export function createLoadingState(): HTMLElement {
  * previously focused element is gone; without this, a keyboard selection
  * would throw focus back to <body>. The refocused item also becomes the
  * single roving tab stop of its listbox.
- * @param {HTMLElement} listElement - The list container (apList or wlanList).
+ * @param {HTMLElement} listElement - The listbox container (wlanList).
  * @param {'mac' | 'wlanId'} dataKey - The dataset key identifying the item.
  * @param {string} value - The identifier value to look for.
  */
@@ -65,7 +66,7 @@ export function focusListItemByData(listElement: HTMLElement, dataKey: 'mac' | '
  * Applies roving tabindex to a listbox's options: the selected option (or the
  * first one when nothing is selected) is the single Tab stop (tabindex 0),
  * every other option gets tabindex -1. Called after each list render.
- * @param {HTMLElement} listElement - The listbox container (apList/wlanList).
+ * @param {HTMLElement} listElement - The listbox container (wlanList).
  */
 export function applyRovingTabindex(listElement: HTMLElement): void {
   const options = Array.from(listElement.children).filter(
@@ -83,7 +84,7 @@ export function applyRovingTabindex(listElement: HTMLElement): void {
  * Moves keyboard focus from one listbox option to its neighbor (ArrowUp/
  * ArrowDown navigation, no wrap-around). The newly focused option becomes
  * the single roving Tab stop of the listbox.
- * @param {HTMLElement} listElement - The listbox container (apList/wlanList).
+ * @param {HTMLElement} listElement - The listbox container (wlanList).
  * @param {HTMLElement} current - The option that currently has focus.
  * @param {1 | -1} direction - +1 for the next option, -1 for the previous.
  */

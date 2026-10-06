@@ -59,10 +59,21 @@ function isApEntry(entry: Record<string, unknown>): boolean {
 }
 
 /**
+ * Tells whether a raw value is a usable client count: a non-negative safe
+ * integer.
+ * @param {unknown} value - The raw `clientNum` value of a device entry.
+ * @returns {value is number} True when the value can be shown as a count.
+ */
+function isClientCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
  * Validate and normalize the raw device list returned by the controller.
  * Keeps only access points and normalizes optional display fields
- * (missing name, wlanGroup, statusCategory) so later dereferences cannot
- * crash. Required identifiers are strict: an entry that is not an object,
+ * (missing name, wlanGroup, statusCategory; `clientNum` is kept only when it
+ * is a non-negative integer, otherwise left absent) so later dereferences
+ * cannot crash. Required identifiers are strict: an entry that is not an object,
  * lacks a string `type`, or is an AP without a MAC address makes the
  * whole payload fail as unsupported instead of silently shrinking the
  * list to empty.
@@ -92,13 +103,21 @@ export function validateAccessPoints(result: unknown): AccessPoint[] {
       // The MAC is the AP's required identifier
       throw new Error('Unsupported API response (devices)');
     }
-    accessPoints.push({
+    const accessPoint: AccessPoint = {
       mac: device.mac,
       name: typeof device.name === 'string' ? device.name : device.mac,
       type: 'ap',
       wlanGroup: typeof device.wlanGroup === 'string' ? device.wlanGroup : '',
       statusCategory: typeof device.statusCategory === 'number' ? device.statusCategory : 0
-    });
+    };
+    // Optional display field: the number of connected clients (`clientNum`,
+    // as the Open API device list documents it; not verified live on the
+    // internal list — design spec D4). Kept only as a non-negative safe
+    // integer; any other value leaves the field absent (unknown)
+    if (isClientCount(device.clientNum)) {
+      accessPoint.clientNum = device.clientNum;
+    }
+    accessPoints.push(accessPoint);
   } // End of the loop that validates each device entry
 
   return accessPoints;

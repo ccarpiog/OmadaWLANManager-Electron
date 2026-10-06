@@ -271,8 +271,17 @@ async function runEndToEnd(binary, certDir, fingerprintA, fingerprintB) {
      * @returns {Promise<void>}
      */
     const waitForStatus = (text) => page.waitForFunction((expected) => document.getElementById('statusText')?.textContent === expected, text, { timeout: WAIT_MS });
+    /**
+     * Waits until the header shows the connected state for the given
+     * controller host (green indicator; the host sits next to the status).
+     * @param {string} expectedHost - Expected controller host.
+     * @returns {Promise<void>}
+     */
+    const waitForConnected = (expectedHost) => page.waitForFunction((expected) =>
+      document.getElementById('statusIndicator')?.classList.contains('connected') &&
+      document.getElementById('controllerHost')?.textContent === expected, expectedHost, { timeout: WAIT_MS });
     /** @returns {Promise<void>} Resolves when the AP list has rows. */
-    const waitForAps = () => page.waitForFunction(() => document.querySelectorAll('#apList .list-item').length > 0, null, { timeout: WAIT_MS });
+    const waitForAps = () => page.waitForFunction(() => document.querySelectorAll('#apList .ap-row').length > 0, null, { timeout: WAIT_MS });
 
     await check('[e2e] startup auto-connect: first-use dialog shows the controller host and certificate A\'s openssl fingerprint; the controller received NO HTTP request (no login POST)', async () => {
       await waitForModal();
@@ -295,7 +304,7 @@ async function runEndToEnd(binary, certDir, fingerprintA, fingerprintB) {
 
     await check('[e2e] "Trust and connect": connected with lists; the first request is /api/info, exactly one login POST carries the configured password, and the pin is persisted', async () => {
       await page.click('#confirmCertBtn');
-      await waitForStatus(host);
+      await waitForConnected(host);
       await waitForAps();
       const config = readConfig();
       return verdict(
@@ -329,7 +338,7 @@ async function runEndToEnd(binary, certDir, fingerprintA, fingerprintB) {
 
     await check('[e2e] trusting again reconnects and re-pins certificate A', async () => {
       await page.click('#confirmCertBtn');
-      await waitForStatus(host);
+      await waitForConnected(host);
       await waitForAps();
       return verdict(readConfig().certificatePin?.sha256 === fingerprintA, readConfig().certificatePin);
     });

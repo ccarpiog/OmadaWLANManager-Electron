@@ -20,6 +20,34 @@
       ]
     },
     {
+      "name": "optional clientNum: kept only as a non-negative integer, otherwise left absent",
+      "result": [
+        { "type": "ap", "mac": "AA-BB-CC-00-22-01", "name": "Aula 1", "wlanGroup": "Default", "statusCategory": 1, "clientNum": 12 },
+        { "type": "ap", "mac": "AA-BB-CC-00-22-02", "name": "Aula 2", "wlanGroup": "Default", "statusCategory": 1, "clientNum": 0 },
+        { "type": "ap", "mac": "AA-BB-CC-00-22-03", "name": "Aula 3", "wlanGroup": "Default", "statusCategory": 1, "clientNum": -1 },
+        { "type": "ap", "mac": "AA-BB-CC-00-22-04", "name": "Aula 4", "wlanGroup": "Default", "statusCategory": 1, "clientNum": "7" },
+        { "type": "ap", "mac": "AA-BB-CC-00-22-05", "name": "Aula 5", "wlanGroup": "Default", "statusCategory": 1, "clientNum": 2.5 },
+        { "type": "ap", "mac": "AA-BB-CC-00-22-06", "name": "Aula 6", "wlanGroup": "Default", "statusCategory": 1, "clientNum": null },
+        { "type": "ap", "mac": "AA-BB-CC-00-22-07", "name": "Aula 7", "wlanGroup": "Default", "statusCategory": 1, "clientNum": 1e300 },
+        { "type": "ap", "mac": "AA-BB-CC-00-22-08", "name": "Aula 8", "wlanGroup": "Default", "statusCategory": 1 }
+      ],
+      "expected": [
+        { "mac": "AA-BB-CC-00-22-01", "name": "Aula 1", "type": "ap", "wlanGroup": "Default", "statusCategory": 1, "clientNum": 12 },
+        { "mac": "AA-BB-CC-00-22-02", "name": "Aula 2", "type": "ap", "wlanGroup": "Default", "statusCategory": 1, "clientNum": 0 },
+        { "mac": "AA-BB-CC-00-22-03", "name": "Aula 3", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
+        { "mac": "AA-BB-CC-00-22-04", "name": "Aula 4", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
+        { "mac": "AA-BB-CC-00-22-05", "name": "Aula 5", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
+        { "mac": "AA-BB-CC-00-22-06", "name": "Aula 6", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
+        { "mac": "AA-BB-CC-00-22-07", "name": "Aula 7", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
+        { "mac": "AA-BB-CC-00-22-08", "name": "Aula 8", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 }
+      ]
+    },
+    {
+      "name": "a malformed optional clientNum never fails the payload",
+      "result": [{ "type": "ap", "mac": "AA-BB-CC-00-22-09", "clientNum": { "count": 3 } }],
+      "expected": [{ "mac": "AA-BB-CC-00-22-09", "name": "AA-BB-CC-00-22-09", "type": "ap", "wlanGroup": "", "statusCategory": 0 }]
+    },
+    {
       "name": "empty name is kept (only a non-string name falls back to the MAC)",
       "result": [{ "type": "ap", "mac": "AA-BB-CC-00-11-77", "name": "", "wlanGroup": "Default", "statusCategory": 0 }],
       "expected": [{ "mac": "AA-BB-CC-00-11-77", "name": "", "type": "ap", "wlanGroup": "Default", "statusCategory": 0 }]

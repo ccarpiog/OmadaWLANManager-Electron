@@ -35,29 +35,37 @@ import {
   statusText,
   wlanFilterInput,
 } from './elements';
-import { renderApList } from './ap-list';
+import { renderApFilterOptions, renderApList, renderApSelectionControls } from './ap-list';
 import { t } from './i18n';
 import { applyGroupVocabulary, showEmptyStates, updateSelectionInfo } from './panels';
+import { applyShellTranslations } from './shell';
 import { state } from './state';
+import { renderHeaderMeta } from './status';
 import { renderWlanList } from './wlan-list';
 
 /**
  * Writes every user-facing string of the static UI (titles, labels, button
  * texts, placeholders, accessible names) in the active language, then
- * re-renders the lists (or the empty states) and the selection info so the
- * dynamic content follows the language too. Called at startup and after a
- * settings save that may have changed the language.
+ * re-renders the shell (sidebar, header details), the filter options, the
+ * lists (or the empty states) and the selection info so the dynamic content
+ * follows the language too. Called at startup and after a settings save that
+ * may have changed the language.
  */
 export function applyTranslations() {
-  // Panel titles and listbox labels for the (keyboard-navigable) list
-  // panels; the group panel's follow the controller's group model
+  // App shell: sidebar entries and counts, Settings entry, placeholder views
+  applyShellTranslations();
+
+  // Panel titles and list labels for the (keyboard-navigable) list panels;
+  // the group panel's follow the controller's group model
   apPanelTitle.textContent = t('accessPoints');
   apList.setAttribute('aria-label', t('accessPoints'));
   applyGroupVocabulary();
 
-  // Filter placeholders
-  apFilterInput.placeholder = t('filter');
+  // Filter placeholders and accessible names (the AP search has no visible label)
+  apFilterInput.placeholder = t('searchAps');
+  apFilterInput.setAttribute('aria-label', t('searchApsLabel'));
   wlanFilterInput.placeholder = t('filter');
+  renderApFilterOptions();
 
   // Icon-only buttons: tooltip + accessible name
   settingsBtn.title = t('settings');
@@ -109,10 +117,10 @@ export function applyTranslations() {
   cancelCertBtn.textContent = t('cancel');
   confirmCertBtn.textContent = t('certTrustAndConnect');
 
-  // Status text (depends on state)
-  if (!state.isConnected) {
-    statusText.textContent = t('disconnected');
-  }
+  // Status text (depends on state) and the header details
+  statusText.textContent = state.isConnected ? t('connected') : t('disconnected');
+  statusText.title = statusText.textContent;
+  renderHeaderMeta();
 
   // Re-render dynamic content
   if (state.accessPoints.length > 0 || state.wlanGroups.length > 0) {
@@ -120,6 +128,7 @@ export function applyTranslations() {
     renderWlanList();
   } else {
     showEmptyStates();
+    renderApSelectionControls();
   }
   updateSelectionInfo();
 } // End of function applyTranslations()

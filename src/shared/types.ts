@@ -41,13 +41,17 @@ export interface ConfigSaveResult {
   connectionReset?: boolean;
 }
 
-// Access Point data from Omada API
+// Access Point data from Omada API. `clientNum` (optional) is the number of
+// clients connected to the AP, present only when the controller's device
+// entry carries it as a non-negative integer (absent = unknown; the UI then
+// shows no client count).
 export interface AccessPoint {
   mac: string;
   name: string;
   type: string;
   wlanGroup: string;
   statusCategory: number;
+  clientNum?: number;
 }
 
 // A group access points are assigned to: an AP group on Omada 6.3+, a WLAN

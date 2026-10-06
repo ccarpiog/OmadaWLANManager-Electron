@@ -9,17 +9,25 @@
 </head>
 <body class="pre-init">
   <!-- All user-facing text is intentionally absent from this file: it is
-       filled in by applyTranslations() (renderer.ts). The pre-init class
-       (styles.css) keeps the shell invisible until init() has applied the
-       translations, so users never see empty headings/buttons or a flash
-       of the wrong language -->
+       filled in by applyTranslations() (apply-translations.ts) and the view
+       renderers. The pre-init class (styles.css) keeps the shell invisible
+       until init() (renderer.ts) has applied the translations, so users never
+       see empty headings/buttons or a flash of the wrong language -->
   <div class="app-container">
-    <!-- Title Bar (for macOS hidden title bar style) -->
+    <!-- Header bar (macOS hidden title bar style): site and controller,
+         connection state, last update, controller version, Refresh and
+         Connect (status.ts fills the dynamic parts) -->
     <header class="title-bar">
       <div class="title-bar-drag"></div>
+      <div class="header-context">
+        <span class="site-name" id="siteName" hidden></span>
+        <span class="controller-host" id="controllerHost" hidden></span>
+      </div>
       <div class="status-section">
         <span class="status-indicator" id="statusIndicator"></span>
         <span class="status-text" id="statusText"></span>
+        <span class="status-meta last-updated" id="lastUpdated" hidden></span>
+        <span class="status-meta controller-version" id="controllerVersion" hidden></span>
       </div>
       <div class="header-actions">
         <button class="btn btn-icon" id="refreshBtn" disabled>
@@ -28,42 +36,98 @@
             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
           </svg>
         </button>
-        <button class="btn btn-icon" id="settingsBtn">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-          </svg>
-        </button>
         <button class="btn btn-primary" id="connectBtn"></button>
       </div>
     </header>
 
-    <!-- Main Content -->
-    <main class="main-content">
-      <!-- Access Points Panel -->
-      <section class="panel">
-        <h2 class="panel-title"></h2>
-        <div class="panel-filter">
-          <input type="text" id="apFilter" class="filter-input">
+    <div class="app-body">
+      <!-- Sidebar: the three views with their total counts, Settings at the
+           bottom (shell.ts) -->
+      <nav class="sidebar" id="viewNav">
+        <ul class="nav-list">
+          <li>
+            <button type="button" class="nav-item" id="navAccessPoints" data-view="accessPoints" aria-current="page">
+              <span class="nav-label"></span>
+              <span class="nav-count" hidden></span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-item" id="navGroups" data-view="groups">
+              <span class="nav-label"></span>
+              <span class="nav-count" hidden></span>
+            </button>
+          </li>
+          <li>
+            <button type="button" class="nav-item" id="navNetworks" data-view="networks">
+              <span class="nav-label"></span>
+              <span class="nav-count" hidden></span>
+            </button>
+          </li>
+        </ul>
+        <div class="sidebar-footer">
+          <button type="button" class="nav-item nav-settings" id="settingsBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            <span class="nav-label"></span>
+          </button>
         </div>
-        <div class="panel-content" id="apList" role="listbox"></div>
-      </section>
+      </nav>
 
-      <!-- WLAN Groups Panel -->
-      <section class="panel">
-        <h2 class="panel-title"></h2>
-        <div class="panel-filter">
-          <input type="text" id="wlanFilter" class="filter-input">
-        </div>
-        <div class="panel-content" id="wlanList" role="listbox"></div>
-      </section>
-    </main>
+      <div class="view-area">
+        <!-- Access points view (landing view): the AP list with checkbox
+             multi-select (ap-list.ts), the group panel (wlan-list.ts) and the
+             action bar (panels.ts, apply-change.ts) -->
+        <section class="view" id="viewAccessPoints">
+          <main class="main-content">
+            <!-- Access points panel -->
+            <section class="panel ap-panel" aria-labelledby="apPanelTitle">
+              <h2 class="panel-title" id="apPanelTitle"></h2>
+              <div class="panel-filter ap-filters">
+                <input type="text" id="apFilter" class="filter-input">
+                <div class="filter-row">
+                  <select id="apStatusFilter" class="filter-select"></select>
+                  <select id="apGroupFilter" class="filter-select"></select>
+                </div>
+              </div>
+              <div class="selection-toolbar" id="apSelectionToolbar" hidden>
+                <button type="button" class="btn btn-link" id="selectAllApsBtn"></button>
+                <button type="button" class="btn btn-link" id="clearApSelectionBtn"></button>
+              </div>
+              <div class="panel-content" id="apList" role="group"></div>
+              <p class="selection-summary" id="apSelectionSummary" aria-live="polite"></p>
+            </section>
 
-    <!-- Action Bar -->
-    <footer class="action-bar">
-      <div class="selection-info" id="selectionInfo"></div>
-      <button class="btn btn-success" id="applyBtn" disabled></button>
-    </footer>
+            <!-- Group panel (AP groups on Omada 6.3+, WLAN groups before) -->
+            <section class="panel" aria-labelledby="wlanPanelTitle">
+              <h2 class="panel-title" id="wlanPanelTitle"></h2>
+              <div class="panel-filter">
+                <input type="text" id="wlanFilter" class="filter-input">
+              </div>
+              <div class="panel-content" id="wlanList" role="listbox"></div>
+            </section>
+          </main>
+
+          <!-- Action Bar -->
+          <footer class="action-bar">
+            <div class="selection-info" id="selectionInfo"></div>
+            <button class="btn btn-success" id="applyBtn" disabled></button>
+          </footer>
+        </section>
+
+        <!-- AP groups and Wi-Fi networks views: placeholders until the
+             read-only views arrive (todo.md 4.7, phase 14) -->
+        <section class="view view-placeholder" id="viewGroups" aria-labelledby="viewGroupsTitle" hidden>
+          <h2 id="viewGroupsTitle"></h2>
+          <p id="viewGroupsText"></p>
+        </section>
+        <section class="view view-placeholder" id="viewNetworks" aria-labelledby="viewNetworksTitle" hidden>
+          <h2 id="viewNetworksTitle"></h2>
+          <p id="viewNetworksText"></p>
+        </section>
+      </div>
+    </div>
   </div>
 
   <!-- Settings Modal -->
@@ -120,8 +184,9 @@
     </div>
   </div>
 
-  <!-- Confirmation Modal -->
-  <div class="modal-overlay" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmModalHeading">
+  <!-- Confirmation Modal (the question is its description; opens with focus
+       on Cancel, never on the destructive Confirm: spec §4.7) -->
+  <div class="modal-overlay" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmModalHeading" aria-describedby="confirmMessage">
     <div class="modal modal-sm">
       <div class="modal-header">
         <h2 id="confirmModalHeading"></h2>
@@ -137,7 +202,7 @@
   </div>
 
   <!-- Site Selection Modal (multi-site controllers: the user picks which
-       site to manage; renderer.ts fills the list with one button per site) -->
+       site to manage; site-modal.ts fills the list with one button per site) -->
   <div class="modal-overlay" id="siteModal" role="dialog" aria-modal="true" aria-labelledby="siteModalHeading">
     <div class="modal modal-sm">
       <div class="modal-header">

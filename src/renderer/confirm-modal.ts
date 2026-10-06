@@ -7,7 +7,12 @@ import { createFocusTrap, updateBackgroundInert } from './modal-focus';
 
 /**
  * Shows the confirm modal with the given message and resolves with the user's
- * choice. Confirm, Cancel, and Escape all route through a single finish()
+ * choice. The modal opens with keyboard focus on Cancel, never on the
+ * destructive Confirm (docs/management-design.md §4.7): an Enter meant for
+ * the opener (e.g. a second Enter after Enter on Apply) cancels instead of
+ * committing, and confirming takes a deliberate Tab to Confirm. The message
+ * is the dialog's description (`aria-describedby` in index.html).
+ * Confirm, Cancel, and Escape all route through a single finish()
  * function that hides the modal, removes every listener (including the Escape
  * and focus-trap ones), restores focus to the opener, and resolves exactly
  * once — so no stale listeners or pending promises can leak.
@@ -66,7 +71,8 @@ export function showConfirm(message: string): Promise<boolean> {
     document.addEventListener('keydown', handleEscape);
     document.addEventListener('keydown', focusTrap);
 
-    // Move keyboard focus into the modal (Enter confirms, Escape cancels)
-    confirmConfirmBtn.focus();
+    // Move keyboard focus into the modal onto Cancel, the safe default:
+    // Enter or Escape cancels; Tab reaches Confirm (the trap wraps around)
+    cancelConfirmBtn.focus();
   });
 } // End of function showConfirm()

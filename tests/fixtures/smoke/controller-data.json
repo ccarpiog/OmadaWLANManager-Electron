@@ -1,14 +1,14 @@
 {
-  "description": "Data the stubbed main process (tests/smoke/stub-main.cjs) serves over IPC, in the DTO shapes the real handlers return (src/shared/types.ts). `wlanGroups` is the group list of an Omada 6.3 controller (`controllerVersion`) as OmadaController.getWlanGroups() returns it after joining setting/wlans with setting/ssids, so it includes AP groups without Wi-Fi networks (zNinguna, Exterior). `legacyWlanGroups` is the list of a pre-6.3 controller (`legacyControllerVersion`). The stub sorts by name like OmadaController does and derives the group model from the version with the real rule. One AP and one group carry malformed ids on purpose: the renderer must drop them (src/renderer/connection.ts loadData()). Every id, MAC and name is made up.",
+  "description": "Data the stubbed main process (tests/smoke/stub-main.cjs) serves over IPC, in the DTO shapes the real handlers return (src/shared/types.ts). `wlanGroups` is the group list of an Omada 6.3 controller (`controllerVersion`) as OmadaController.getWlanGroups() returns it after joining setting/wlans with setting/ssids, so it includes AP groups without Wi-Fi networks (zNinguna, Exterior). `legacyWlanGroups` is the list of a pre-6.3 controller (`legacyControllerVersion`). The stub sorts by name like OmadaController does and derives the group model from the version with the real rule. One AP and one group carry malformed ids on purpose: the renderer must drop them (src/renderer/connection.ts loadData()). `clientNum` is optional (absent = unknown); the negative one must be dropped at the renderer boundary. Every id, MAC and name is made up.",
   "controllerVersion": "6.3.0.45",
   "legacyControllerVersion": "5.15.24.18",
   "accessPoints": [
-    { "mac": "AA-BB-CC-00-11-22", "name": "Salón", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
-    { "mac": "AA-BB-CC-00-11-33", "name": "EAP Carpio", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
-    { "mac": "AA-BB-CC-00-11-44", "name": "Altillo", "type": "ap", "wlanGroup": "zGrupo B", "statusCategory": 3 },
+    { "mac": "AA-BB-CC-00-11-22", "name": "Salón", "type": "ap", "wlanGroup": "Default", "statusCategory": 1, "clientNum": 12 },
+    { "mac": "AA-BB-CC-00-11-33", "name": "EAP Carpio", "type": "ap", "wlanGroup": "Default", "statusCategory": 1, "clientNum": 1 },
+    { "mac": "AA-BB-CC-00-11-44", "name": "Altillo", "type": "ap", "wlanGroup": "zGrupo B", "statusCategory": 3, "clientNum": 0 },
     { "mac": "AA-BB-CC-00-11-55", "name": "Bodega", "type": "ap", "wlanGroup": "", "statusCategory": 0 },
-    { "mac": "AA-BB-CC-00-11-66", "name": "Garaje", "type": "ap", "wlanGroup": "Default", "statusCategory": 2 },
-    { "mac": "AA-BB-CC-00-11-77", "name": "Jardín", "type": "ap", "wlanGroup": "Default", "statusCategory": 4 },
+    { "mac": "AA-BB-CC-00-11-66", "name": "Garaje", "type": "ap", "wlanGroup": "Default", "statusCategory": 2, "clientNum": -4 },
+    { "mac": "AA-BB-CC-00-11-77", "name": "Jardín", "type": "ap", "wlanGroup": "zNinguna", "statusCategory": 4, "clientNum": 3 },
     { "mac": "AA-BB-CC-00-11-88", "name": "Porche", "type": "ap", "wlanGroup": "Default", "statusCategory": 9 },
     { "mac": "not-a-mac", "name": "Intruso", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 }
   ],

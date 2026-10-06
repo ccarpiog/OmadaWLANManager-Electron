@@ -11,17 +11,47 @@ export const statusText = document.getElementById('statusText') as HTMLElement;
 export const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement;
 export const refreshBtn = document.getElementById('refreshBtn') as HTMLButtonElement;
 export const settingsBtn = document.getElementById('settingsBtn') as HTMLButtonElement;
+export const settingsBtnLabel = settingsBtn.querySelector('.nav-label') as HTMLElement;
 export const toastContainer = document.getElementById('toastContainer') as HTMLElement;
+
+// Header bar: site and controller host, last update, controller version
+export const siteNameText = document.getElementById('siteName') as HTMLElement;
+export const controllerHostText = document.getElementById('controllerHost') as HTMLElement;
+export const lastUpdatedText = document.getElementById('lastUpdated') as HTMLElement;
+export const controllerVersionText = document.getElementById('controllerVersion') as HTMLElement;
+
+// Sidebar navigation (one button per view) and the view containers
+export const viewNav = document.getElementById('viewNav') as HTMLElement;
+export const navAccessPointsBtn = document.getElementById('navAccessPoints') as HTMLButtonElement;
+export const navGroupsBtn = document.getElementById('navGroups') as HTMLButtonElement;
+export const navNetworksBtn = document.getElementById('navNetworks') as HTMLButtonElement;
+export const viewAccessPoints = document.getElementById('viewAccessPoints') as HTMLElement;
+export const viewGroups = document.getElementById('viewGroups') as HTMLElement;
+export const viewNetworks = document.getElementById('viewNetworks') as HTMLElement;
+export const viewGroupsTitle = document.getElementById('viewGroupsTitle') as HTMLElement;
+export const viewGroupsText = document.getElementById('viewGroupsText') as HTMLElement;
+export const viewNetworksTitle = document.getElementById('viewNetworksTitle') as HTMLElement;
+export const viewNetworksText = document.getElementById('viewNetworksText') as HTMLElement;
+
+// Access points panel: list, filters, selection toolbar and summary
 export const apList = document.getElementById('apList') as HTMLElement;
-export const wlanList = document.getElementById('wlanList') as HTMLElement;
 export const apFilterInput = document.getElementById('apFilter') as HTMLInputElement;
+export const apStatusFilterSelect = document.getElementById('apStatusFilter') as HTMLSelectElement;
+export const apGroupFilterSelect = document.getElementById('apGroupFilter') as HTMLSelectElement;
+export const apSelectionToolbar = document.getElementById('apSelectionToolbar') as HTMLElement;
+export const selectAllApsBtn = document.getElementById('selectAllApsBtn') as HTMLButtonElement;
+export const clearApSelectionBtn = document.getElementById('clearApSelectionBtn') as HTMLButtonElement;
+export const apSelectionSummary = document.getElementById('apSelectionSummary') as HTMLElement;
+
+// Group panel and the action bar
+export const wlanList = document.getElementById('wlanList') as HTMLElement;
 export const wlanFilterInput = document.getElementById('wlanFilter') as HTMLInputElement;
 export const selectionInfo = document.getElementById('selectionInfo') as HTMLElement;
 export const applyBtn = document.getElementById('applyBtn') as HTMLButtonElement;
 
 // Panel titles
-export const apPanelTitle = document.querySelector('.panel:first-child .panel-title') as HTMLElement;
-export const wlanPanelTitle = document.querySelector('.panel:last-child .panel-title') as HTMLElement;
+export const apPanelTitle = document.getElementById('apPanelTitle') as HTMLElement;
+export const wlanPanelTitle = document.getElementById('wlanPanelTitle') as HTMLElement;
 
 // Settings Modal
 export const settingsModal = document.getElementById('settingsModal') as HTMLElement;

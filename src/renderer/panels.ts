@@ -1,22 +1,28 @@
 // ============================================================================
 // Panel states: the empty/loading blocks shown in both list panels and the
-// selection info bar (with the Apply button) in the footer.
+// selection info bar (with the Apply button) in the footer of the Access
+// points view.
 // ============================================================================
 
+import { selectedAccessPoints } from './ap-selection';
 import { apList, applyBtn, selectionInfo, wlanList, wlanPanelTitle } from './elements';
 import { createEmptyState, createLoadingState } from './dom-helpers';
-import { t, tGroup } from './i18n';
+import { t, tFormat, tGroup } from './i18n';
+import { applyShellVocabulary } from './shell';
 import { state } from './state';
 
 /**
  * Rebuilds the selection info bar with DOM APIs (no HTML strings, no inline
  * style attributes — muted parts use the .muted-text CSS class, which keeps
  * the CSP free of style-src 'unsafe-inline') and enables the Apply button
- * only when both an AP and a group are selected. The group wording follows
- * the controller's group model (tGroup()).
+ * only when at least one AP (the checkbox selection, including APs hidden by
+ * the filters) and a group are selected, and no move is running. One AP is
+ * named; several show their count. The group wording follows the
+ * controller's group model (tGroup()).
  */
 export function updateSelectionInfo(): void {
-  if (!state.selectedAp && !state.selectedWlan) {
+  const selectedAps = selectedAccessPoints(state.accessPoints, state.selectedApMacs);
+  if (selectedAps.length === 0 && !state.selectedWlan) {
     const placeholder = document.createElement('span');
     placeholder.className = 'selection-placeholder';
     placeholder.textContent = tGroup('selectApAndGroup');
@@ -29,9 +35,12 @@ export function updateSelectionInfo(): void {
   detail.className = 'selection-detail';
 
   const apPart = document.createElement('span');
-  if (state.selectedAp) {
+  if (selectedAps.length === 1) {
     apPart.className = 'ap-name';
-    apPart.textContent = state.selectedAp.name;
+    apPart.textContent = selectedAps[0].name;
+  } else if (selectedAps.length > 1) {
+    apPart.className = 'ap-name';
+    apPart.textContent = tFormat('selectedApsCount', { count: String(selectedAps.length) });
   } else {
     apPart.className = 'muted-text';
     apPart.textContent = t('selectAp');
@@ -55,7 +64,7 @@ export function updateSelectionInfo(): void {
   detail.appendChild(wlanPart);
   selectionInfo.replaceChildren(detail);
 
-  applyBtn.disabled = !(state.selectedAp && state.selectedWlan);
+  applyBtn.disabled = !(selectedAps.length > 0 && state.selectedWlan) || state.isApplyingChange;
 } // End of function updateSelectionInfo()
 
 /**
@@ -83,14 +92,15 @@ export function showEmptyStates(): void {
 } // End of function showEmptyStates()
 
 /**
- * Writes the group panel's title and the group list's accessible name in the
- * vocabulary of the current group model ("AP groups" on Omada 6.3+, "WLAN
- * groups (legacy)" before — see tGroup()). Called by applyTranslations() and
- * whenever state.groupModel changes (loadData() and clearData() in
- * connection.ts).
+ * Writes the group panel's title, the group list's accessible name and the
+ * shell's group texts (sidebar entry, placeholder view) in the vocabulary of
+ * the current group model ("AP groups" on Omada 6.3+, "WLAN groups (legacy)"
+ * before — see tGroup()). Called by applyTranslations() and whenever
+ * state.groupModel changes (loadData() and clearData() in connection.ts).
  */
 export function applyGroupVocabulary(): void {
   const title = tGroup('groupsTitle');
   wlanPanelTitle.textContent = title;
   wlanList.setAttribute('aria-label', title);
+  applyShellVocabulary();
 }

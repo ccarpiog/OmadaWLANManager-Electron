@@ -91,6 +91,12 @@ function defaultScenario() {
     wlanGroups: [],
     // Value OMADA_SET_WLAN resolves with (the real handler resolves true or throws)
     setWlanResult: true,
+    // MACs whose OMADA_SET_WLAN resolves false whatever setWlanResult says
+    // (a partially failing bulk move)
+    setWlanFailMacs: [],
+    // IPC channels that throw a simulated controller error (e.g. a refresh
+    // that fails: ['omada:get-aps'])
+    failChannels: [],
     // When set, CONFIG_SAVE returns this verbatim instead of applying the real rules
     saveResult: null,
     // Optional per-channel response delays in ms, e.g. { 'omada:get-aps': 400 }
@@ -384,6 +390,9 @@ const handlers = {
     if (!stub.connected) {
       throw new Error('Not connected to the controller');
     }
+    if ((stub.scenario.setWlanFailMacs || []).includes(mac)) {
+      return false;
+    }
     if (stub.scenario.setWlanResult === true) {
       const group = stub.scenario.wlanGroups.find((candidate) => candidate.wlanId === wlanId);
       const accessPoint = stub.scenario.accessPoints.find((candidate) => candidate.mac === mac);
@@ -505,6 +514,9 @@ for (const channel of channelValues) {
     const delay = stub.scenario.delays[channel];
     if (typeof delay === 'number' && delay > 0) {
       await sleep(delay);
+    }
+    if ((stub.scenario.failChannels || []).includes(channel)) {
+      throw new Error('Simulated controller failure');
     }
     return handlers[channel](...args);
   }); // End of the generic IPC handler wrapper

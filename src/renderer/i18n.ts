@@ -98,9 +98,51 @@ export interface Translations {
   certResetAction: string;
   certResetDone: string;
   certResetError: string;
-  // AP status categories (see AP_STATUS in ap-list.ts). Shown as the
-  // accessible name of the status dot, so the state is not conveyed by colour
-  // alone.
+  // App shell (shell.ts, status.ts): the sidebar views, the placeholder of
+  // the views that arrive in a later version, and the header details
+  wifiNetworks: string;
+  viewNavLabel: string;
+  viewComingSoon: string;
+  siteLabel: string;
+  updatedAt: string;
+  refreshing: string;
+  controllerVersionLabel: string;
+  controllerVersionTitle: string;
+  controllerHostTitle: string;
+  // Access points list (ap-list.ts): filters, selection controls, the
+  // selection summary ("3 selected (1 hidden by filters)") and the row details
+  searchAps: string;
+  searchApsLabel: string;
+  statusFilterLabel: string;
+  statusFilterAll: string;
+  groupFilterLabel: string;
+  groupFilterAll: string;
+  noMatchingAps: string;
+  clearFilters: string;
+  selectAllAps: string;
+  selectAllApsFiltered: string;
+  selectOneAp: string;
+  selectOneApFiltered: string;
+  clearSelection: string;
+  selectionNone: string;
+  selectionOne: string;
+  selectionMany: string;
+  hiddenByFiltersOne: string;
+  hiddenByFiltersMany: string;
+  selectedApsCount: string;
+  networkCountOne: string;
+  networkCountMany: string;
+  networkCountNone: string;
+  clientCountOne: string;
+  clientCountMany: string;
+  // Moving several selected APs (apply-change.ts)
+  confirmAssignMany: string;
+  applyingProgress: string;
+  changeAppliedMany: string;
+  changePartial: string;
+  // AP status categories (see AP_STATUS in ap-list.ts). Shown as text next to
+  // the coloured dot of each AP row and as the status filter's options, so
+  // the state is not conveyed by colour alone.
   statusApConnected: string;
   statusApPending: string;
   statusApHeartbeatMissed: string;
@@ -124,9 +166,9 @@ const translations: Record<Language, Translations> = {
     cancel: 'Cancelar',
     confirm: 'Confirmar',
     settings: 'Ajustes',
-    accessPoints: 'Access Points',
-    noAccessPoints: 'No hay access points disponibles',
-    connectToSeeAPs: 'Conecta al controlador para ver los access points',
+    accessPoints: 'Puntos de acceso',
+    noAccessPoints: 'No hay puntos de acceso disponibles',
+    connectToSeeAPs: 'Conecta al controlador para ver los puntos de acceso',
     noResultsFor: 'No hay resultados para',
     selectAp: 'Selecciona un AP',
     unassigned: 'Sin asignar',
@@ -192,6 +234,43 @@ const translations: Record<Language, Translations> = {
     certResetAction: 'Restablecer',
     certResetDone: 'Certificado de confianza restablecido',
     certResetError: 'No se pudo restablecer el certificado de confianza',
+    wifiNetworks: 'Redes Wi-Fi',
+    viewNavLabel: 'Vistas',
+    viewComingSoon: 'Esta vista llegará en una versión posterior. Mientras tanto, mueve los puntos de acceso entre grupos desde la vista Puntos de acceso.',
+    siteLabel: 'Sitio: {site}',
+    updatedAt: 'Actualizado {time}',
+    refreshing: 'Actualizando…',
+    controllerVersionLabel: 'Omada {version}',
+    controllerVersionTitle: 'Versión del controlador',
+    controllerHostTitle: 'Controlador',
+    searchAps: 'Buscar AP…',
+    searchApsLabel: 'Buscar puntos de acceso',
+    statusFilterLabel: 'Filtrar por estado',
+    statusFilterAll: 'Todos los estados',
+    groupFilterLabel: 'Filtrar por grupo',
+    groupFilterAll: 'Todos los grupos',
+    noMatchingAps: 'Ningún punto de acceso coincide con los filtros',
+    clearFilters: 'Borrar filtros',
+    selectAllAps: 'Seleccionar los {count} AP',
+    selectAllApsFiltered: 'Seleccionar los {count} AP filtrados',
+    selectOneAp: 'Seleccionar el AP',
+    selectOneApFiltered: 'Seleccionar el AP filtrado',
+    clearSelection: 'Borrar selección',
+    selectionNone: 'Ningún AP seleccionado',
+    selectionOne: '1 seleccionado',
+    selectionMany: '{count} seleccionados',
+    hiddenByFiltersOne: '1 oculto por los filtros',
+    hiddenByFiltersMany: '{count} ocultos por los filtros',
+    selectedApsCount: '{count} AP seleccionados',
+    networkCountOne: '1 red',
+    networkCountMany: '{count} redes',
+    networkCountNone: 'Sin redes',
+    clientCountOne: '1 cliente',
+    clientCountMany: '{count} clientes',
+    confirmAssignMany: '¿Asignar "{wlan}" a {count} AP ({aps})?',
+    applyingProgress: 'Aplicando {done}/{total}...',
+    changeAppliedMany: '{count} AP movidos a "{wlan}"',
+    changePartial: 'No se pudieron mover {failed} de {total} AP; siguen seleccionados para reintentarlo',
     statusApConnected: 'Conectado',
     statusApPending: 'Adoptando',
     statusApHeartbeatMissed: 'Sin respuesta',
@@ -213,7 +292,7 @@ const translations: Record<Language, Translations> = {
     cancel: 'Cancel',
     confirm: 'Confirm',
     settings: 'Settings',
-    accessPoints: 'Access Points',
+    accessPoints: 'Access points',
     noAccessPoints: 'No access points available',
     connectToSeeAPs: 'Connect to the controller to see access points',
     noResultsFor: 'No results for',
@@ -281,6 +360,43 @@ const translations: Record<Language, Translations> = {
     certResetAction: 'Reset',
     certResetDone: 'Trusted certificate reset',
     certResetError: 'Could not reset the trusted certificate',
+    wifiNetworks: 'Wi-Fi networks',
+    viewNavLabel: 'Views',
+    viewComingSoon: 'This view arrives in a later version. Meanwhile, move access points between groups from the Access points view.',
+    siteLabel: 'Site: {site}',
+    updatedAt: 'Updated {time}',
+    refreshing: 'Refreshing…',
+    controllerVersionLabel: 'Omada {version}',
+    controllerVersionTitle: 'Controller version',
+    controllerHostTitle: 'Controller',
+    searchAps: 'Search APs…',
+    searchApsLabel: 'Search access points',
+    statusFilterLabel: 'Filter by status',
+    statusFilterAll: 'All statuses',
+    groupFilterLabel: 'Filter by group',
+    groupFilterAll: 'All groups',
+    noMatchingAps: 'No access points match the filters',
+    clearFilters: 'Clear filters',
+    selectAllAps: 'Select all {count} APs',
+    selectAllApsFiltered: 'Select all {count} filtered APs',
+    selectOneAp: 'Select the AP',
+    selectOneApFiltered: 'Select the filtered AP',
+    clearSelection: 'Clear selection',
+    selectionNone: 'No APs selected',
+    selectionOne: '1 selected',
+    selectionMany: '{count} selected',
+    hiddenByFiltersOne: '1 hidden by filters',
+    hiddenByFiltersMany: '{count} hidden by filters',
+    selectedApsCount: '{count} APs selected',
+    networkCountOne: '1 network',
+    networkCountMany: '{count} networks',
+    networkCountNone: 'No networks',
+    clientCountOne: '1 client',
+    clientCountMany: '{count} clients',
+    confirmAssignMany: 'Assign "{wlan}" to {count} APs ({aps})?',
+    applyingProgress: 'Applying {done}/{total}...',
+    changeAppliedMany: '{count} APs moved to "{wlan}"',
+    changePartial: 'Could not move {failed} of {total} APs; they stay selected so you can retry',
     statusApConnected: 'Connected',
     statusApPending: 'Adopting',
     statusApHeartbeatMissed: 'Heartbeat missed',
@@ -321,7 +437,10 @@ export function t(key: keyof Translations): string {
 export function tFormat(key: keyof Translations, vars: Record<string, string>): string {
   let text = translations[state.currentLanguage][key];
   for (const [varName, value] of Object.entries(vars)) {
-    text = text.replace(`{${varName}}`, value);
+    // A replacer function inserts the value verbatim: as a plain replacement
+    // string, `$&`/`$'`-style sequences in controller-supplied names (groups,
+    // APs, sites) would be expanded
+    text = text.replace(`{${varName}}`, () => value);
   }
   return text;
 }

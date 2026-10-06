@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-06T21:43:06Z",
+ "updated": "2026-10-06T22:25:47Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -96,11 +96,20 @@
    "commit": "c7b251f"
   },
   {
-   "id": "13",
-   "title": "New app shell and Access points view",
+   "id": "13a",
+   "title": "App shell and Access points list",
+   "status": "done",
+   "risk": "high",
+   "summary": "Adds the sidebar shell with counts and refresh time, and an Access points list with checkbox multi-select that survives filters.",
+   "review": "docs/reviews/phase13a.md",
+   "narrative": "docs/progress-archive/phase-13a.md"
+  },
+  {
+   "id": "13b",
+   "title": "Destination pane and bulk move",
    "status": "queued",
    "risk": "high",
-   "summary": "Adds a sidebar shell and an Access points view with multi-select and bulk moves."
+   "summary": "Adds the always-visible destination pane, a review dialog and sequential bulk moves with per-AP results and Retry failed."
   },
   {
    "id": "14",

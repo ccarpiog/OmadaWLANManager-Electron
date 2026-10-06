@@ -6,14 +6,16 @@
 // ============================================================================
 
 import type { CertificateActionResult, ConnectionResult, SiteInfo } from '../shared/types';
-import { renderApList } from './ap-list';
+import { renderApFilterOptions, renderApList, renderApSelectionControls } from './ap-list';
+import { GROUP_FILTER_ALL, pruneSelection, sanitizeClientCount, STATUS_FILTER_ALL } from './ap-selection';
 import { showCertificateChanged, showCertificateTrust } from './cert-modal';
 import { apFilterInput, connectBtn, refreshBtn, settingsBtn, wlanFilterInput } from './elements';
 import { t } from './i18n';
 import { applyGroupVocabulary, showEmptyStates, showLoadingStates, updateSelectionInfo } from './panels';
+import { renderNavCounts } from './shell';
 import { showSiteSelection } from './site-modal';
-import { invalidateSession, isOperationInProgress, state } from './state';
-import { setStatus } from './status';
+import { invalidateSession, isOperationInProgress, setListsRefreshing, state } from './state';
+import { renderHeaderMeta, setStatus } from './status';
 import { showToast } from './toast';
 import { isValidMac, isValidSiteId, isValidWlanId, parseCertificateDetails, parseGroupListing } from './validation';
 import { renderWlanList } from './wlan-list';
@@ -325,6 +327,9 @@ async function runSiteSelection(rawSites: unknown, rawNonce: unknown, generation
   if (generation !== state.sessionGeneration) return;
 
   if (result.success) {
+    // The header shows the chosen site's name from now on (main reuses this
+    // site on later connects to the same controller URL)
+    state.siteName = sites.find(site => site.id === chosenSiteId)?.name ?? null;
     await commitConnectedUi(generation);
   } else {
     await abortConnection(generation, connectionErrorMessage(result), selectionNonce);
@@ -333,24 +338,34 @@ async function runSiteSelection(rawSites: unknown, rawNonce: unknown, generation
 
 /**
  * Clears all loaded AP/WLAN data (including the controller's group model and
- * version, so the group vocabulary returns to its default), selections, and
- * filters, then re-renders the empty states and the selection info (which
- * disables the Apply button).
+ * version, so the group vocabulary returns to its default, and the time of
+ * the last load), selections, and filters, then re-renders the empty states,
+ * the filter options, the sidebar counts, the header details and the
+ * selection info (which disables the Apply button).
  */
 function clearData(): void {
   state.accessPoints = [];
   state.wlanGroups = [];
   state.groupModel = null;
   state.controllerVersion = null;
-  state.selectedAp = null;
+  state.lastUpdatedAt = null;
+  state.selectedApMacs = new Set<string>();
+  state.selectionAnchorMac = null;
+  state.apFocusMac = null;
   state.selectedWlan = null;
   state.apFilterText = '';
+  state.apStatusFilter = STATUS_FILTER_ALL;
+  state.apGroupFilter = GROUP_FILTER_ALL;
   state.wlanFilterText = '';
   apFilterInput.value = '';
   wlanFilterInput.value = '';
 
   applyGroupVocabulary();
   showEmptyStates();
+  renderApFilterOptions();
+  renderApSelectionControls();
+  renderNavCounts();
+  renderHeaderMeta();
   updateSelectionInfo();
 } // End of function clearData()
 
@@ -403,6 +418,9 @@ export async function disconnect(): Promise<void> {
  * no connected UI to drop, and a status message already shown stays.
  */
 export function handleConnectionReset(): void {
+  // The controller (URL) or its trust changed: the remembered site name may
+  // no longer describe the site the next connection uses
+  state.siteName = null;
   if (!state.isConnected) return;
   invalidateSession();
   resetConnectionUi(null);
@@ -423,23 +441,34 @@ export function toggleConnection() {
 /**
  * Loads access points and the group listing (groups plus the controller's
  * group model and version, validated by parseGroupListing()) from the
- * controller, applies the group vocabulary and renders both lists.
- * Shows a spinner in both panels while fetching (and spins the Refresh
- * button). The session generation is captured before awaiting: if it moves on
- * meanwhile (disconnect/reconnect), the result — success or error — is
- * discarded without committing anything to the UI, and the loading state is
- * left alone (invalidateSession() already reset it for the new session).
- * Current-session errors are intentionally not caught here: the caller
- * handles them so the whole UI state stays consistent (see connect(),
- * refreshData(), and applyChange()).
+ * controller, applies the group vocabulary and renders both lists, the
+ * sidebar counts and the header ("Updated hh:mm" with the new load time).
+ * The first load shows a spinner in both panels; a reload (refresh, or after
+ * a move) keeps the loaded rows on screen, marked as refreshing, with
+ * "Refreshing…" in the header. The Refresh button spins either way. The AP
+ * selection survives a reload, pruned to the APs that still exist; the group
+ * selection is kept when its group still exists. The session generation is
+ * captured before awaiting: if it moves on meanwhile (disconnect/reconnect),
+ * the result — success or error — is discarded without committing anything
+ * to the UI, and the loading state is left alone (invalidateSession() already
+ * reset it for the new session). Current-session errors are intentionally not
+ * caught here: the caller handles them so the whole UI state stays consistent
+ * (see connect(), refreshData(), and applyChange()); the data on screen and
+ * the previous load time stay.
  * @returns {Promise<void>}
  */
 export async function loadData(): Promise<void> {
   const generation = state.sessionGeneration;
+  const isReload = state.lastUpdatedAt !== null;
   state.isLoadingData = true;
   refreshBtn.disabled = true;
   refreshBtn.classList.add('spinning');
-  showLoadingStates();
+  if (isReload) {
+    setListsRefreshing(true);
+  } else {
+    showLoadingStates();
+  }
+  renderHeaderMeta();
 
   try {
     const [aps, rawListing] = await Promise.all([
@@ -457,14 +486,20 @@ export async function loadData(): Promise<void> {
 
     // Keep only entries whose identifiers have a valid format: they cross the
     // IPC boundary again when a change is applied, and a malformed id coming
-    // from a compromised controller must never reach the UI or the main process
-    state.accessPoints = aps.filter(ap => {
-      if (!isValidMac(ap.mac)) {
-        console.warn('Ignoring access point with invalid MAC format:', ap.mac);
-        return false;
-      }
-      return true;
-    });
+    // from a compromised controller must never reach the UI or the main
+    // process. The optional client count is kept only as a non-negative integer
+    state.accessPoints = aps
+      .filter(ap => {
+        if (!isValidMac(ap.mac)) {
+          console.warn('Ignoring access point with invalid MAC format:', ap.mac);
+          return false;
+        }
+        return true;
+      })
+      .map(({ clientNum, ...ap }) => {
+        const clients = sanitizeClientCount(clientNum);
+        return clients === undefined ? ap : { ...ap, clientNum: clients };
+      });
     state.groupModel = listing.groupModel;
     state.controllerVersion = listing.controllerVersion;
     state.wlanGroups = listing.groups.filter(wlan => {
@@ -475,13 +510,24 @@ export async function loadData(): Promise<void> {
       return true;
     });
 
-    // Reset selection
-    state.selectedAp = null;
-    state.selectedWlan = null;
+    // Keep the selections that still point at loaded data
+    const macs = state.accessPoints.map(ap => ap.mac);
+    state.selectedApMacs = pruneSelection(state.selectedApMacs, macs);
+    if (state.selectionAnchorMac !== null && !macs.includes(state.selectionAnchorMac)) {
+      state.selectionAnchorMac = null;
+    }
+    if (state.apFocusMac !== null && !macs.includes(state.apFocusMac)) {
+      state.apFocusMac = null;
+    }
+    const selectedWlanId = state.selectedWlan?.wlanId;
+    state.selectedWlan = state.wlanGroups.find(wlan => wlan.wlanId === selectedWlanId) ?? null;
+    state.lastUpdatedAt = Date.now();
 
     applyGroupVocabulary();
+    renderApFilterOptions();
     renderApList();
     renderWlanList();
+    renderNavCounts();
     updateSelectionInfo();
   } catch (error) {
     // Stale failure: swallow it (the disconnected/new UI must not react)
@@ -497,15 +543,18 @@ export async function loadData(): Promise<void> {
       state.isLoadingData = false;
       refreshBtn.classList.remove('spinning');
       refreshBtn.disabled = !state.isConnected;
+      setListsRefreshing(false);
+      renderHeaderMeta();
     }
   }
 } // End of function loadData()
 
 /**
  * Reloads APs and WLAN groups on demand (Refresh button). A no-op while any
- * exclusive operation (connect/save/apply/load) is pending. On failure the
- * previously loaded data is re-rendered (loadData() leaves the spinners in
- * place when it throws) and an error toast is shown.
+ * exclusive operation (connect/save/apply/load) is pending. The loaded data
+ * stays on screen while refreshing; on failure it stays (re-rendered, in case
+ * the first load's spinners were showing), the header keeps the previous
+ * "Updated hh:mm" time, and an error toast is shown.
  * @returns {Promise<void>}
  */
 export async function refreshData(): Promise<void> {
@@ -514,7 +563,8 @@ export async function refreshData(): Promise<void> {
   try {
     await loadData();
   } catch (error) {
-    console.error('Error refreshing data:', error);
+    // An unreachable controller is an expected outcome, reported by the toast
+    console.warn('Error refreshing data:', error);
     showToast(t('loadError'), 'error');
     renderApList();
     renderWlanList();

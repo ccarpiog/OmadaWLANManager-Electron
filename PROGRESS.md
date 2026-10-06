@@ -18,7 +18,8 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 10 | 4.3 Electron 28 → 44 (absorbs 3.3) — risk: high; worker: opus | **done** — `docs/progress-archive/phase-10.md` |
 | 11 | 4.4 URL-scoped credentials + certificate TOFU pinning (completes 2.3b) — risk: high; worker: opus | **done** — `docs/progress-archive/phase-11.md` |
 | 12 | 4.5 Omada 6.3 correctness: `controllerVer`, `groupModel`, full group list from `setting/wlans` (empty groups), AP/WLAN terminology — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-12.md` |
-| 13 | 4.6 New app shell (sidebar) + Access points view: multi-select, bulk move with per-AP results — risk: high | pending |
+| 13a | 4.6 (first half) App shell (sidebar, counts, Updated hh:mm) + Access points list with checkbox multi-select surviving filters — risk: high; worker: opus | **done** — `docs/progress-archive/phase-13a.md` |
+| 13b | 4.6 (second half) Destination pane, review dialog, sequential bulk move with per-AP results + Retry failed — risk: high | pending |
 | 14 | 4.7 Read-only AP groups & Wi-Fi networks views, cross-navigation, states, responsive layout — risk: routine | pending |
 | 15 | 4.8 Open API credentials, `OpenApiClient`, `ControllerSession`, capability detection — risk: high | pending |
 | 16 | 4.9 AP group management (create/rename/delete-if-empty, move APs here) — risk: high | pending |
@@ -227,7 +228,15 @@ validation, connect-without-config, console/main-process errors).
 - Acceptance met: build exit 0; `npm test` 327/327; smoke 58/58 (an empty group renders and opens the move confirm; legacy wording checked); `npm run tls-probe` 21/21; the preload still requires only `electron`; no `innerHTML`.
 - Review: Codex, `docs/reviews/phase12.md`, ship, with 0 findings.
 
-## Plan status: ACTIVE — phases 8–12 done, phases 13–20 pending
+### Phase 13a — app shell + Access points list (2026-10-06)
+
+- Risk: high. Workers: opus (phase), opus (review fixes). Full narrative: `docs/progress-archive/phase-13a.md`.
+- Phase 13 (todo 4.6) was split before starting: 13a = shell + list, 13b = destination pane + review dialog + bulk move results (recorded in `todo.md` 4.6).
+- New `shell.ts` (header: site, connection state, "Updated hh:mm", controller version, Refresh that keeps data on screen; sidebar with total counts and view placeholders) and `ap-selection.ts` (pure selection logic). The AP list uses native checkboxes with Shift-click/Shift+Arrow ranges, "Select all N filtered", and an `aria-live` "N selected (M hidden by filters)". New status/group filters. The old confirm → `OMADA_SET_WLAN` flow moves the whole selection one AP at a time; failed APs stay selected. Optional `clientNum` in `validateAccessPoints()`.
+- Acceptance met: build exit 0; `npm test` 357/357; smoke 83/83 (single, multi and hidden-by-filter moves, keyboard-only move, selection survives filtering, empty group selectable and labelled, nav items + counts, placeholders, Updated time); `npm run tls-probe` 21/21; no `innerHTML`/inline styles.
+- Review: Codex, `docs/reviews/phase13a.md`, ship-with-fixes. Blocker (confirm focused the Confirm button) → the confirm dialog now focuses Cancel, with `aria-describedby`; should-fix (filter-hidden range anchor) → `planRangeSelection()` re-anchors. Both fixed by an opus worker; orchestrator re-ran build, tests, smoke and probe, all green.
+
+## Plan status: ACTIVE — phases 8–13a done, phases 13b–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -253,28 +262,29 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
   has not been built on it yet. Check `APPLE_KEYCHAIN_PROFILE=AC_NOTARY_PROFILE` on the next release.
 - ~~`normalizeControllerUrl()` keeps an empty `#`~~ — fixed in phase 11 (main and renderer reject it).
 - Phase 11 leftovers (none blocking): a stale request made after a TLS-session switch can still record a pin rejection that a concurrent connect to the same host picks up, so the dialog could show a confusing fingerprint; save/reset may take up to 3 s to reply when the old controller hangs (old-session logouts get that long); each session reset keeps an in-memory partition alive until quit; the e2e probe runs with `safeStorage` disabled. Phase 15 must route the Open API client through the same `ControllerTlsSessions` session and `ConnectionManager` invalidation, and clear `encryptedClientSecret` through the existing URL-change path in `config-model.ts`.
-- Four comments in `src/renderer/index.html`/`styles.css` still point to
-  `renderer.ts` for code that moved to other renderer modules. Fix them in
-  phase 13, when the markup changes anyway.
-- Phase 12 leftovers (none blocking): the "Access Points" panel title still uses
-  the old wording (spec §4.1 says "Access points"/"Puntos de acceso"), and
-  `controllerVersion` reaches the renderer (`state`) but is not displayed. Both
-  belong to the phase 13 shell. Before connecting, the UI shows the 6.3 "AP groups"
+- ~~Four stale `renderer.ts` comments; "Access Points" title; `controllerVersion` not shown~~ — fixed in phase 13a.
+- Phase 12 leftovers (none blocking): before connecting, the UI shows the 6.3 "AP groups"
   wording. `setting/wlans` on pre-6.3 controllers has never been tested live; the
   fallback to `setting/ssids` covers that case.
+- Phase 13a leftovers (none blocking): the header shows the site name only after a pick in the
+  site modal (single-site controllers and a remembered site show the host) — main should return
+  the site name, best in phase 15's `ControllerSession`; `clientNum` is unverified live (add it to
+  the phase 20 checklist); the AP details pane (row click) is deferred to phase 14 (`todo.md` 4.7);
+  a failed refresh now logs `console.warn` instead of `console.error`.
 
 ## Next action
 
-**Phase 13 — todo 4.6: new app shell + Access points view (risk: high).** First read `todo.md` item 4.6, then only §4 of `docs/management-design.md` up to and including §4.3 "Access points view" (plus §4.6 "States" and §4.7 "Responsive and keyboard" if they are short). Phase 13 may have to be split; if the worker cannot finish it coherently, split it into 13a (shell + sidebar + Access points list with multi-select) and 13b (destination pane, review dialog, sequential bulk move with per-AP results and Retry failed), and record the split in `todo.md` and here. Then:
+**Phase 13b — todo 4.6 second half: destination pane + review dialog + bulk move results (risk: high).** First read `todo.md` item 4.6 (its 13b scope line), then `docs/management-design.md` §4.1, §4.3 and §4.7 only. 13a left the old right-hand group panel (still `role="listbox"`) and the old confirm → `OMADA_SET_WLAN` loop in `apply-change.ts` in place; 13b replaces them:
 
-- Sidebar navigation (Access points / AP groups / Wi-Fi networks, with counts), site and connection state (surface the `controllerVersion` that phase 12 stores in renderer `state`), and refresh with "Updated hh:mm".
-- Access points view per spec §4.3: native checkbox multi-select, range select, a selection that survives filters, an always-visible destination pane with group/SSID search, a "Silence" section for empty groups, a gains/losses preview, a review dialog, a **sequential bulk move with per-AP results and Retry failed**, and specific button labels. Moves use only the internal `PATCH eaps/{mac}` path (`OMADA_SET_WLAN`).
-- Fix the four stale `renderer.ts` comments in `index.html`/`styles.css`, and rename the "Access Points" title to the spec §4.1 wording.
-- Acceptance: the smoke covers a single move, bulk moves (all succeed / partial failure / cancel), a selection that survives filtering, a keyboard-only move, and an empty group that is selectable and labelled; the AP groups and Wi-Fi networks nav items are present (placeholder content is allowed until phase 14). `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
+- An **always-visible destination pane** (native radios, no listbox simulation) with search matching group names **and** SSID names, empty groups pinned in a "Silence" section with the strong §4.1 label, and a gains/losses preview (networks gained / lost / unchanged) for the current checkbox selection (`ap-selection.ts`, hidden-by-filter APs included).
+- Mixed selections: "12 already in this group; 4 will move"; no-op moves disabled. Button labels "Move AP" / "Move N APs" (es "Mover AP" / "Mover N AP") instead of "Apply change".
+- A **review dialog** (initial focus on Cancel, as 13a made the confirm dialog): source group(s) → destination, networks gained/lost/unchanged, clients on the moving APs (optional `clientNum`; never per-SSID claims). Per-AP override data is not available from the internal API — omit or state it, never invent it.
+- **Sequential bulk move** (`PATCH eaps/{mac}` via `OMADA_SET_WLAN` only, not atomic) with a per-AP result list and **Retry failed**; keep the `sessionGeneration`/operation-flag guards (disconnect, refresh, URL change mid-move).
+- Acceptance: the smoke covers a single move, bulk moves (all succeed / partial failure → Retry failed / cancel), destination search by SSID name, the Silence section, the no-op case, and a keyboard-only move; existing checks keep passing. `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
 
 ## Key paths
 
-- `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `connection`, `ap-list`, `wlan-list`, `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
+- `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `shell` (header + sidebar), `connection`, `ap-list` + pure `ap-selection`, `wlan-list`, `apply-change`, `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
 - `scripts/tsc.mjs` + `scripts/resolve-tsc.mjs` — run TypeScript 7 through Node (no `.bin` shim)
 - `tests/unit/` + `tests/fixtures/` — `npm test` (runner `scripts/run-unit-tests.mjs`); `tests/smoke/` — `npm run smoke` (`stub-main.cjs`, `run-smoke.mjs`)
 - `src/main/omada-transport.ts` (transport interface + hardened request logic), `net-transport.ts` (Electron `net`), `omada-validators.ts`, `cookie-jar.ts`, `url.ts`

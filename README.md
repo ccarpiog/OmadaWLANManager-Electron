@@ -6,10 +6,11 @@ A modern desktop application for moving TP-Link Omada Controller access points b
 ## Features
 
 - Connect to TP-Link Omada Controller
-- View all access points with online/offline status
+- View all access points with their status, group, number of Wi-Fi networks and
+  connected clients; search and filter them by status and group
 - View all AP groups with the Wi-Fi networks (SSIDs) each one broadcasts,
   including groups without any network (see [Controller versions](#controller-versions))
-- Move an access point into another group, including an empty one to silence it
+- Move one or more access points into another group, including an empty one to silence them
 - Supports the self-signed certificates Omada controllers use, with
   trust-on-first-use pinning: you confirm the certificate's SHA-256
   fingerprint once, and a different certificate is refused afterwards
@@ -48,7 +49,7 @@ npm run dev
 ## Usage
 
 1. Launch the application
-2. Click the **Settings** button (gear icon) to configure your Omada Controller connection:
+2. Click **Settings** (gear icon, at the bottom of the sidebar) to configure your Omada Controller connection:
    - **URL**: Your controller URL (e.g., `https://192.168.1.1:8043`)
    - **Username**: Your Omada Controller username
    - **Password**: Your Omada Controller password
@@ -56,10 +57,13 @@ npm run dev
    shows the controller certificate's SHA-256 fingerprint: compare it with the
    certificate of your controller and choose **Trust and connect** (no password
    is sent before you do)
-4. Select an Access Point from the left panel
-5. Select a group from the right panel (titled **AP groups** on Omada 6.3+,
+4. In the **Access points** view, tick one or more access points (Shift-click or
+   Shift+arrow keys select a range). Access points stay selected while a search or
+   filter hides them; the count under the list says how many are hidden
+5. Select a group from the group panel (titled **AP groups** on Omada 6.3+,
    **WLAN groups (legacy)** on older controllers)
-6. Click **Apply Change** to move the access point into that group
+6. Click **Apply change** to move the selected access points into that group. They
+   are moved one after the other; any that fail stay selected so you can retry
 
 ## Controller versions
 

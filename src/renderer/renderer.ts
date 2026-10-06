@@ -6,13 +6,16 @@
 //   elements.ts           DOM element references
 //   i18n.ts               es/en string tables, t(), tFormat(), setLanguage()
 //   apply-translations.ts writes the active language into the static UI
-//   status.ts             title-bar connection status
+//   status.ts             header: connection status, site, controller host,
+//                         "Updated hh:mm", controller version
+//   shell.ts              sidebar navigation, view switching, total counts
 //   toast.ts              toast notifications
 //   validation.ts         format guards (MAC, WLAN/site id, fingerprint),
 //                         controller-URL mirror of src/main/url.ts
 //   dom-helpers.ts        empty/loading blocks, listbox roving tabindex
 //   panels.ts             panel empty/loading states, selection info bar
-//   ap-list.ts            access-point list panel
+//   ap-selection.ts       pure AP filtering, range selection and counts
+//   ap-list.ts            Access points list (checkbox multi-select)
 //   wlan-list.ts          WLAN group list panel
 //   modal-focus.ts        modal Tab focus trap and inert background
 //   settings-modal.ts     settings modal (open/close/save, certificate reset)
@@ -21,19 +24,29 @@
 //   cert-modal.ts         certificate first-use / "certificate changed" modal
 //   connection.ts         connect/disconnect, site selection, certificate
 //                         trust, load/refresh
-//   apply-change.ts       assign a WLAN group to an AP
+//   apply-change.ts       move the selected APs into the selected group
 // Shared types come from src/shared/types.ts (type-only imports), and the
 // window.omadaAPI bridge typing from global.d.ts.
 
-import { renderApList } from './ap-list';
+import {
+  clearApSelection,
+  handleApListClick,
+  handleApListKeydown,
+  renderApList,
+  selectAllFilteredAps,
+} from './ap-list';
 import { applyChange } from './apply-change';
 import { applyTranslations } from './apply-translations';
 import { connect, refreshData, toggleConnection } from './connection';
 import {
   apFilterInput,
+  apGroupFilterSelect,
+  apList,
+  apStatusFilterSelect,
   applyBtn,
   cancelCertResetBtn,
   cancelSettingsBtn,
+  clearApSelectionBtn,
   closeSettingsBtn,
   confirmCertResetBtn,
   connectBtn,
@@ -41,10 +54,12 @@ import {
   refreshBtn,
   resetCertBtn,
   saveSettingsBtn,
+  selectAllApsBtn,
   settingsBtn,
   settingsModal,
   urlInput,
   usernameInput,
+  viewNav,
   wlanFilterInput,
 } from './elements';
 import { setLanguage, t } from './i18n';
@@ -57,6 +72,7 @@ import {
   saveSettings,
   updatePasswordAffordance,
 } from './settings-modal';
+import { isAppView, showView } from './shell';
 import { state } from './state';
 import { setStatus } from './status';
 import { showToast } from './toast';
@@ -70,11 +86,33 @@ connectBtn.addEventListener('click', toggleConnection);
 refreshBtn.addEventListener('click', refreshData);
 settingsBtn.addEventListener('click', openSettings);
 
-// Filter inputs
+// Sidebar navigation: one native button per view (delegated)
+viewNav.addEventListener('click', (e) => {
+  const button = e.target instanceof Element ? e.target.closest<HTMLElement>('.nav-item[data-view]') : null;
+  const view = button?.dataset.view;
+  if (isAppView(view)) {
+    showView(view);
+  }
+});
+
+// Access points list: filters, checkbox selection (delegated click and
+// keyboard handlers), "Select all N filtered APs" and "Clear selection"
 apFilterInput.addEventListener('input', () => {
   state.apFilterText = apFilterInput.value;
   renderApList();
 });
+apStatusFilterSelect.addEventListener('change', () => {
+  state.apStatusFilter = apStatusFilterSelect.value;
+  renderApList();
+});
+apGroupFilterSelect.addEventListener('change', () => {
+  state.apGroupFilter = apGroupFilterSelect.value;
+  renderApList();
+});
+apList.addEventListener('click', handleApListClick);
+apList.addEventListener('keydown', handleApListKeydown);
+selectAllApsBtn.addEventListener('click', selectAllFilteredAps);
+clearApSelectionBtn.addEventListener('click', clearApSelection);
 
 wlanFilterInput.addEventListener('input', () => {
   state.wlanFilterText = wlanFilterInput.value;
