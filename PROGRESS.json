@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-06T19:39:08Z",
+ "updated": "2026-10-06T19:39:53Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -62,7 +62,8 @@
    "risk": "routine",
    "summary": "Adds npm test with fixture-based unit tests and a committed Playwright GUI smoke against a stubbed main.",
    "review": "docs/reviews/phase9.md",
-   "narrative": "docs/progress-archive/phase-9.md"
+   "narrative": "docs/progress-archive/phase-9.md",
+   "commit": "65dcf1a"
   },
   {
    "id": "10",
