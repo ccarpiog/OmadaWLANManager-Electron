@@ -4,6 +4,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { getConfiguredUrl, getConnectionCredentials, getRendererConfig, getStoredSiteId, saveConfig, saveStoredSiteId } from './config';
 import { OmadaController } from './omada-api';
+import { netTransport } from './net-transport';
 import { ConfigSavePayload, ConfigSaveResult, IPC_CHANNELS, ConnectionResult, RendererConfig } from '../shared/types';
 
 // Global reference to prevent garbage collection
@@ -396,7 +397,8 @@ ipcMain.handle(IPC_CHANNELS.OMADA_CONNECT, async (event): Promise<ConnectionResu
     return { success: false, error: 'configIncomplete' };
   }
 
-  const controller = new OmadaController(config.url, config.username, config.password);
+  // Production transport: Electron's net module (net-transport.ts)
+  const controller = new OmadaController(config.url, config.username, config.password, netTransport);
   try {
     const outcome = await controller.connect(getStoredSiteId());
 

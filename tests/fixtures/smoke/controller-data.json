@@ -1,0 +1,32 @@
+{
+  "description": "Data the stubbed main process (tests/smoke/stub-main.cjs) serves over IPC, in the DTO shapes the real handlers return (src/shared/types.ts). The stub sorts by name like OmadaController does. One AP and one group carry malformed ids on purpose: the renderer must drop them (src/renderer/connection.ts loadData()). Every id, MAC and name is made up.",
+  "accessPoints": [
+    { "mac": "AA-BB-CC-00-11-22", "name": "Salón", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
+    { "mac": "AA-BB-CC-00-11-33", "name": "EAP Carpio", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
+    { "mac": "AA-BB-CC-00-11-44", "name": "Altillo", "type": "ap", "wlanGroup": "zGrupo B", "statusCategory": 3 },
+    { "mac": "AA-BB-CC-00-11-55", "name": "Bodega", "type": "ap", "wlanGroup": "", "statusCategory": 0 },
+    { "mac": "AA-BB-CC-00-11-66", "name": "Garaje", "type": "ap", "wlanGroup": "Default", "statusCategory": 2 },
+    { "mac": "AA-BB-CC-00-11-77", "name": "Jardín", "type": "ap", "wlanGroup": "Default", "statusCategory": 4 },
+    { "mac": "AA-BB-CC-00-11-88", "name": "Porche", "type": "ap", "wlanGroup": "Default", "statusCategory": 9 },
+    { "mac": "not-a-mac", "name": "Intruso", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 }
+  ],
+  "wlanGroups": [
+    {
+      "wlanId": "6512a0e1f3b2c41d2e3f4a5c",
+      "wlanName": "zGrupo B",
+      "ssidList": [{ "ssidName": "Oficina" }, { "ssidName": "Taller" }, { "ssidName": "Almacén" }, { "ssidName": "Tienda" }, { "ssidName": "IoT" }]
+    },
+    {
+      "wlanId": "6512a0e1f3b2c41d2e3f4a5b",
+      "wlanName": "Default",
+      "ssidList": [{ "ssidName": "Casa" }, { "ssidName": "Invitados" }]
+    },
+    { "wlanId": "6512a0e1f3b2c41d2e3f4a5d", "wlanName": "Exterior", "ssidList": [] },
+    { "wlanId": "bad id!", "wlanName": "Corrupto", "ssidList": [] }
+  ],
+  "sites": [
+    { "id": "64f0c0ffee0000000000a001", "name": "Casa" },
+    { "id": "64f0c0ffee0000000000a002", "name": "Oficina" }
+  ],
+  "newAccessPoint": { "mac": "AA-BB-CC-00-11-99", "name": "Nuevo AP", "type": "ap", "wlanGroup": "Exterior", "statusCategory": 1 }
+}

@@ -1,0 +1,21 @@
+{
+  // Type-check-only config for the unit tests (run by scripts/run-unit-tests.mjs
+  // before esbuild bundles them). Not part of `npm run build`: the root
+  // tsconfig.json only includes src/, so no test code can reach dist/.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    // Node globals and node:test typings only — no DOM, and no Electron:
+    // the modules under test must stay Electron-free
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true
+  },
+  "include": ["unit/**/*.ts"]
+}

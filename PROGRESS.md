@@ -14,7 +14,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 6 | UX improvements: 3.1, 3.2, 3.7, 3.8 (+OMADA_CONNECT i18n error codes) | **done** |
 | 7 | Connection flow & multi-site: 1.11, 3.12 | **done** |
 | 8 | 4.1 Renderer modularization with esbuild (absorbs 3.4) — risk: high (structural, no behavior change); worker: opus | **done** — `docs/progress-archive/phase-8.md` |
-| 9 | 4.2 Test harness: `npm test` (node:test + fixtures) and committed Playwright `_electron` smoke with stubbed main (`npm run smoke`) — risk: routine | pending |
+| 9 | 4.2 Test harness: `npm test` (node:test + fixtures) and committed Playwright `_electron` smoke with stubbed main (`npm run smoke`) — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-9.md` |
 | 10 | 4.3 Electron 28 → current major (absorbs 3.3) — risk: high | pending |
 | 11 | 4.4 URL-scoped credentials + certificate TOFU pinning (completes 2.3b) — risk: high | pending |
 | 12 | 4.5 Omada 6.3 correctness: `controllerVer`, `groupModel`, full group list from `setting/wlans` (empty groups), AP/WLAN terminology — risk: routine | pending |
@@ -48,9 +48,9 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 ## Environment
 
 - `npm install` re-run 2026-08-24 to restore `node_modules/.bin` (Dropbox strips symlinks — see todo.md 3.11). If `tsc: command not found` reappears, re-run `npm install`.
-- Verification command: `npm run build` (`tsc` for main/preload/shared → `tsc -p src/renderer` type-check → esbuild bundle via `scripts/build-renderer.mjs` → copy-static). No tests/linter exist yet (phase 9 adds them).
+- Verification commands: `npm run build` (`tsc` for main/preload/shared → `tsc -p src/renderer` type-check → esbuild bundle via `scripts/build-renderer.mjs` → copy-static); `npm test` (unit tests, no Electron, temp HOME); `ELECTRON_PATH=<electron binary> npm run smoke` (GUI smoke, stubbed main, temp HOME). No linter. Node.js ≥ 20 (`engines`).
 - Dropbox gotcha: several quick back-to-back edits to one file can leave "<name> (… conflicted copy).md" files, and once even removed `PROGRESS.md` itself (phase 8). Batch the edits to a file, then run `fd -H "conflicted copy"` before committing. Keep the newest complete copy.
-- Throwaway GUI launch tooling from phase 8 (may vanish on reboot): Electron 28.3.3 at `/private/tmp/omada-p8-smoke/electron/Electron.app`, playwright-core at `/private/tmp/omada-p8-smoke/pw`, script `/private/tmp/omada-p8-tools/smoke.mjs` (usage in `docs/progress-archive/phase-8.md`).
+- Smoke Electron binary: `node_modules/electron/dist` is broken by Dropbox, so `npm run smoke` needs `ELECTRON_PATH`. An extracted Electron 28.3.3 lives at `/private/tmp/omada-p8-smoke/electron/Electron.app/Contents/MacOS/Electron` (may vanish on reboot; re-extract the matching Electron zip to `/private/tmp` if it does — after phase 10 it must match the new Electron version).
 - Git remote: `origin` → github.com/ccarpiog/OmadaWLANManager-Electron.git, branch `main`.
 
 ## Completed
@@ -195,7 +195,15 @@ validation, connect-without-config, console/main-process errors).
 - Acceptance met: clean build exit 0; bundle free of `require`/`exports`/`import`/`eval`; no duplicated renderer types; the markup diff is empty; isolated launch smoke 21/21 (`HOME` = temp dir).
 - Review: Codex, `docs/reviews/phase8.md`, ship-with-fixes. The 1 should-fix (watch mode skipped the renderer type-check) was fixed by the orchestrator.
 
-## Plan status: ACTIVE — phase 8 done, phases 9–20 pending
+### Phase 9 — test harness (2026-10-06)
+
+- Risk: routine. Worker: opus. Full narrative: `docs/progress-archive/phase-9.md`.
+- `npm test` (143 tests, `node:test`, JSON fixtures, no Electron) and `npm run smoke` (39 checks, playwright-core `_electron` against a stubbed main in `tests/smoke/`). The validators, cookie jar, URL normalization and HTTP transport now live in Electron-free modules; `net-transport.ts` is injected by `index.ts`.
+- Acceptance met: build exit 0; `npm test` 143/143; smoke 39/39 with zero console errors, no network and a temp HOME; it covers the connected paths phase 8 left unverified, which all pass.
+- The smoke found a pre-existing focus bug (`.btn { transition: all }` hid Confirm when it was focused), fixed in `styles.css`.
+- Review: Codex, `docs/reviews/phase9.md`, ship-with-fixes. The 1 should-fix (playwright-core needs Node ≥ 20; README said 18+) was fixed by the orchestrator: README and `engines` now say Node ≥ 20.
+
+## Plan status: ACTIVE — phases 8–9 done, phases 10–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -210,26 +218,31 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - ~~Packaging never run end-to-end~~ — `electron-builder --mac` run 2026-08-29
   (signed + notarized, see the release section). Windows and Linux targets are
   still untested.
-- Phase 8 (renderer split) was verified for startup/first-run/modals only. The
-  connected paths (connect → lists, site selection, AP move with confirm,
-  refresh, disconnect) have not been GUI-tested since the split. Phase 9's
-  stubbed-main smoke must cover them, and any failure there is a phase-8
-  regression to fix first.
+- ~~Phase 8 connected paths not GUI-tested~~ — covered by phase 9's smoke
+  (connect → lists, site selection, AP move, refresh, disconnect); all pass.
+- `npm install` reports 24 audit vulnerabilities (1 critical, 17 high) from
+  the Electron 28 / electron-builder 24 toolchain. Phase 10 should clear most;
+  re-run `npm audit` there and record what is left.
+- `normalizeControllerUrl()` (`src/main/url.ts`) and the renderer mirror accept
+  `https://host/#` (empty fragment) and keep the `#`. Harmless; fix with phase
+  11, which touches URL handling.
 - Four comments in `src/renderer/index.html`/`styles.css` still point to
   `renderer.ts` for code that moved to other renderer modules. Fix them in
   phase 13, when the markup changes anyway.
 
 ## Next action
 
-**Phase 9 — todo 4.2, test harness (risk: routine).** First read `todo.md` item 4.2 and `docs/management-design.md` §1 (invariants). Then:
+**Phase 10 — todo 4.3, Electron upgrade (risk: high).** First read `todo.md` item 4.3 (Electron 28 → current stable major; bump electron-builder, TypeScript, @types/node) and the PROGRESS.md release notes (`mac.notarize` must stay a plain `true`; build to `/private/tmp`, never `./release`). Then:
 
-- (a) Add `npm test` with `node:test`. Use esbuild (already a devDep) or tsx to transpile TS, with JSON fixtures for the API response validators, the cookie merge and config normalization. Move the validators/transport behind an interface so they can be tested without Electron's `net`.
-- (b) Commit a Playwright `_electron` smoke harness under `tests/smoke/` (`npm run smoke`). It must stub the main-process IPC handlers, launch with `HOME` set to a temp dir and support an `ELECTRON_PATH` override. Electron in `node_modules` is broken by Dropbox; see Environment for an extracted copy, and seed from `/private/tmp/omada-p8-tools/smoke.mjs` if it still exists.
-- Acceptance: `npm test` exit 0 with ≥ 1 fixture test per validator. `npm run smoke` covers startup in es and en, first run, connect → lists rendered, a single AP move with confirm and with cancel, and zero console errors. The smoke must also exercise the connected paths that phase 8 left unverified (see Open risks).
+- Upgrade, and re-check the sandboxed preload, `setCertificateVerifyProc`, `certificate-error`, the CSP, `net.request` behaviour (`src/main/net-transport.ts`) and the packaging config. Record breaking changes in PROGRESS.md.
+- Extract the new Electron version's macOS arm64 zip to `/private/tmp` (Dropbox breaks `node_modules/electron/dist`) and point `ELECTRON_PATH` at it. `tests/smoke/stub-main.cjs` can switch its sandbox check to `webContents.getLastWebPreferences()` if the new Electron has it.
+- Acceptance: `npm run build`, `npm test` and `ELECTRON_PATH=… npm run smoke` all exit 0 on the new Electron; `electron-builder --mac --dir` (unsigned, output under `/private/tmp`) succeeds; `npm audit` re-run and the remainder recorded.
 
 ## Key paths
 
 - `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `connection`, `ap-list`, `wlan-list`, `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
+- `tests/unit/` + `tests/fixtures/` — `npm test` (runner `scripts/run-unit-tests.mjs`); `tests/smoke/` — `npm run smoke` (`stub-main.cjs`, `run-smoke.mjs`)
+- `src/main/omada-transport.ts` (transport interface + hardened request logic), `net-transport.ts` (Electron `net`), `omada-validators.ts`, `cookie-jar.ts`, `url.ts`
 - `docs/reviews/` — phase review briefs and reports from phase 8 on (earlier ones in `.claude/reviews/`); `docs/progress-archive/` — closed-phase narratives
 - `src/main/index.ts` — window creation, IPC handlers, cert verification
 - `src/main/omada-api.ts` — OmadaController HTTP client
@@ -242,4 +255,5 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 ## Git state
 
 - Phases 4 (37450f1), 5 (a7f2e30), 6 (9b685b2), and 7 (final commit on main, SHA in `git log`) all pushed to origin/main (2026-08-24). Tree clean after the phase-7 commit.
-- Phase 8 is committed on top of `45a6bd7` in the commit that carries this checkpoint (subject "Bundle the renderer with esbuild and split it into modules"; SHA in `git log`). It is pushed to origin/main, and the tree is clean after that commit.
+- Phase 8: `9f147ad`, pushed.
+- Phase 9 is committed on top of `f0a891e` in the commit that carries this checkpoint (subject "Add unit tests and a GUI smoke harness"; SHA in `git log`). Push result: see the next checkpoint or `git status` — expected pushed to origin/main, tree clean after the commit.

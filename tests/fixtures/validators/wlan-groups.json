@@ -1,0 +1,70 @@
+{
+  "validator": "validateWlanGroups",
+  "error": "Unsupported API response (WLANs)",
+  "valid": [
+    {
+      "name": "Omada 6.3 setting/ssids payload (wlanId = AP group id), extra fields ignored",
+      "result": {
+        "ssids": [
+          {
+            "wlanId": "6512a0e1f3b2c41d2e3f4a5b",
+            "wlanName": "Default",
+            "deviceType": "ap",
+            "ssidList": [
+              { "ssidName": "Casa", "ssidId": "6512a0e1f3b2c41d2e3f4a60", "band": 7 },
+              { "ssidName": "Invitados", "ssidId": "6512a0e1f3b2c41d2e3f4a61", "band": 3 }
+            ]
+          },
+          {
+            "wlanId": "6512a0e1f3b2c41d2e3f4a5c",
+            "wlanName": "zGrupo B",
+            "deviceType": "ap",
+            "ssidList": [{ "ssidName": "Oficina" }]
+          }
+        ]
+      },
+      "expected": [
+        { "wlanId": "6512a0e1f3b2c41d2e3f4a5b", "wlanName": "Default", "ssidList": [{ "ssidName": "Casa" }, { "ssidName": "Invitados" }] },
+        { "wlanId": "6512a0e1f3b2c41d2e3f4a5c", "wlanName": "zGrupo B", "ssidList": [{ "ssidName": "Oficina" }] }
+      ]
+    },
+    {
+      "name": "optional fields normalized: missing name, missing/invalid SSID lists, malformed SSID entries",
+      "result": {
+        "ssids": [
+          { "wlanId": "group-no-name", "ssidList": [] },
+          { "wlanId": "group-no-list", "wlanName": "Sin lista" },
+          { "wlanId": "group-bad-list", "wlanName": "Lista rara", "ssidList": "Casa" },
+          { "wlanId": "group-bad-entries", "wlanName": 12, "ssidList": [null, "Casa", { "ssidName": 5 }, {}, { "ssidName": "Valid" }] }
+        ]
+      },
+      "expected": [
+        { "wlanId": "group-no-name", "wlanName": "", "ssidList": [] },
+        { "wlanId": "group-no-list", "wlanName": "Sin lista", "ssidList": [] },
+        { "wlanId": "group-bad-list", "wlanName": "Lista rara", "ssidList": [] },
+        {
+          "wlanId": "group-bad-entries",
+          "wlanName": "",
+          "ssidList": [{ "ssidName": "" }, { "ssidName": "" }, { "ssidName": "" }, { "ssidName": "" }, { "ssidName": "Valid" }]
+        }
+      ]
+    },
+    {
+      "name": "empty group list",
+      "result": { "ssids": [] },
+      "expected": []
+    }
+  ],
+  "invalid": [
+    { "name": "result is a bare array (pre-v2 shape)", "result": [{ "wlanId": "abc", "wlanName": "Default" }] },
+    { "name": "result is null", "result": null },
+    { "name": "result is absent" },
+    { "name": "result has no ssids field", "result": { "data": [] } },
+    { "name": "ssids is an object", "result": { "ssids": { "wlanId": "abc" } } },
+    { "name": "entry is a string", "result": { "ssids": ["Default"] } },
+    { "name": "entry is null", "result": { "ssids": [null] } },
+    { "name": "entry has no wlanId", "result": { "ssids": [{ "wlanName": "Default", "ssidList": [] }] } },
+    { "name": "entry has an empty wlanId", "result": { "ssids": [{ "wlanId": "", "wlanName": "Default" }] } },
+    { "name": "entry wlanId is a number", "result": { "ssids": [{ "wlanId": 1, "wlanName": "Default" }] } }
+  ]
+}

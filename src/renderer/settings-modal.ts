@@ -88,7 +88,7 @@ export function closeSettings(): void {
 
 /**
  * Validates and normalizes the controller URL. Mirrors the main-process rules
- * (normalizeControllerUrl() in src/main/config.ts — keep both in sync): it
+ * (normalizeControllerUrl() in src/main/url.ts — keep both in sync): it
  * must parse, use HTTPS, and carry no embedded credentials or fragment; a
  * trailing slash is stripped.
  * @param {string} raw - The URL as typed by the user.

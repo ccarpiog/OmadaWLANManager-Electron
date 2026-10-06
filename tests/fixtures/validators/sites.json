@@ -1,0 +1,73 @@
+{
+  "validator": "validateSitePage",
+  "error": "Unsupported API response (sites)",
+  "valid": [
+    {
+      "name": "paged v2 listing with totalRows; empty/missing names fall back to the id",
+      "result": {
+        "totalRows": 3,
+        "currentPage": 1,
+        "currentSize": 100,
+        "data": [
+          { "id": "64f0c0ffee0000000000a001", "name": "Casa", "region": "Spain", "timeZone": "Europe/Madrid" },
+          { "id": "64f0c0ffee0000000000a002", "name": "" },
+          { "id": "64f0c0ffee0000000000a003" }
+        ]
+      },
+      "expected": {
+        "sites": [
+          { "id": "64f0c0ffee0000000000a001", "name": "Casa" },
+          { "id": "64f0c0ffee0000000000a002", "name": "64f0c0ffee0000000000a002" },
+          { "id": "64f0c0ffee0000000000a003", "name": "64f0c0ffee0000000000a003" }
+        ],
+        "entryCount": 3,
+        "totalRows": 3
+      }
+    },
+    {
+      "name": "duplicates are kept at page level (the client deduplicates across pages)",
+      "result": {
+        "totalRows": 2,
+        "data": [
+          { "id": "site-a", "name": "Casa" },
+          { "id": "site-a", "name": "Casa (dup)" }
+        ]
+      },
+      "expected": {
+        "sites": [
+          { "id": "site-a", "name": "Casa" },
+          { "id": "site-a", "name": "Casa (dup)" }
+        ],
+        "entryCount": 2,
+        "totalRows": 2
+      }
+    },
+    {
+      "name": "missing totalRows is reported as null",
+      "result": { "data": [{ "id": "site-a", "name": 7 }] },
+      "expected": { "sites": [{ "id": "site-a", "name": "site-a" }], "entryCount": 1, "totalRows": null }
+    },
+    {
+      "name": "negative totalRows is ignored",
+      "result": { "totalRows": -1, "data": [] },
+      "expected": { "sites": [], "entryCount": 0, "totalRows": null }
+    },
+    {
+      "name": "non-numeric totalRows is ignored",
+      "result": { "totalRows": "5", "data": [] },
+      "expected": { "sites": [], "entryCount": 0, "totalRows": null }
+    }
+  ],
+  "invalid": [
+    { "name": "result is null", "result": null },
+    { "name": "result is absent" },
+    { "name": "result is a bare array", "result": [{ "id": "site-a" }] },
+    { "name": "result has no data field", "result": { "totalRows": 1 } },
+    { "name": "data is an object", "result": { "data": { "id": "site-a" } } },
+    { "name": "entry is null", "result": { "data": [null] } },
+    { "name": "entry is a string", "result": { "data": ["site-a"] } },
+    { "name": "entry has no id", "result": { "data": [{ "name": "Casa" }] } },
+    { "name": "entry has an empty id", "result": { "data": [{ "id": "", "name": "Casa" }] } },
+    { "name": "entry id is a number", "result": { "data": [{ "id": 1, "name": "Casa" }] } }
+  ]
+}

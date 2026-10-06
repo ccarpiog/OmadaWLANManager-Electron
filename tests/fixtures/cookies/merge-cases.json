@@ -1,0 +1,120 @@
+{
+  "description": "CookieJar.merge() cases. `initial` seeds the jar (in order), `setCookie` is the response's Set-Cookie value(s), `expected` is the resulting jar in insertion order (also the expected Cookie header order). The jar's clock is fixed at `now`.",
+  "now": "2026-10-06T12:00:00.000Z",
+  "cases": [
+    {
+      "name": "single Set-Cookie string adds the session cookie; Path/HttpOnly/Secure are ignored",
+      "initial": {},
+      "setCookie": "TPOMADA_SESSIONID=abc123; Path=/; HttpOnly; Secure",
+      "expected": { "TPOMADA_SESSIONID": "abc123" }
+    },
+    {
+      "name": "array of Set-Cookie headers adds every cookie",
+      "initial": {},
+      "setCookie": ["TPOMADA_SESSIONID=abc123; Path=/", "lang=en; Path=/"],
+      "expected": { "TPOMADA_SESSIONID": "abc123", "lang": "en" }
+    },
+    {
+      "name": "merge per name: an unrelated cookie never drops the session cookie",
+      "initial": { "TPOMADA_SESSIONID": "abc123", "other": "x" },
+      "setCookie": "lang=es; Path=/",
+      "expected": { "TPOMADA_SESSIONID": "abc123", "other": "x", "lang": "es" }
+    },
+    {
+      "name": "same name replaces the value in place",
+      "initial": { "TPOMADA_SESSIONID": "old", "lang": "en" },
+      "setCookie": "TPOMADA_SESSIONID=new; Path=/",
+      "expected": { "TPOMADA_SESSIONID": "new", "lang": "en" }
+    },
+    {
+      "name": "empty value deletes the cookie",
+      "initial": { "TPOMADA_SESSIONID": "abc123", "lang": "en" },
+      "setCookie": "TPOMADA_SESSIONID=; Path=/",
+      "expected": { "lang": "en" }
+    },
+    {
+      "name": "Max-Age=0 deletes the cookie even with a value",
+      "initial": { "TPOMADA_SESSIONID": "abc123" },
+      "setCookie": "TPOMADA_SESSIONID=deleted; Max-Age=0; Path=/",
+      "expected": {}
+    },
+    {
+      "name": "negative Max-Age deletes the cookie",
+      "initial": { "TPOMADA_SESSIONID": "abc123" },
+      "setCookie": "TPOMADA_SESSIONID=deleted; Max-Age=-1",
+      "expected": {}
+    },
+    {
+      "name": "positive Max-Age keeps the cookie",
+      "initial": {},
+      "setCookie": "TPOMADA_SESSIONID=abc123; Max-Age=3600",
+      "expected": { "TPOMADA_SESSIONID": "abc123" }
+    },
+    {
+      "name": "Expires in the past deletes the cookie",
+      "initial": { "TPOMADA_SESSIONID": "abc123" },
+      "setCookie": "TPOMADA_SESSIONID=deleted; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+      "expected": {}
+    },
+    {
+      "name": "Expires exactly now deletes the cookie",
+      "initial": { "TPOMADA_SESSIONID": "abc123" },
+      "setCookie": "TPOMADA_SESSIONID=deleted; Expires=Tue, 06 Oct 2026 12:00:00 GMT",
+      "expected": {}
+    },
+    {
+      "name": "Expires in the future keeps the cookie",
+      "initial": {},
+      "setCookie": "TPOMADA_SESSIONID=abc123; Expires=Tue, 06 Oct 2026 12:00:01 GMT",
+      "expected": { "TPOMADA_SESSIONID": "abc123" }
+    },
+    {
+      "name": "unparseable Expires and non-numeric Max-Age are ignored",
+      "initial": {},
+      "setCookie": "TPOMADA_SESSIONID=abc123; Expires=not-a-date; Max-Age=soon",
+      "expected": { "TPOMADA_SESSIONID": "abc123" }
+    },
+    {
+      "name": "attribute names are case-insensitive",
+      "initial": { "a": "1", "b": "2" },
+      "setCookie": ["a=1; MAX-AGE=0", "b=2; expires=Thu, 01 Jan 1970 00:00:00 GMT"],
+      "expected": {}
+    },
+    {
+      "name": "headers without a cookie name are ignored",
+      "initial": { "TPOMADA_SESSIONID": "abc123" },
+      "setCookie": ["=novalue; Path=/", "novalue", ""],
+      "expected": { "TPOMADA_SESSIONID": "abc123" }
+    },
+    {
+      "name": "a value containing '=' is kept intact",
+      "initial": {},
+      "setCookie": "token=a=b=c; Path=/",
+      "expected": { "token": "a=b=c" }
+    },
+    {
+      "name": "whitespace around the name and value is trimmed",
+      "initial": {},
+      "setCookie": " TPOMADA_SESSIONID = abc123 ; Path=/",
+      "expected": { "TPOMADA_SESSIONID": "abc123" }
+    },
+    {
+      "name": "deleting an absent cookie is a no-op",
+      "initial": { "lang": "en" },
+      "setCookie": "TPOMADA_SESSIONID=; Max-Age=0",
+      "expected": { "lang": "en" }
+    },
+    {
+      "name": "headers apply in order: delete then re-set ends with the new cookie (appended last)",
+      "initial": { "TPOMADA_SESSIONID": "old", "lang": "en" },
+      "setCookie": ["TPOMADA_SESSIONID=; Max-Age=0", "TPOMADA_SESSIONID=fresh"],
+      "expected": { "lang": "en", "TPOMADA_SESSIONID": "fresh" }
+    },
+    {
+      "name": "headers apply in order: set then delete ends without the cookie",
+      "initial": {},
+      "setCookie": ["TPOMADA_SESSIONID=fresh", "TPOMADA_SESSIONID=; Max-Age=0"],
+      "expected": {}
+    }
+  ]
+}

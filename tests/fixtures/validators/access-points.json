@@ -1,0 +1,58 @@
+{
+  "validator": "validateAccessPoints",
+  "error": "Unsupported API response (devices)",
+  "valid": [
+    {
+      "name": "mixed device list: keeps only APs, normalizes optional display fields, ignores extra fields",
+      "result": [
+        { "type": "ap", "mac": "AA-BB-CC-00-11-22", "name": "EAP Carpio", "wlanGroup": "Default", "statusCategory": 1, "model": "EAP650", "ip": "192.0.2.10" },
+        { "type": "switch", "mac": "AA-BB-CC-00-11-33", "name": "Core switch", "statusCategory": 1 },
+        { "type": "ap", "mac": "AA-BB-CC-00-11-44", "wlanGroup": "zGrupo B", "statusCategory": 3 },
+        { "type": "gateway", "name": "ER605" },
+        { "type": "ap", "mac": "AA-BB-CC-00-11-55", "name": "Hall", "wlanGroup": null, "statusCategory": "1" },
+        { "type": "ap", "mac": "AA-BB-CC-00-11-66", "name": 42, "wlanGroup": 7 }
+      ],
+      "expected": [
+        { "mac": "AA-BB-CC-00-11-22", "name": "EAP Carpio", "type": "ap", "wlanGroup": "Default", "statusCategory": 1 },
+        { "mac": "AA-BB-CC-00-11-44", "name": "AA-BB-CC-00-11-44", "type": "ap", "wlanGroup": "zGrupo B", "statusCategory": 3 },
+        { "mac": "AA-BB-CC-00-11-55", "name": "Hall", "type": "ap", "wlanGroup": "", "statusCategory": 0 },
+        { "mac": "AA-BB-CC-00-11-66", "name": "AA-BB-CC-00-11-66", "type": "ap", "wlanGroup": "", "statusCategory": 0 }
+      ]
+    },
+    {
+      "name": "empty name is kept (only a non-string name falls back to the MAC)",
+      "result": [{ "type": "ap", "mac": "AA-BB-CC-00-11-77", "name": "", "wlanGroup": "Default", "statusCategory": 0 }],
+      "expected": [{ "mac": "AA-BB-CC-00-11-77", "name": "", "type": "ap", "wlanGroup": "Default", "statusCategory": 0 }]
+    },
+    {
+      "name": "empty device list",
+      "result": [],
+      "expected": []
+    },
+    {
+      "name": "only non-AP devices (their MACs are not required)",
+      "result": [{ "type": "switch" }, { "type": "gateway", "mac": "" }],
+      "expected": []
+    }
+  ],
+  "invalid": [
+    { "name": "result is an object instead of an array", "result": { "data": [] } },
+    { "name": "result is null", "result": null },
+    { "name": "result is absent" },
+    { "name": "result is a string", "result": "ap" },
+    { "name": "entry is a string", "result": ["ap"] },
+    { "name": "entry is null", "result": [null] },
+    { "name": "entry has no type", "result": [{ "mac": "AA-BB-CC-00-11-22", "name": "No type" }] },
+    { "name": "entry type is not a string", "result": [{ "type": 1, "mac": "AA-BB-CC-00-11-22" }] },
+    { "name": "AP has no MAC", "result": [{ "type": "ap", "name": "Ghost" }] },
+    { "name": "AP has an empty MAC", "result": [{ "type": "ap", "mac": "" }] },
+    { "name": "AP MAC is a number", "result": [{ "type": "ap", "mac": 123 }] },
+    {
+      "name": "one bad AP after valid ones fails the whole payload",
+      "result": [
+        { "type": "ap", "mac": "AA-BB-CC-00-11-22", "name": "EAP Carpio" },
+        { "type": "ap", "name": "No MAC" }
+      ]
+    }
+  ]
+}

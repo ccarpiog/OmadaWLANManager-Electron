@@ -1,0 +1,101 @@
+{
+  "description": "Omada internal-API (v2) response envelopes served by the fake transport in tests/unit/omada-controller.test.ts. Shapes follow docs/omada-6.3-api-findings.md (controller 6.3.0.45). All ids, names and addresses are made up.",
+  "apiInfo": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "controllerVer": "6.3.0.45",
+      "apiVer": "3",
+      "configured": true,
+      "type": 1,
+      "supportApp": true,
+      "omadacId": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+    }
+  },
+  "apiInfoNoId": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": { "controllerVer": "6.3.0.45" }
+  },
+  "loginOk": {
+    "errorCode": 0,
+    "msg": "Log in successfully.",
+    "result": { "roleType": 0, "token": "csrf-token-1" }
+  },
+  "loginOkRefreshed": {
+    "errorCode": 0,
+    "msg": "Log in successfully.",
+    "result": { "roleType": 0, "token": "csrf-token-2" }
+  },
+  "loginFailed": {
+    "errorCode": -30109,
+    "msg": "Invalid username or password."
+  },
+  "sitesSingle": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "totalRows": 1,
+      "currentPage": 1,
+      "currentSize": 100,
+      "data": [{ "id": "64f0c0ffee0000000000a001", "name": "Casa", "region": "Spain", "timeZone": "Europe/Madrid" }]
+    }
+  },
+  "sitesMulti": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "totalRows": 3,
+      "currentPage": 1,
+      "currentSize": 100,
+      "data": [
+        { "id": "64f0c0ffee0000000000a001", "name": "Casa" },
+        { "id": "64f0c0ffee0000000000a002", "name": "Oficina" },
+        { "id": "64f0c0ffee0000000000a001", "name": "Casa" }
+      ]
+    }
+  },
+  "sitesEmpty": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": { "totalRows": 0, "currentPage": 1, "currentSize": 100, "data": [] }
+  },
+  "devices": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": [
+      { "type": "ap", "mac": "AA-BB-CC-00-11-22", "name": "Salón", "wlanGroup": "Default", "statusCategory": 1, "model": "EAP650" },
+      { "type": "switch", "mac": "AA-BB-CC-00-22-33", "name": "Core switch", "statusCategory": 1 },
+      { "type": "ap", "mac": "AA-BB-CC-00-11-33", "name": "EAP Carpio", "wlanGroup": "zGrupo B", "statusCategory": 1, "model": "EAP225" },
+      { "type": "gateway", "mac": "AA-BB-CC-00-33-44", "name": "ER605" },
+      { "type": "ap", "mac": "AA-BB-CC-00-11-44", "name": "Altillo", "wlanGroup": "Default", "statusCategory": 3 }
+    ]
+  },
+  "devicesUnsupported": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": { "data": [] }
+  },
+  "ssids": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "ssids": [
+        { "wlanId": "6512a0e1f3b2c41d2e3f4a5c", "wlanName": "zGrupo B", "deviceType": "ap", "ssidList": [{ "ssidName": "Oficina" }] },
+        { "wlanId": "6512a0e1f3b2c41d2e3f4a5b", "wlanName": "Default", "deviceType": "ap", "ssidList": [{ "ssidName": "Casa" }, { "ssidName": "Invitados" }] }
+      ]
+    }
+  },
+  "sessionExpired": {
+    "errorCode": -1200,
+    "msg": "Login required."
+  },
+  "ok": {
+    "errorCode": 0,
+    "msg": "Success."
+  },
+  "apiError": {
+    "errorCode": -39999,
+    "msg": "Internal controller error."
+  }
+}

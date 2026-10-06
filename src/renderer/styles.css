@@ -161,7 +161,12 @@ body.platform-darwin .title-bar {
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all var(--transition);
+  /* `all` would also transition the INHERITED `visibility`: when a modal
+     overlay flips to visible, each button inside it would still compute as
+     `hidden` at that instant (not focusable), so the confirm modal's
+     Confirm.focus() was silently dropped. Same trap as .modal-overlay below;
+     visibility must follow the parent immediately */
+  transition: all var(--transition), visibility 0s;
   -webkit-app-region: no-drag;
 }
 

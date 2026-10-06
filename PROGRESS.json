@@ -1,24 +1,145 @@
-{"schema_version": 1, "updated": "2026-10-06T18:58:34Z", "plan": "todo.md",
+{
+ "schema_version": 1,
+ "updated": "2026-10-06T19:39:08Z",
+ "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
-  {"id": "1", "title": "Renderer/main bug fixes", "status": "done", "summary": "Fixes the confirm-modal leak, navigation checks, URL crash, disconnect IPC and load-failure state."},
-  {"id": "2", "title": "API client robustness", "status": "done", "summary": "Merges cookies, adds HTTP status, timeout and size limits, re-login on session expiry and logout."},
-  {"id": "3", "title": "Config and credential security", "status": "done", "summary": "Encrypts the stored password, keeps it out of the renderer and writes config atomically."},
-  {"id": "4", "title": "Renderer, IPC and certificate hardening", "status": "done", "summary": "Builds DOM safely, sandboxes the preload, checks IPC senders and tightens the CSP."},
-  {"id": "5", "title": "Packaging and platform", "status": "done", "summary": "Adds the Windows icon, trims packaged files and scopes macOS title-bar styling."},
-  {"id": "6", "title": "UX improvements", "status": "done", "summary": "Replaces alerts with toasts, adds refresh and spinners, keyboard navigation and accessible modals."},
-  {"id": "7", "title": "Connection flow and multi-site", "status": "done", "summary": "Lets the user pick a site on multi-site controllers and serializes connection attempts."},
-  {"id": "8", "title": "Renderer modularization with esbuild", "status": "done", "risk": "high", "summary": "Bundles the renderer with esbuild, splits it into modules and reuses the shared types.", "review": "docs/reviews/phase8.md", "narrative": "docs/progress-archive/phase-8.md"},
-  {"id": "9", "title": "Test harness", "status": "queued", "risk": "routine", "summary": "Adds npm test with fixture-based unit tests and a committed Playwright GUI smoke against a stubbed main."},
-  {"id": "10", "title": "Electron upgrade", "status": "queued", "risk": "high", "summary": "Upgrades Electron 28 and the build tooling to the current major."},
-  {"id": "11", "title": "URL-scoped credentials and certificate pinning", "status": "queued", "risk": "high", "summary": "Ties stored credentials to the controller URL and pins its certificate on first use."},
-  {"id": "12", "title": "Omada 6.3 correctness", "status": "queued", "risk": "routine", "summary": "Detects the controller version and group model, lists empty AP groups and updates terminology."},
-  {"id": "13", "title": "New app shell and Access points view", "status": "queued", "risk": "high", "summary": "Adds a sidebar shell and an Access points view with multi-select and bulk moves."},
-  {"id": "14", "title": "Read-only AP groups and Wi-Fi networks views", "status": "queued", "risk": "routine", "summary": "Adds read-only AP group and Wi-Fi network views with cross-navigation and responsive layout."},
-  {"id": "15", "title": "Open API credentials and client", "status": "queued", "risk": "high", "summary": "Adds optional Open API credentials, an Open API client, a controller session and capability detection."},
-  {"id": "16", "title": "AP group management", "status": "queued", "risk": "high", "summary": "Lets the user create, rename and delete empty AP groups and move APs into them."},
-  {"id": "17", "title": "Wi-Fi network read model", "status": "queued", "risk": "routine", "summary": "Reads Wi-Fi networks through the Open API with secrets stripped."},
-  {"id": "18", "title": "Wi-Fi network editing", "status": "queued", "risk": "high", "summary": "Edits Open and WPA-Personal Wi-Fi networks with read-merge-write and password change."},
-  {"id": "19", "title": "Broadcast-on binding editor", "status": "queued", "risk": "high", "summary": "Edits which AP groups broadcast each Wi-Fi network, with capacity checks."},
-  {"id": "20", "title": "Integration, hardening and docs", "status": "queued", "risk": "routine", "summary": "Integrates the features, hardens edge cases and writes the live-test checklist."}
- ]}
+  {
+   "id": "1",
+   "title": "Renderer/main bug fixes",
+   "status": "done",
+   "summary": "Fixes the confirm-modal leak, navigation checks, URL crash, disconnect IPC and load-failure state."
+  },
+  {
+   "id": "2",
+   "title": "API client robustness",
+   "status": "done",
+   "summary": "Merges cookies, adds HTTP status, timeout and size limits, re-login on session expiry and logout."
+  },
+  {
+   "id": "3",
+   "title": "Config and credential security",
+   "status": "done",
+   "summary": "Encrypts the stored password, keeps it out of the renderer and writes config atomically."
+  },
+  {
+   "id": "4",
+   "title": "Renderer, IPC and certificate hardening",
+   "status": "done",
+   "summary": "Builds DOM safely, sandboxes the preload, checks IPC senders and tightens the CSP."
+  },
+  {
+   "id": "5",
+   "title": "Packaging and platform",
+   "status": "done",
+   "summary": "Adds the Windows icon, trims packaged files and scopes macOS title-bar styling."
+  },
+  {
+   "id": "6",
+   "title": "UX improvements",
+   "status": "done",
+   "summary": "Replaces alerts with toasts, adds refresh and spinners, keyboard navigation and accessible modals."
+  },
+  {
+   "id": "7",
+   "title": "Connection flow and multi-site",
+   "status": "done",
+   "summary": "Lets the user pick a site on multi-site controllers and serializes connection attempts."
+  },
+  {
+   "id": "8",
+   "title": "Renderer modularization with esbuild",
+   "status": "done",
+   "risk": "high",
+   "summary": "Bundles the renderer with esbuild, splits it into modules and reuses the shared types.",
+   "review": "docs/reviews/phase8.md",
+   "narrative": "docs/progress-archive/phase-8.md"
+  },
+  {
+   "id": "9",
+   "title": "Test harness",
+   "status": "done",
+   "risk": "routine",
+   "summary": "Adds npm test with fixture-based unit tests and a committed Playwright GUI smoke against a stubbed main.",
+   "review": "docs/reviews/phase9.md",
+   "narrative": "docs/progress-archive/phase-9.md"
+  },
+  {
+   "id": "10",
+   "title": "Electron upgrade",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Upgrades Electron 28 and the build tooling to the current major."
+  },
+  {
+   "id": "11",
+   "title": "URL-scoped credentials and certificate pinning",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Ties stored credentials to the controller URL and pins its certificate on first use."
+  },
+  {
+   "id": "12",
+   "title": "Omada 6.3 correctness",
+   "status": "queued",
+   "risk": "routine",
+   "summary": "Detects the controller version and group model, lists empty AP groups and updates terminology."
+  },
+  {
+   "id": "13",
+   "title": "New app shell and Access points view",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Adds a sidebar shell and an Access points view with multi-select and bulk moves."
+  },
+  {
+   "id": "14",
+   "title": "Read-only AP groups and Wi-Fi networks views",
+   "status": "queued",
+   "risk": "routine",
+   "summary": "Adds read-only AP group and Wi-Fi network views with cross-navigation and responsive layout."
+  },
+  {
+   "id": "15",
+   "title": "Open API credentials and client",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Adds optional Open API credentials, an Open API client, a controller session and capability detection."
+  },
+  {
+   "id": "16",
+   "title": "AP group management",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Lets the user create, rename and delete empty AP groups and move APs into them."
+  },
+  {
+   "id": "17",
+   "title": "Wi-Fi network read model",
+   "status": "queued",
+   "risk": "routine",
+   "summary": "Reads Wi-Fi networks through the Open API with secrets stripped."
+  },
+  {
+   "id": "18",
+   "title": "Wi-Fi network editing",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Edits Open and WPA-Personal Wi-Fi networks with read-merge-write and password change."
+  },
+  {
+   "id": "19",
+   "title": "Broadcast-on binding editor",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Edits which AP groups broadcast each Wi-Fi network, with capacity checks."
+  },
+  {
+   "id": "20",
+   "title": "Integration, hardening and docs",
+   "status": "queued",
+   "risk": "routine",
+   "summary": "Integrates the features, hardens edge cases and writes the live-test checklist."
+  }
+ ]
+}

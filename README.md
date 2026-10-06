@@ -13,7 +13,7 @@ A modern desktop application for managing TP-Link Omada Controller WLAN group as
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20+ (required by the `playwright-core` smoke harness)
 - npm or yarn
 - TP-Link Omada Controller (tested with controller versions 5.x and 6.1.0.19)
 
@@ -82,6 +82,35 @@ modules into a single `dist/renderer/renderer.js` with esbuild
 (`scripts/build-renderer.mjs`), and copies `index.html` and `styles.css` next
 to it.
 
+## Testing
+
+```bash
+npm test        # unit tests (plain Node, no Electron needed)
+npm run smoke   # build, then the GUI smoke test against a stubbed main process
+```
+
+- `npm test` type-checks `tests/` (`tsc -p tests`), bundles
+  `tests/unit/**/*.test.ts` with esbuild into a temp directory (never `dist/`,
+  so no test code is packaged) and runs them with `node:test`. Fixtures are
+  JSON files under `tests/fixtures/`. Covered: the API response validators,
+  cookie-jar merging, controller URL normalization, the hardened HTTP
+  transport, and `OmadaController` driven through a fake transport. A test
+  that imports Electron fails the bundle step.
+- `npm run smoke` launches Electron through Playwright (`playwright-core`, which
+  downloads no browsers) with `tests/smoke/stub-main.cjs` as the main process:
+  the real preload and renderer, with fixture-driven fake IPC handlers. It
+  prints PASS/FAIL per check and exits non-zero on any failure.
+- **Electron binary:** `ELECTRON_PATH` (an executable or an `.app` bundle) wins;
+  otherwise the `electron` npm package's binary is used if it runs. In a
+  Dropbox checkout `node_modules/electron/dist` is broken (Dropbox strips
+  symlinks and exec bits), so extract Electron outside Dropbox and run e.g.
+  `ELECTRON_PATH=/private/tmp/electron/Electron.app/Contents/MacOS/Electron npm run smoke`.
+- **Isolation:** both commands point `HOME` (and `USERPROFILE`) at a fresh temp
+  directory. The smoke stub refuses to start with the real home, keeps
+  Electron's profile inside the temp dir, never loads the real main process,
+  cancels every non-`file:` request and writes no files. Neither command
+  contacts a controller or touches `~/.omada-wlan-manager/`.
+
 ## Project Structure
 
 ```
@@ -91,6 +120,9 @@ omada-electron/
 │   │   ├── index.ts    # Entry point, window management, IPC handlers
 │   │   ├── config.ts   # Configuration file management
 │   │   ├── omada-api.ts # Omada Controller API client
+│   │   ├── omada-transport.ts # HTTP transport interface + hardened implementation
+│   │   ├── net-transport.ts   # Production transport (Electron's net module)
+│   │   ├── omada-validators.ts, cookie-jar.ts, url.ts # Pure, unit-tested helpers
 │   │   └── preload.ts  # Preload script for secure IPC
 │   ├── renderer/       # Renderer process (Browser), bundled by esbuild
 │   │   ├── index.html  # Main HTML
@@ -99,7 +131,8 @@ omada-electron/
 │   │   └── *.ts        # UI modules (state, i18n, lists, modals, connection, ...)
 │   └── shared/         # Shared types
 │       └── types.ts    # TypeScript interfaces
-├── scripts/            # Build scripts (renderer bundle)
+├── scripts/            # Build and test scripts (renderer bundle, unit-test runner)
+├── tests/              # unit/ (node:test), smoke/ (Playwright GUI smoke), fixtures/ (JSON)
 ├── assets/             # Icons and resources
 ├── dist/               # Compiled JavaScript (generated)
 └── release/            # Packaged applications (generated)

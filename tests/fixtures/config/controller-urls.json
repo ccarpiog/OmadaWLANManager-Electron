@@ -1,0 +1,30 @@
+{
+  "description": "normalizeControllerUrl() cases: `valid` inputs normalize to `expected`; `invalid` inputs (and every `nonString` value) must yield null.",
+  "valid": [
+    { "name": "IP with port, no path", "input": "https://192.168.1.1:8043", "expected": "https://192.168.1.1:8043" },
+    { "name": "trailing slash is stripped", "input": "https://192.168.1.1:8043/", "expected": "https://192.168.1.1:8043" },
+    { "name": "surrounding whitespace is trimmed", "input": "  https://omada.example.com:8043/  ", "expected": "https://omada.example.com:8043" },
+    { "name": "hostname without port", "input": "https://omada.example.com", "expected": "https://omada.example.com" },
+    { "name": "scheme and host are lower-cased", "input": "HTTPS://Omada.Example.COM:8043", "expected": "https://omada.example.com:8043" },
+    { "name": "default https port is dropped", "input": "https://omada.example.com:443/", "expected": "https://omada.example.com" },
+    { "name": "path keeps its segments, only the trailing slash goes", "input": "https://omada.example.com/omada/", "expected": "https://omada.example.com/omada" },
+    { "name": "path without trailing slash is unchanged", "input": "https://omada.example.com/a/b", "expected": "https://omada.example.com/a/b" },
+    { "name": "IPv6 literal with port", "input": "https://[::1]:8043/", "expected": "https://[::1]:8043" }
+  ],
+  "invalid": [
+    { "name": "plain http would send credentials unencrypted", "input": "http://192.168.1.1:8043" },
+    { "name": "other schemes are rejected", "input": "ftp://192.168.1.1" },
+    { "name": "javascript: URL", "input": "javascript:alert(1)" },
+    { "name": "missing scheme (IP:port)", "input": "192.168.1.1:8043" },
+    { "name": "missing scheme (host:port parses as a scheme)", "input": "omada.local:8043" },
+    { "name": "embedded username and password", "input": "https://admin:secret@192.168.1.1:8043" },
+    { "name": "embedded username only", "input": "https://admin@192.168.1.1:8043" },
+    { "name": "fragment", "input": "https://192.168.1.1:8043/#/dashboard" },
+    { "name": "empty string", "input": "" },
+    { "name": "whitespace only", "input": "   " },
+    { "name": "scheme without host", "input": "https://" },
+    { "name": "free text", "input": "not a url" },
+    { "name": "space inside the host", "input": "https://exa mple.com" }
+  ],
+  "nonString": [null, 42, true, {}, ["https://192.168.1.1:8043"]]
+}
