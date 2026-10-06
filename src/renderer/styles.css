@@ -43,6 +43,13 @@
   padding: 0;
 }
 
+/* The `hidden` attribute must win over component display rules (e.g. .btn's
+   inline-flex): the certificate modal hides its confirm button and the
+   settings modal its inline reset confirmation this way */
+[hidden] {
+  display: none !important;
+}
+
 /* The html element keeps painting the themed background while <body> is
    hidden by the pre-init class, so dark-mode users never see a white flash */
 html {
@@ -200,6 +207,22 @@ body.platform-darwin .title-bar {
 
 .btn-success:hover:not(:disabled) {
   background: var(--success-hover);
+}
+
+/* Destructive confirmation (certificate reset) */
+.btn-danger {
+  background: var(--error-color);
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(0.9);
+}
+
+/* Smaller buttons inside form sections */
+.btn-compact {
+  padding: 6px 12px;
+  font-size: 12px;
 }
 
 .btn-icon {
@@ -481,6 +504,11 @@ body.platform-darwin .title-bar {
   margin: 16px;
   transform: scale(0.95);
   transition: transform var(--transition);
+  /* Never taller than the window (the settings modal grew a certificate
+     section): header and footer stay put, the body scrolls */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
 }
 
 .modal-overlay.visible .modal {
@@ -510,6 +538,9 @@ body.platform-darwin .title-bar {
 
 .modal-body {
   padding: 20px;
+  overflow-y: auto;
+  /* Lets the flex item shrink below its content so overflow-y can scroll */
+  min-height: 0;
 }
 
 .modal-footer {
@@ -579,6 +610,101 @@ body.platform-darwin .title-bar {
 .form-select:focus {
   outline: none;
   border-color: var(--accent-color);
+}
+
+/* Label of a form section that labels a group rather than one input
+   (same look as .form-group label) */
+.form-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+/* Certificate fingerprints: monospace, wrap anywhere, and selectable (the
+   body disables selection) so the user can copy and compare them */
+.cert-fingerprint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+  user-select: text;
+}
+
+/* Settings: trusted certificate section */
+.cert-pin-value {
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.cert-pin-value.muted-text {
+  color: var(--text-muted);
+  font-family: inherit;
+  user-select: none;
+}
+
+.cert-reset-confirm {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.cert-reset-confirm p {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.cert-reset-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Certificate modal (first use / certificate changed): wide enough for a
+   fingerprint to wrap onto two lines */
+.modal-cert {
+  max-width: 480px;
+}
+
+.cert-message {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.cert-details {
+  margin-top: 14px;
+}
+
+.cert-details dt {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-top: 10px;
+}
+
+.cert-details dt:first-child {
+  margin-top: 0;
+}
+
+.cert-details dd {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.cert-details .cert-fingerprint {
+  font-size: 12px;
+}
+
+.cert-hint {
+  margin-top: 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
 }
 
 /* Site selection modal: vertical stack of one button per authorized site.

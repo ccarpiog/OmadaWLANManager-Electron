@@ -1,38 +1,85 @@
 import { app, BrowserWindow, ipcMain, IpcMainInvokeEvent, session } from 'electron';
-import { randomBytes } from 'crypto';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { getConfiguredUrl, getConnectionCredentials, getRendererConfig, getStoredSiteId, saveConfig, saveStoredSiteId } from './config';
+import {
+  clearCertificatePin,
+  getCertificatePin,
+  getConfiguredUrl,
+  getConnectionCredentials,
+  getRendererConfig,
+  getStoredSiteId,
+  saveCertificatePin,
+  saveConfig,
+  saveStoredSiteId
+} from './config';
+import { CertificateTrustSource, ControllerTlsSessions, installCertificateVerifyProc, isCertificateErrorAllowed } from './cert-verify';
+import { ConnectionManager } from './connection-manager';
 import { OmadaController } from './omada-api';
-import { netTransport } from './net-transport';
-import { ConfigSavePayload, ConfigSaveResult, IPC_CHANNELS, ConnectionResult, RendererConfig } from '../shared/types';
+import { createNetTransport } from './net-transport';
+import {
+  CertificateActionResult,
+  ConfigSavePayload,
+  ConfigSaveResult,
+  IPC_CHANNELS,
+  ConnectionResult,
+  RendererConfig
+} from '../shared/types';
 
 // Global reference to prevent garbage collection
 let mainWindow: BrowserWindow | null = null;
-let omadaController: OmadaController | null = null;
 
-// Serializes connection attempts in the main process (todo.md 3.12): every
-// OMADA_CONNECT bumps this counter and captures its value; when the value has
-// moved on after the (awaited) authentication — because a newer connect or a
-// disconnect started meanwhile — the finished attempt is discarded instead of
-// installing its controller. OMADA_DISCONNECT and the quit path bump it too,
-// so an in-flight connect can never resurrect a session the user just closed.
-let connectGeneration = 0;
+// ============================================================================
+// Controller connection state and certificate trust-on-first-use (todo.md
+// 3.12, 1.11, 4.4)
+// ============================================================================
 
-// A connect that authenticated but still needs the user to pick a site parks
-// its controller here instead of installing it globally. The record ties the
-// eventual OMADA_SELECT_SITE call to this exact pending connect: `generation`
-// is the connect generation the attempt captured, and `nonce` is an opaque
-// one-time token the renderer must echo back verbatim. The controller is
-// installed globally only after the selection succeeds; the record is cleared
-// (and its controller released) on disconnect, on supersession by a newer
-// connect, on cancellation (nonce-scoped disconnect), and on quit.
-interface PendingSiteSelection {
-  controller: OmadaController;
-  generation: number;
-  nonce: string;
+// The session every controller request uses (created when the app is ready;
+// see ControllerTlsSessions in cert-verify.ts for why it is replaceable)
+let controllerTls: ControllerTlsSessions | null = null;
+
+/**
+ * Returns the current controller session (see controllerTls).
+ * @returns {Electron.Session} The session controller requests must use.
+ */
+function getControllerSession(): Electron.Session {
+  if (!controllerTls) {
+    throw new Error('Controller session requested before the app was ready');
+  }
+  return controllerTls.session;
 }
-let pendingSiteSelection: PendingSiteSelection | null = null;
+
+// Production transport: Electron's net module on the current controller
+// session (net-transport.ts)
+const controllerTransport = createNetTransport(getControllerSession);
+
+// The connection state machine (connection-manager.ts): connect generation,
+// installed controller, pending site selection, pending certificate trust and
+// the pin-rejection bookkeeping, plus the atomic controller transitions run
+// on a controller URL change and on a certificate reset. The IPC handlers
+// below only check the sender and the payload shapes, then delegate to it.
+const connectionManager = new ConnectionManager<OmadaController>({
+  getCredentials: getConnectionCredentials,
+  createController: (credentials) =>
+    new OmadaController(credentials.url, credentials.username, credentials.password, controllerTransport),
+  getConfiguredUrl,
+  getStoredSiteId,
+  saveStoredSiteId,
+  saveCertificatePin,
+  clearCertificatePin,
+  // ControllerTlsSessions.reset() switches sessions synchronously (the
+  // contract resetControllerSession() requires) and retires the old one
+  // after the drain
+  resetControllerSession: (drain) => (controllerTls ? controllerTls.reset(drain) : Promise.resolve())
+});
+
+// Trust inputs of the certificate hooks: the configured URL and the pin come
+// from the in-memory config cache (the verify proc is a hot path and must
+// never touch the filesystem); rejections are recorded for OMADA_CONNECT
+const certificateTrustSource: CertificateTrustSource = {
+  getConfiguredUrl,
+  getCertificatePin,
+  onPinRejection: (rejection) => connectionManager.recordPinRejection(rejection)
+};
 
 // ============================================================================
 // IPC boundary validation
@@ -47,35 +94,15 @@ const RENDERER_HTML_PATH = path.normalize(path.join(__dirname, '../renderer/inde
 const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
 const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
-// Format guard for the opaque site-selection nonce: exactly 32 lowercase hex
-// characters (16 random bytes — see createSelectionNonce())
-const SELECTION_NONCE_REGEX = /^[0-9a-f]{32}$/;
+// Format guard for the opaque one-time nonces (site selection, certificate
+// trust): exactly 32 lowercase hex characters (16 random bytes — see
+// createNonce() in connection-manager.ts)
+const NONCE_REGEX = /^[0-9a-f]{32}$/;
 
 // Length caps for strings arriving over IPC (defense against absurd payloads)
 const MAX_URL_LENGTH = 2048;
 const MAX_USERNAME_LENGTH = 256;
 const MAX_PASSWORD_LENGTH = 512;
-
-// Chromium verification results the certificate verify proc may bypass for
-// the configured controller hostname: the failure classes a self-signed
-// Omada controller cert actually produces (untrusted issuer, name mismatch,
-// expired). Anything else — revoked, weak signature, etc. — is never bypassed
-const SELF_SIGNED_VERIFICATION_ERRORS = [
-  'ERR_CERT_AUTHORITY_INVALID',
-  'ERR_CERT_COMMON_NAME_INVALID',
-  'ERR_CERT_DATE_INVALID'
-];
-
-/**
- * Returns true when a Chromium certificate verification result is one of the
- * failure classes expected from a self-signed controller certificate.
- * Substring match so the check tolerates the "net::" prefix Chromium adds.
- * @param {string} verificationResult - Result string from the verify proc.
- * @returns {boolean} True when the failure class may be bypassed.
- */
-function isSelfSignedVerificationResult(verificationResult: string): boolean {
-  return SELF_SIGNED_VERIFICATION_ERRORS.some((code) => verificationResult.includes(code));
-}
 
 /**
  * Returns true when an IPC call originates from the app's own renderer: the
@@ -204,24 +231,17 @@ function createWindow(): void {
   });
 } // End of function createWindow()
 
-// Bypass SSL for self-signed certificates (Omada controllers use self-signed certs)
-app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
-  // Only bypass for the configured Omada controller URL (read from the
-  // in-memory config cache — no filesystem access here). Compare parsed
-  // origins (scheme + host + port): a prefix match would also accept e.g.
-  // https://192.168.1.100 when https://192.168.1.1 is configured, or
-  // https://controller.attacker.example when https://controller is
-  const configUrl = getConfiguredUrl();
-  if (configUrl) {
-    try {
-      if (new URL(configUrl).origin === new URL(url).origin) {
-        event.preventDefault();
-        callback(true);
-        return;
-      }
-    } catch {
-      // Malformed URL: fall through to rejection
-    }
+// Certificate errors of webContents loads (the renderer only loads file:
+// URLs, so in practice this never fires for the controller; net.request()
+// goes through the verify proc instead). Same TOFU decision as the verify
+// proc (cert-verify.ts): allowed only when the URL's origin is exactly the
+// configured origin (scheme + host + port, read from the in-memory config
+// cache) AND the presented self-signed certificate matches the pin
+app.on('certificate-error', (event, _webContents, url, error, certificate, callback) => {
+  if (isCertificateErrorAllowed(certificateTrustSource, url, error, certificate)) {
+    event.preventDefault();
+    callback(true);
+    return;
   }
   callback(false);
 }); // End of the certificate-error handler
@@ -240,40 +260,19 @@ app.on('select-client-certificate', (event, _webContents, _url, _certificateList
 
 // App ready
 app.whenReady().then(() => {
-  // Bypass SSL certificate validation only for the configured Omada controller
-  // This is required because Omada controllers use self-signed certificates.
-  // This proc is what lets net.request() reach the controller (the app-level
-  // certificate-error event only covers webContents loads, not the net
-  // module), and it runs on every TLS verification, so it must read the URL
-  // from the in-memory config cache, never from disk.
-  // LIMITATION: the verify-proc request exposes only the hostname — no port —
-  // so the bypass cannot be scoped to the full configured origin here; it is
-  // narrowed instead to the certificate failure classes a self-signed
-  // controller cert actually produces. Full identity binding is the deferred
-  // trust-on-first-use pinning item (todo.md 2.3b).
-  session.defaultSession.setCertificateVerifyProc((request, callback) => {
-    const configUrl = getConfiguredUrl();
-    if (configUrl) {
-      try {
-        // Use .hostname (not .host): the request carries no port to compare
-        const configHostname = new URL(configUrl).hostname;
-        const requestHostname = request.hostname || '';
-        if (
-          configHostname &&
-          configHostname === requestHostname &&
-          isSelfSignedVerificationResult(request.verificationResult)
-        ) {
-          // Accept the self-signed certificate for the Omada controller
-          callback(0); // 0 = OK
-          return;
-        }
-      } catch {
-        // Invalid URL, fall through to default verification
-      }
-    }
-    // Use default Chrome verification for all other requests
-    callback(-3); // -3 = use Chrome's default verification
-  }); // End of the certificate verify proc
+  // Omada controllers use self-signed certificates, which only the verify
+  // proc can let net.request() accept (app 'certificate-error' covers
+  // webContents loads only). The proc applies trust-on-first-use pinning
+  // (cert-pinning.ts): a self-signed certificate for the configured hostname
+  // is accepted only when its SHA-256 fingerprint equals the pin the user
+  // confirmed; other hosts and CA-trusted certificates keep Chromium's
+  // verdict. The verify request carries no port, but the pin binds the
+  // certificate itself, so another port of the same host presenting a
+  // different certificate is rejected. Controller requests use a dedicated,
+  // replaceable session (controllerTls); the default session (renderer,
+  // file: only) gets the same proc for parity
+  installCertificateVerifyProc(session.defaultSession, certificateTrustSource);
+  controllerTls = new ControllerTlsSessions((partition) => session.fromPartition(partition), certificateTrustSource);
 
   createWindow();
 
@@ -294,24 +293,15 @@ app.on('window-all-closed', () => {
 // unreachable controller cannot block quitting), then re-enters app.quit()
 let quitLogoutStarted = false;
 app.on('before-quit', (event) => {
-  // Invalidate any in-flight connect attempt (see connectGeneration)
-  connectGeneration++;
-  // Take ownership of a parked pending-selection controller too: it holds a
-  // live server session that deserves the same bounded logout on quit
-  const pending = pendingSiteSelection;
-  pendingSiteSelection = null;
-  if ((omadaController || pending) && !quitLogoutStarted) {
+  // Invalidate any in-flight connect attempt and any pending certificate
+  // trust decision, and take ownership of every live controller — the
+  // installed one and a parked pending-selection one (connectionManager
+  // .detachAll()): each holds a server session that deserves a bounded logout
+  const detached = connectionManager.detachAll();
+  if (detached.length > 0 && !quitLogoutStarted) {
     quitLogoutStarted = true;
     event.preventDefault();
-    const controller = omadaController;
-    omadaController = null;
-    const logouts: Promise<void>[] = [];
-    if (controller) {
-      logouts.push(controller.logout());
-    }
-    if (pending) {
-      logouts.push(pending.controller.logout());
-    }
+    const logouts = detached.map((controller) => controller.logout());
     // Do not let the logout requests delay quitting for more than 3 seconds
     const deadline = new Promise<void>((resolve) => setTimeout(resolve, 3000));
     Promise.race([Promise.allSettled(logouts).then(() => undefined), deadline]).finally(() => {
@@ -336,186 +326,88 @@ ipcMain.handle(IPC_CHANNELS.CONFIG_LOAD, async (event): Promise<RendererConfig> 
 
 // Save configuration. The handler shape-checks the payload (types, lengths,
 // language enum); saveConfig() then validates/normalizes the URL, enforces
-// the password rules (keep the stored one when absent, reject when none at
-// all), and returns error codes instead of throwing raw errors.
+// the password rules (keep the stored one when absent and the URL is
+// unchanged; require one when nothing usable is stored or the URL changed —
+// a URL change also drops the stored password, Client Secret, site id and
+// certificate pin), and returns error codes instead of throwing raw errors.
+// A URL change is also a controller transition, run by
+// connectionManager.applyConfigSave() in the same synchronous step as the
+// write: every in-flight connect becomes stale, the pending site selection
+// and certificate trust decision are discarded, the installed controller is
+// detached and logged out, and the controller session is replaced. The reply
+// then carries connectionReset so the renderer drops its connected UI.
 ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (event, payload: unknown): Promise<ConfigSaveResult> => {
   assertTrustedIpcSender(event);
   if (!isValidConfigSavePayload(payload)) {
     return { success: false, error: 'saveFailed' };
   }
+  let result: ReturnType<typeof saveConfig>;
   try {
-    return saveConfig(payload);
+    result = await connectionManager.applyConfigSave(() => saveConfig(payload));
   } catch (error) {
     console.error('Unexpected error saving config:', error);
     return { success: false, error: 'saveFailed' };
   }
+  if (!result.success) {
+    return { success: false, error: result.error };
+  }
+  return result.urlChanged ? { success: true, connectionReset: true } : { success: true };
 }); // End of the CONFIG_SAVE handler
 
-/**
- * Best-effort release of a controller instance that lost its right to be the
- * global one (superseded attempt, replaced predecessor, failed connect).
- * logout() swallows network errors itself; this guard only exists so an
- * unexpected rejection can never surface as an unhandled promise.
- * @param {OmadaController} controller - The controller to log out and drop.
- */
-function releaseController(controller: OmadaController): void {
-  controller.logout().catch((error) => {
-    console.warn('Error releasing a controller session:', error);
-  });
-}
-
-/**
- * Creates the opaque one-time nonce that ties a pending site selection to the
- * OMADA_CONNECT attempt that produced it: 16 random bytes, hex-encoded (32
- * lowercase hex characters — see SELECTION_NONCE_REGEX).
- * @returns {string} The freshly generated nonce.
- */
-function createSelectionNonce(): string {
-  return randomBytes(16).toString('hex');
-}
-
-/**
- * Discards the pending site-selection record, if any, releasing its parked
- * controller (best-effort logout). Called when a newer connect supersedes the
- * pending attempt, on an unconditional disconnect, and as a safety net on
- * quit — once discarded, any later OMADA_SELECT_SITE or nonce-scoped
- * disconnect call for that record is rejected as stale.
- */
-function discardPendingSiteSelection(): void {
-  if (pendingSiteSelection) {
-    const pending = pendingSiteSelection;
-    pendingSiteSelection = null;
-    releaseController(pending.controller);
-  }
-}
-
-// Connect to Omada controller (the password is decrypted here in the main
-// process; the renderer is never involved in credential handling). Failures
-// are reported as stable error codes — never user-facing text — which the
+// Connect to Omada controller (the password is decrypted in the main process;
+// the renderer is never involved in credential handling). Failures are
+// reported as stable error codes — never user-facing text — which the
 // renderer maps to its es/en i18n strings; `detail` carries the underlying
-// technical message when one exists.
-// Serialization (todo.md 3.12): the controller is created in a LOCAL variable
-// and installed globally only after authentication succeeds; an attempt whose
-// generation went stale while awaiting (a newer connect or a disconnect
-// started) is logged out and discarded, so a slow first attempt can never
-// clobber the session a later flow owns.
-// Multi-site (todo.md 1.11): the stored site id is offered to connect(); when
-// no site could be picked (several sites, no valid stored choice) the handler
-// parks the controller as a pending site selection — NOT installed globally —
-// and returns needsSiteSelection plus the authorized-site list and an opaque
-// nonce; the renderer completes the connection through OMADA_SELECT_SITE,
-// which requires that nonce while the record is still current.
+// technical message when one exists. Serialization, multi-site parking and
+// certificate pinning: see ConnectionManager.connect() (connection-manager.ts).
 ipcMain.handle(IPC_CHANNELS.OMADA_CONNECT, async (event): Promise<ConnectionResult> => {
   assertTrustedIpcSender(event);
-  const generation = ++connectGeneration;
-  // A newer connect supersedes any site selection still pending from an
-  // earlier attempt: discard it (and release its parked controller) now
-  discardPendingSiteSelection();
-  const config = getConnectionCredentials();
-
-  if (!config.url || !config.username || !config.password) {
-    return { success: false, error: 'configIncomplete' };
-  }
-
-  // Production transport: Electron's net module (net-transport.ts)
-  const controller = new OmadaController(config.url, config.username, config.password, netTransport);
-  try {
-    const outcome = await controller.connect(getStoredSiteId());
-
-    if (generation !== connectGeneration) {
-      // Superseded while authenticating: discard this attempt entirely
-      releaseController(controller);
-      return { success: false, error: 'connectionSuperseded' };
-    }
-
-    // This attempt owns the session now: release any previously installed
-    // controller so repeated connects (e.g. reconnect after a settings save)
-    // cannot leak sessions
-    const previous = omadaController;
-    omadaController = null;
-    if (previous) {
-      releaseController(previous);
-    }
-
-    if (!outcome.siteSelected) {
-      // Park the controller as pending until the user picks a site: the
-      // eventual OMADA_SELECT_SITE call must echo this nonce and succeeds
-      // only while this exact record is still the current one
-      const nonce = createSelectionNonce();
-      pendingSiteSelection = { controller, generation, nonce };
-      return { success: false, needsSiteSelection: true, sites: outcome.sites, selectionNonce: nonce };
-    }
-
-    omadaController = controller;
-    return { success: true };
-  } catch (error) {
-    console.error('Error connecting to the Omada controller:', error);
-    // The login may have partially succeeded before the failure: log the
-    // local controller out best-effort (it was never installed globally)
-    releaseController(controller);
-    if (generation !== connectGeneration) {
-      return { success: false, error: 'connectionSuperseded' };
-    }
-    const detail = error instanceof Error ? error.message : String(error);
-    return { success: false, error: 'connectError', detail };
-  }
-}); // End of the OMADA_CONNECT handler
+  return connectionManager.connect();
+});
 
 // Select a site on a multi-site controller, completing the specific pending
 // connection that returned needsSiteSelection. The id is format-checked here
 // and then exact-matched against the authorized-site list inside the pending
 // controller; the call must also echo the opaque nonce of the CURRENT pending
 // record — a call without a pending selection, with a non-matching nonce, or
-// after a newer connect/disconnect superseded the record is rejected, so a
-// delayed or out-of-order selection can never mutate a session it does not
-// own. The controller is installed globally only here, after the selection
-// succeeds; the chosen id is persisted so the next connect reuses it silently.
+// after a newer connect, a disconnect or a controller transition (URL change,
+// certificate reset) superseded the record is rejected, so a delayed or
+// out-of-order selection can never install a controller or persist a site id
+// it does not own (ConnectionManager.selectSite()).
 ipcMain.handle(IPC_CHANNELS.OMADA_SELECT_SITE, async (event, siteId: unknown, nonce: unknown): Promise<ConnectionResult> => {
   assertTrustedIpcSender(event);
   if (typeof siteId !== 'string' || !SITE_ID_REGEX.test(siteId)) {
     throw new Error('IPC call rejected: invalid site id format');
   }
-  if (typeof nonce !== 'string' || !SELECTION_NONCE_REGEX.test(nonce)) {
+  if (typeof nonce !== 'string' || !NONCE_REGEX.test(nonce)) {
     throw new Error('IPC call rejected: invalid selection nonce format');
   }
-  const pending = pendingSiteSelection;
-  if (!pending || pending.nonce !== nonce || pending.generation !== connectGeneration) {
-    // No selection is pending, or the caller does not own the current one
-    return { success: false, error: 'siteUnavailable' };
-  }
-  if (!pending.controller.selectSite(siteId)) {
-    return { success: false, error: 'siteUnavailable' };
-  }
-  // Selection complete: consume the pending record and install its controller
-  // globally. `previous` is null by construction (the connect that parked the
-  // record released its predecessor, and any later connect or disconnect
-  // would have invalidated the record) — released defensively regardless
-  pendingSiteSelection = null;
-  const previous = omadaController;
-  omadaController = pending.controller;
-  if (previous) {
-    releaseController(previous);
-  }
-  saveStoredSiteId(siteId);
-  return { success: true };
+  return connectionManager.selectSite(siteId, nonce);
 }); // End of the OMADA_SELECT_SITE handler
+
+/**
+ * Returns the installed controller, or throws when none is (not connected,
+ * or detached by a disconnect or a controller transition).
+ * @returns {OmadaController} The installed controller.
+ */
+function requireController(): OmadaController {
+  const controller = connectionManager.controller;
+  if (!controller) {
+    throw new Error('Not connected to the controller');
+  }
+  return controller;
+}
 
 // Get access points
 ipcMain.handle(IPC_CHANNELS.OMADA_GET_APS, async (event) => {
   assertTrustedIpcSender(event);
-  if (!omadaController) {
-    throw new Error('Not connected to the controller');
-  }
-  return omadaController.getAccessPoints();
+  return requireController().getAccessPoints();
 });
 
 // Get WLAN groups
 ipcMain.handle(IPC_CHANNELS.OMADA_GET_WLANS, async (event) => {
   assertTrustedIpcSender(event);
-  if (!omadaController) {
-    throw new Error('Not connected to the controller');
-  }
-  return omadaController.getWlanGroups();
+  return requireController().getWlanGroups();
 });
 
 // Set WLAN group for an AP. Both identifiers are format-checked before they
@@ -528,46 +420,61 @@ ipcMain.handle(IPC_CHANNELS.OMADA_SET_WLAN, async (event, mac: unknown, wlanId: 
   if (typeof wlanId !== 'string' || !WLAN_ID_REGEX.test(wlanId)) {
     throw new Error('IPC call rejected: invalid WLAN id format');
   }
-  if (!omadaController) {
-    throw new Error('Not connected to the controller');
-  }
-  return omadaController.setApWlanGroup(mac, wlanId);
+  return requireController().setApWlanGroup(mac, wlanId);
 }); // End of the OMADA_SET_WLAN handler
 
-// Disconnect from controller (best-effort server-side logout, then drop the
-// controller reference; logout() swallows network errors itself). Two modes:
+// Disconnect from controller (best-effort server-side logout; logout()
+// swallows network errors itself). Two modes (ConnectionManager.disconnect()):
 // - No argument: unconditional user-initiated disconnect — invalidates any
-//   in-flight connect, discards a pending site selection, and logs out the
-//   installed controller.
+//   in-flight connect, discards a pending site selection and certificate
+//   trust decision, and logs out the installed and parked controllers.
 // - With a selection nonce: ownership-scoped abort of a pending site
 //   selection — it acts only while the caller owns the CURRENT pending
 //   record, so a stale flow's cleanup can never log out a session that a
 //   newer connect installed or parked after superseding it.
 ipcMain.handle(IPC_CHANNELS.OMADA_DISCONNECT, async (event, nonce: unknown): Promise<void> => {
   assertTrustedIpcSender(event);
-  if (nonce !== undefined && (typeof nonce !== 'string' || !SELECTION_NONCE_REGEX.test(nonce))) {
+  if (nonce !== undefined && (typeof nonce !== 'string' || !NONCE_REGEX.test(nonce))) {
     throw new Error('IPC call rejected: invalid selection nonce format');
   }
-  if (nonce !== undefined) {
-    const pending = pendingSiteSelection;
-    if (!pending || pending.nonce !== nonce || pending.generation !== connectGeneration) {
-      // Stale caller: it owns nothing that is installed or pending — no-op
-      return;
-    }
-    // Abort the owned pending selection: invalidate the generation (so the
-    // record can never be resurrected) and log its parked controller out
-    connectGeneration++;
-    pendingSiteSelection = null;
-    await pending.controller.logout();
-    return;
-  }
-  // Invalidate any in-flight connect attempt: were one to finish after this
-  // disconnect, it must be discarded, not installed (see connectGeneration)
-  connectGeneration++;
-  discardPendingSiteSelection();
-  if (omadaController) {
-    const controller = omadaController;
-    omadaController = null;
-    await controller.logout();
-  }
+  await connectionManager.disconnect(nonce);
 }); // End of the OMADA_DISCONNECT handler
+
+// Trust the controller certificate a first-use connect result reported
+// ("Trust and connect"). The renderer sends ONLY the opaque trust nonce; the
+// pinned fingerprint is the one the verify proc recorded in the pending
+// record, never a value from the renderer. Accepted only for the CURRENT
+// pending record (exact nonce, unchanged connect generation — no newer
+// connect, disconnect or controller transition since) and only while the
+// configured origin is still the one the certificate was presented for. On
+// success the controller session is replaced so the renderer's immediate
+// reconnect is verified afresh against the new pin
+// (ConnectionManager.trustCertificate()).
+ipcMain.handle(IPC_CHANNELS.CERT_TRUST, async (event, nonce: unknown, ...extra: unknown[]): Promise<CertificateActionResult> => {
+  assertTrustedIpcSender(event);
+  if (extra.length > 0) {
+    throw new Error('IPC call rejected: unexpected arguments');
+  }
+  if (typeof nonce !== 'string' || !NONCE_REGEX.test(nonce)) {
+    throw new Error('IPC call rejected: invalid trust nonce format');
+  }
+  return connectionManager.trustCertificate(nonce);
+}); // End of the CERT_TRUST handler
+
+// Forget the trusted certificate of the configured controller ("Reset
+// trusted certificate" in Settings). Takes no arguments. Main implements the
+// reset as an atomic controller transition on its own, whatever the renderer
+// did before (ConnectionManager.resetCertificate()): the pin is removed and,
+// in the same synchronous step, every in-flight connect becomes stale, the
+// pending site selection and trust decision are discarded, the installed
+// controller is detached and logged out, and the controller session is
+// replaced — so neither a controller, a cached acceptance nor a pooled
+// connection outlives the reset; the next connection is a first use again.
+// The reply carries connectionReset so the renderer drops its connected UI.
+ipcMain.handle(IPC_CHANNELS.CERT_RESET, async (event, ...extra: unknown[]): Promise<CertificateActionResult> => {
+  assertTrustedIpcSender(event);
+  if (extra.length > 0) {
+    throw new Error('IPC call rejected: unexpected arguments');
+  }
+  return connectionManager.resetCertificate();
+}); // End of the CERT_RESET handler

@@ -8,7 +8,9 @@ A modern desktop application for managing TP-Link Omada Controller WLAN group as
 - View all access points with online/offline status
 - View all WLAN groups with their SSIDs
 - Assign WLAN groups to specific access points
-- Supports self-signed SSL certificates (common with Omada controllers)
+- Supports the self-signed certificates Omada controllers use, with
+  trust-on-first-use pinning: you confirm the certificate's SHA-256
+  fingerprint once, and a different certificate is refused afterwards
 - Modern, native-looking UI with dark mode support
 
 ## Requirements
@@ -47,7 +49,10 @@ npm run dev
    - **URL**: Your controller URL (e.g., `https://192.168.1.1:8043`)
    - **Username**: Your Omada Controller username
    - **Password**: Your Omada Controller password
-3. Click **Connect** to connect to the controller
+3. Click **Connect** to connect to the controller. The first time, the app
+   shows the controller certificate's SHA-256 fingerprint: compare it with the
+   certificate of your controller and choose **Trust and connect** (no password
+   is sent before you do)
 4. Select an Access Point from the left panel
 5. Select a WLAN Group from the right panel
 6. Click **Apply Change** to assign the WLAN group to the access point
@@ -69,9 +74,28 @@ The packaged application will be created in the `release/` directory.
 
 ## Configuration
 
-Configuration is stored in `~/.omada-wlan-manager/config.json` and is compatible with the Python version of this application.
+Configuration is stored in `~/.omada-wlan-manager/config.json` (directory mode
+`0700`, file mode `0600`, written atomically). The format is no longer
+compatible with the old Python version of this application.
 
-**Note**: Credentials are stored in plain text. For production use, consider using OS keychain storage.
+- **Password:** stored encrypted with Electron's `safeStorage` (the macOS
+  Keychain, DPAPI on Windows, the secret service on Linux) and decrypted only in
+  the main process; the window never receives it. A plaintext password from an
+  older config is encrypted on first load. Only when the OS offers no
+  encryption (e.g. a Linux session without a secret service) is it kept in
+  plaintext, with a warning.
+- **Credentials are tied to the controller URL:** saving a different URL drops
+  the stored password, the Open API Client Secret (when one is stored), the
+  chosen site and the trusted certificate, and asks for the new controller's
+  password. Leaving the password blank keeps it only while the URL is unchanged.
+  Saving a different URL also closes the current connection: a connection
+  attempt or site choice still in progress for the old controller is discarded.
+- **Trusted certificate:** the SHA-256 fingerprint you confirmed on the first
+  connection, with the controller origin and the time you trusted it. Settings
+  shows it, and **Reset trusted certificate** forgets it and closes the current
+  connection, including one still being established (the next connection asks
+  again). A controller that later presents a different self-signed
+  certificate is refused with a "certificate changed" dialog until you reset it.
 
 ## Development
 
@@ -97,8 +121,9 @@ symlinks Dropbox strips.
 ## Testing
 
 ```bash
-npm test        # unit tests (plain Node, no Electron needed)
-npm run smoke   # build, then the GUI smoke test against a stubbed main process
+npm test          # unit tests (plain Node, no Electron needed)
+npm run smoke     # build, then the GUI smoke test against a stubbed main process
+npm run tls-probe # build, then the opt-in certificate-pinning probe (local HTTPS only)
 ```
 
 - `npm test` type-checks `tests/` (`tsc -p tests`), bundles
@@ -123,6 +148,17 @@ npm run smoke   # build, then the GUI smoke test against a stubbed main process
   `ELECTRON_PATH=/private/tmp/electron/Electron.app/Contents/MacOS/Electron npm run smoke`.
   The smoke fails unless every launch runs exactly the installed `electron`
   package version (it prints the running Electron, Chromium and Node versions).
+- `npm run tls-probe` (opt-in, not part of `npm test` or the smoke; needs
+  `ELECTRON_PATH` and the `openssl` CLI) checks certificate pinning against the
+  real Chromium network stack: it generates self-signed certificates for
+  `127.0.0.1` with `openssl`, serves them from local HTTPS servers, and runs
+  (1) the app's verify proc and controller sessions through `net.request()`
+  (first use rejected before any HTTP request, retry after trust, mismatch also
+  on another port, first use again after a reset) and (2) the real main process
+  and renderer against a local fake controller, including adversarial
+  concurrency checks (a certificate reset or a URL change while a connection
+  or site choice is still in progress must leave nothing connected or saved).
+  HOME is a temp dir and the macOS Keychain is not used.
 - **Isolation:** both commands point `HOME` (and `USERPROFILE`) at a fresh temp
   directory. The smoke stub refuses to start with the real home, keeps
   Electron's profile inside the temp dir, never loads the real main process,
@@ -140,7 +176,10 @@ omada-electron/
 │   │   ├── omada-api.ts # Omada Controller API client
 │   │   ├── omada-transport.ts # HTTP transport interface + hardened implementation
 │   │   ├── net-transport.ts   # Production transport (Electron's net module)
-│   │   ├── omada-validators.ts, cookie-jar.ts, url.ts # Pure, unit-tested helpers
+│   │   ├── cert-verify.ts     # Certificate hooks + replaceable controller session
+│   │   ├── connection-manager.ts # Connection state machine (connect, site choice, trust, reset, URL change)
+│   │   ├── omada-validators.ts, cookie-jar.ts, url.ts, # Pure, unit-tested helpers
+│   │   │   cert-pinning.ts, config-model.ts
 │   │   └── preload.ts  # Preload script for secure IPC
 │   ├── renderer/       # Renderer process (Browser), bundled by esbuild
 │   │   ├── index.html  # Main HTML
@@ -150,7 +189,7 @@ omada-electron/
 │   └── shared/         # Shared types
 │       └── types.ts    # TypeScript interfaces
 ├── scripts/            # Build and test scripts (renderer bundle, unit-test runner)
-├── tests/              # unit/ (node:test), smoke/ (Playwright GUI smoke), fixtures/ (JSON)
+├── tests/              # unit/ (node:test), smoke/ (Playwright GUI smoke), tls-probe/ (opt-in), fixtures/ (JSON)
 ├── assets/             # Icons and resources
 ├── dist/               # Compiled JavaScript (generated)
 └── release/            # Packaged applications (generated)
@@ -158,7 +197,11 @@ omada-electron/
 
 ## Security Notes
 
-- SSL certificate validation is bypassed only for the configured Omada Controller URL
+- Certificate checks are relaxed only for the configured controller, and only
+  for a self-signed certificate whose SHA-256 fingerprint matches the one you
+  trusted (trust on first use). Other hosts and CA-issued certificates get
+  Chromium's normal verification. The first request is already gated, so the
+  password is never sent to an unconfirmed or changed certificate
 - The application uses Electron's `contextIsolation` and disables `nodeIntegration` for security
 - IPC communication is limited to specific, validated channels
 

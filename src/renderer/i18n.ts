@@ -62,6 +62,32 @@ export interface Translations {
   siteSelectionMessage: string;
   siteSelectError: string;
   connectionSuperseded: string;
+  // URL-scoped credentials: password placeholder when the URL field no longer
+  // matches the stored controller URL (the stored password does not apply)
+  passwordRequiredNewUrl: string;
+  // Certificate trust on first use (cert-modal.ts, connection.ts) and the
+  // trusted-certificate section of the settings modal
+  certUntrustedTitle: string;
+  certUntrustedMessage: string;
+  certChangedTitle: string;
+  certChangedMessage: string;
+  certChangedHint: string;
+  certHost: string;
+  certFingerprint: string;
+  certPinnedFingerprint: string;
+  certPresentedFingerprint: string;
+  certTrustAndConnect: string;
+  certUntrustedStatus: string;
+  certChangedStatus: string;
+  certTrustError: string;
+  certPinLabel: string;
+  certPinNone: string;
+  certReset: string;
+  certResetConfirm: string;
+  certResetConfirmConnected: string;
+  certResetAction: string;
+  certResetDone: string;
+  certResetError: string;
   // AP status categories (see AP_STATUS in ap-list.ts). Shown as the
   // accessible name of the status dot, so the state is not conveyed by colour
   // alone.
@@ -129,6 +155,28 @@ const translations: Record<Language, Translations> = {
     siteSelectionMessage: 'Este controlador gestiona varios sitios. Elige cuál quieres administrar:',
     siteSelectError: 'No se pudo seleccionar el sitio',
     connectionSuperseded: 'Conexión descartada: se inició un intento más reciente',
+    passwordRequiredNewUrl: '(obligatoria para la nueva URL)',
+    certUntrustedTitle: 'Verificar el certificado del controlador',
+    certUntrustedMessage: 'El controlador presenta un certificado autofirmado que esta aplicación aún no conoce. Antes de confiar en él, comprueba que la huella SHA-256 coincide con la del certificado de tu controlador. Todavía no se ha enviado ninguna contraseña.',
+    certChangedTitle: 'El certificado del controlador ha cambiado',
+    certChangedMessage: 'El controlador presenta un certificado distinto del que marcaste como de confianza. Podría tratarse de una interceptación de la conexión, así que no se ha conectado ni se ha enviado ninguna contraseña.',
+    certChangedHint: 'Si esperabas el cambio (por ejemplo, porque se regeneró el certificado del controlador), restablece el certificado de confianza en Ajustes y vuelve a conectar.',
+    certHost: 'Controlador',
+    certFingerprint: 'Huella SHA-256',
+    certPinnedFingerprint: 'Huella de confianza',
+    certPresentedFingerprint: 'Huella presentada',
+    certTrustAndConnect: 'Confiar y conectar',
+    certUntrustedStatus: 'Certificado no verificado: conexión cancelada',
+    certChangedStatus: 'Certificado cambiado: conexión rechazada',
+    certTrustError: 'No se pudo guardar el certificado de confianza',
+    certPinLabel: 'Certificado de confianza (SHA-256)',
+    certPinNone: 'Ninguno',
+    certReset: 'Restablecer certificado de confianza',
+    certResetConfirm: '¿Olvidar el certificado de confianza? La próxima conexión te pedirá verificar de nuevo el certificado del controlador.',
+    certResetConfirmConnected: '¿Olvidar el certificado de confianza? Se cerrará la conexión actual y la próxima te pedirá verificar de nuevo el certificado del controlador.',
+    certResetAction: 'Restablecer',
+    certResetDone: 'Certificado de confianza restablecido',
+    certResetError: 'No se pudo restablecer el certificado de confianza',
     statusApConnected: 'Conectado',
     statusApPending: 'Adoptando',
     statusApHeartbeatMissed: 'Sin respuesta',
@@ -191,6 +239,28 @@ const translations: Record<Language, Translations> = {
     siteSelectionMessage: 'This controller manages several sites. Choose which one to manage:',
     siteSelectError: 'Could not select the site',
     connectionSuperseded: 'Connection discarded: a newer attempt was started',
+    passwordRequiredNewUrl: '(required for the new URL)',
+    certUntrustedTitle: 'Verify the controller certificate',
+    certUntrustedMessage: 'The controller presents a self-signed certificate this app does not know yet. Before trusting it, check that the SHA-256 fingerprint matches your controller\'s certificate. No password has been sent yet.',
+    certChangedTitle: 'Controller certificate changed',
+    certChangedMessage: 'The controller presents a different certificate from the one you trusted. This could mean the connection is being intercepted, so the app did not connect and sent no password.',
+    certChangedHint: 'If you expected this change (for example, the controller\'s certificate was regenerated), reset the trusted certificate in Settings and connect again.',
+    certHost: 'Controller',
+    certFingerprint: 'SHA-256 fingerprint',
+    certPinnedFingerprint: 'Trusted fingerprint',
+    certPresentedFingerprint: 'Presented fingerprint',
+    certTrustAndConnect: 'Trust and connect',
+    certUntrustedStatus: 'Certificate not verified: connection cancelled',
+    certChangedStatus: 'Certificate changed: connection refused',
+    certTrustError: 'Could not save the trusted certificate',
+    certPinLabel: 'Trusted certificate (SHA-256)',
+    certPinNone: 'None',
+    certReset: 'Reset trusted certificate',
+    certResetConfirm: 'Forget the trusted certificate? The next connection will ask you to verify the controller\'s certificate again.',
+    certResetConfirmConnected: 'Forget the trusted certificate? The current connection will be closed, and the next one will ask you to verify the controller\'s certificate again.',
+    certResetAction: 'Reset',
+    certResetDone: 'Trusted certificate reset',
+    certResetError: 'Could not reset the trusted certificate',
     statusApConnected: 'Connected',
     statusApPending: 'Adopting',
     statusApHeartbeatMissed: 'Heartbeat missed',

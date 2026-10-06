@@ -40,6 +40,14 @@ export interface RendererState {
   isDisconnecting: boolean;
   isSavingSettings: boolean;
   isApplyingChange: boolean;
+  // True while a trusted-certificate reset (Settings) is in flight
+  isResettingCertificate: boolean;
+
+  // Stored controller URL and password flag captured when the settings modal
+  // opened: the "(unchanged)" password affordance applies only while the URL
+  // field still designates that stored URL (credentials are URL-scoped)
+  settingsStoredUrl: string;
+  settingsHasPassword: boolean;
 
   // The element that opened the settings modal (focus returns there on close)
   settingsOpener: HTMLElement | null;
@@ -66,18 +74,29 @@ export const state: RendererState = {
   isDisconnecting: false,
   isSavingSettings: false,
   isApplyingChange: false,
+  isResettingCertificate: false,
+  settingsStoredUrl: '',
+  settingsHasPassword: false,
   settingsOpener: null,
   isSettingsOpening: false,
 };
 
 /**
  * Reports whether any exclusive operation (connect, disconnect, settings
- * save, apply, or data load) is currently in flight. Used to serialize the
- * operations: while one is pending, starting another is a no-op.
+ * save, apply, data load, or certificate reset) is currently in flight. Used
+ * to serialize the operations: while one is pending, starting another is a
+ * no-op.
  * @returns {boolean} True when an operation is in progress.
  */
 export function isOperationInProgress(): boolean {
-  return state.isConnecting || state.isDisconnecting || state.isSavingSettings || state.isApplyingChange || state.isLoadingData;
+  return (
+    state.isConnecting ||
+    state.isDisconnecting ||
+    state.isSavingSettings ||
+    state.isApplyingChange ||
+    state.isLoadingData ||
+    state.isResettingCertificate
+  );
 }
 
 /**

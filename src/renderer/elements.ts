@@ -40,6 +40,15 @@ export const labelUsername = document.querySelector('label[for="usernameInput"]'
 export const labelPassword = document.getElementById('labelPassword') as HTMLElement;
 export const labelLanguage = document.getElementById('labelLanguage') as HTMLElement;
 
+// Settings: trusted certificate (TOFU pin) display and reset
+export const labelCertPin = document.getElementById('labelCertPin') as HTMLElement;
+export const certPinValue = document.getElementById('certPinValue') as HTMLElement;
+export const resetCertBtn = document.getElementById('resetCertBtn') as HTMLButtonElement;
+export const certResetConfirm = document.getElementById('certResetConfirm') as HTMLElement;
+export const certResetMessage = document.getElementById('certResetMessage') as HTMLElement;
+export const cancelCertResetBtn = document.getElementById('cancelCertResetBtn') as HTMLButtonElement;
+export const confirmCertResetBtn = document.getElementById('confirmCertResetBtn') as HTMLButtonElement;
+
 // Confirm Modal
 export const confirmModal = document.getElementById('confirmModal') as HTMLElement;
 export const confirmModalTitle = confirmModal.querySelector('.modal-header h2') as HTMLElement;
@@ -53,3 +62,12 @@ export const siteModalTitle = document.getElementById('siteModalHeading') as HTM
 export const siteModalMessage = document.getElementById('siteModalMessage') as HTMLElement;
 export const siteListContainer = document.getElementById('siteList') as HTMLElement;
 export const cancelSiteBtn = document.getElementById('cancelSiteBtn') as HTMLButtonElement;
+
+// Certificate Modal (trust on first use: first-use confirmation, certificate changed)
+export const certModal = document.getElementById('certModal') as HTMLElement;
+export const certModalTitle = document.getElementById('certModalHeading') as HTMLElement;
+export const certModalMessage = document.getElementById('certModalMessage') as HTMLElement;
+export const certDetails = document.getElementById('certDetails') as HTMLElement;
+export const certModalHint = document.getElementById('certModalHint') as HTMLElement;
+export const cancelCertBtn = document.getElementById('cancelCertBtn') as HTMLButtonElement;
+export const confirmCertBtn = document.getElementById('confirmCertBtn') as HTMLButtonElement;

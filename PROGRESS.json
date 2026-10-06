@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-06T20:12:15Z",
+ "updated": "2026-10-06T21:16:02Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -78,9 +78,11 @@
   {
    "id": "11",
    "title": "URL-scoped credentials and certificate pinning",
-   "status": "queued",
+   "status": "done",
    "risk": "high",
-   "summary": "Ties stored credentials to the controller URL and pins its certificate on first use."
+   "summary": "Clears credentials and the pin when the controller URL changes, and pins its certificate on first use before any login.",
+   "review": "docs/reviews/phase11.md",
+   "narrative": "docs/progress-archive/phase-11.md"
   },
   {
    "id": "12",

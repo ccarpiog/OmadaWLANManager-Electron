@@ -1,11 +1,13 @@
 // ============================================================================
-// Connection: connect/disconnect (including the multi-site selection step),
-// data loading, and refresh. Every async path is serialized through the
-// operation flags and generation-checked after each await (see state.ts).
+// Connection: connect/disconnect (including the multi-site selection step and
+// the certificate trust-on-first-use step), data loading, and refresh. Every
+// async path is serialized through the operation flags and generation-checked
+// after each await (see state.ts).
 // ============================================================================
 
-import type { SiteInfo } from '../shared/types';
+import type { CertificateActionResult, ConnectionResult, SiteInfo } from '../shared/types';
 import { renderApList } from './ap-list';
+import { showCertificateChanged, showCertificateTrust } from './cert-modal';
 import { apFilterInput, connectBtn, refreshBtn, settingsBtn, wlanFilterInput } from './elements';
 import { t } from './i18n';
 import { showEmptyStates, showLoadingStates, updateSelectionInfo } from './panels';
@@ -13,7 +15,7 @@ import { showSiteSelection } from './site-modal';
 import { invalidateSession, isOperationInProgress, state } from './state';
 import { setStatus } from './status';
 import { showToast } from './toast';
-import { isValidMac, isValidSiteId, isValidWlanId } from './validation';
+import { isValidMac, isValidSiteId, isValidWlanId, parseCertificateDetails } from './validation';
 import { renderWlanList } from './wlan-list';
 
 /**
@@ -38,6 +40,12 @@ function connectionErrorMessage(result: { error?: string; detail?: string }): st
       break;
     case 'siteUnavailable':
       message = t('siteSelectError');
+      break;
+    case 'certificateUntrusted':
+      message = t('certUntrustedStatus');
+      break;
+    case 'certificateChanged':
+      message = t('certChangedStatus');
       break;
     default:
       message = t('connectionError');
@@ -81,19 +89,7 @@ export async function connect(): Promise<void> {
     // Stale result (session superseded while awaiting): discard it
     if (generation !== state.sessionGeneration) return;
 
-    if (result.success) {
-      await commitConnectedUi(generation);
-    } else if (result.error === 'connectionSuperseded') {
-      // Stale attempt: a newer main-process flow (connect or disconnect)
-      // owns the session now. Reset only the local UI — invoking a
-      // disconnect here could log out the controller that newer flow owns
-      resetConnectionUi(connectionErrorMessage(result));
-    } else if (result.needsSiteSelection) {
-      // Multi-site controller with no valid stored choice: let the user pick
-      await runSiteSelection(result.sites, result.selectionNonce, generation);
-    } else {
-      await abortConnection(generation, connectionErrorMessage(result));
-    }
+    await handleConnectResult(result, generation, true);
   } catch (error) {
     console.error('Error connecting:', error);
     // A stale failure must neither flip the newer session's UI nor release
@@ -111,6 +107,106 @@ export async function connect(): Promise<void> {
     }
   }
 } // End of function connect()
+
+/**
+ * Handles one OMADA_CONNECT result inside connect(): success commits the
+ * connected UI; a superseded result resets only the local UI; a multi-site
+ * result runs the site selection; a certificate result runs the first-use
+ * confirmation (only when `allowTrust` — the retry after trusting never asks
+ * twice) or the "certificate changed" notice; anything else aborts with the
+ * mapped error message. Errors propagate to connect()'s catch.
+ * @param {ConnectionResult} result - The connect result.
+ * @param {number} generation - The session generation captured by connect().
+ * @param {boolean} allowTrust - Whether a first-use result may be offered for trust.
+ * @returns {Promise<void>}
+ */
+async function handleConnectResult(result: ConnectionResult, generation: number, allowTrust: boolean): Promise<void> {
+  if (result.success) {
+    await commitConnectedUi(generation);
+  } else if (result.error === 'connectionSuperseded') {
+    // Stale attempt: a newer main-process flow (connect or disconnect)
+    // owns the session now. Reset only the local UI — invoking a
+    // disconnect here could log out the controller that newer flow owns
+    resetConnectionUi(connectionErrorMessage(result));
+  } else if (result.needsSiteSelection) {
+    // Multi-site controller with no valid stored choice: let the user pick
+    await runSiteSelection(result.sites, result.selectionNonce, generation);
+  } else if (result.error === 'certificateUntrusted' && allowTrust) {
+    // Self-signed certificate seen for the first time: let the user verify it
+    await runCertificateTrust(result.certificate, result.trustNonce, generation);
+  } else if (result.error === 'certificateChanged') {
+    await runCertificateChanged(result.certificate, generation);
+  } else {
+    await abortConnection(generation, connectionErrorMessage(result));
+  }
+} // End of function handleConnectResult()
+
+/**
+ * Runs the certificate first-use step of connect(): validates the details and
+ * the opaque trust nonce received over IPC, shows the fingerprint for the
+ * user to verify, and — on "Trust and connect" — sends ONLY the nonce back
+ * (the main process pins the fingerprint it recorded itself), then reconnects
+ * once within the same session. Cancel returns to the disconnected state (the
+ * unconditional disconnect also discards the pending trust record in main).
+ * Part of connect(), so isConnecting stays true throughout and every
+ * post-await commit is generation-checked.
+ * @param {unknown} rawCertificate - The `certificate` field of the result.
+ * @param {unknown} rawNonce - The `trustNonce` field of the result (opaque).
+ * @param {number} generation - The session generation captured by connect().
+ * @returns {Promise<void>}
+ */
+async function runCertificateTrust(rawCertificate: unknown, rawNonce: unknown, generation: number): Promise<void> {
+  const details = parseCertificateDetails(rawCertificate, false);
+  // The nonce is opaque: only its presence and type are checked here
+  const trustNonce = typeof rawNonce === 'string' && rawNonce.length > 0 ? rawNonce : null;
+  if (details === null || trustNonce === null) {
+    await abortConnection(generation, t('certUntrustedStatus'));
+    return;
+  }
+
+  const trusted = await showCertificateTrust(details);
+  if (generation !== state.sessionGeneration) return;
+  if (!trusted) {
+    // User cancelled: not an error — back to the disconnected state
+    await abortConnection(generation, null);
+    return;
+  }
+
+  let trustResult: CertificateActionResult;
+  try {
+    trustResult = await window.omadaAPI.trustCertificate(trustNonce);
+  } catch (error) {
+    console.error('Error trusting the controller certificate:', error);
+    trustResult = { success: false };
+  }
+  if (generation !== state.sessionGeneration) return;
+  if (!trustResult.success) {
+    await abortConnection(generation, t('certTrustError'));
+    return;
+  }
+
+  // The certificate is pinned now: reconnect within this same session. A
+  // second first-use result is not offered again (allowTrust = false)
+  const retry = await window.omadaAPI.connect();
+  if (generation !== state.sessionGeneration) return;
+  await handleConnectResult(retry, generation, false);
+} // End of function runCertificateTrust()
+
+/**
+ * Runs the "certificate changed" step of connect(): the connection is
+ * refused (error status, controller released), then the notice shows the
+ * trusted and the presented fingerprints and points to Settings. Part of
+ * connect(), so the buttons stay disabled until the notice is closed.
+ * @param {unknown} rawCertificate - The `certificate` field of the result.
+ * @param {number} generation - The session generation captured by connect().
+ * @returns {Promise<void>}
+ */
+async function runCertificateChanged(rawCertificate: unknown, generation: number): Promise<void> {
+  const details = parseCertificateDetails(rawCertificate, true);
+  await abortConnection(generation, t('certChangedStatus'));
+  if (generation !== state.sessionGeneration || details === null) return;
+  await showCertificateChanged(details);
+} // End of function runCertificateChanged()
 
 /**
  * Commits the connected UI (status text, button label) and loads the
@@ -255,10 +351,11 @@ function clearData(): void {
 
 /**
  * Disconnects from the controller: releases the main-process controller via
- * IPC and clears the UI state, even if the IPC call fails. The single public
- * guarded entry point (Disconnect button): a no-op while any exclusive
- * operation is in flight, so a disconnect can never overlap a pending
- * connect/save/apply/refresh. Internal cleanup paths that must always run
+ * IPC and clears the UI state, even if the IPC call fails. The guarded entry
+ * point for user-initiated disconnects (the Disconnect button, and the
+ * certificate reset in Settings, which closes a live session first): a no-op
+ * while any exclusive operation is in flight, so a disconnect can never
+ * overlap a pending connect/save/apply/refresh. Internal cleanup paths that must always run
  * (e.g. the failure paths inside connect()) call window.omadaAPI.disconnect()
  * directly instead. The session generation is bumped FIRST, so a data load
  * still in flight discards its result instead of repopulating the
@@ -266,7 +363,7 @@ function clearData(): void {
  * too, so it can never clobber a session that superseded this one.
  * @returns {Promise<void>}
  */
-async function disconnect(): Promise<void> {
+export async function disconnect(): Promise<void> {
   if (isOperationInProgress()) return;
   state.isDisconnecting = true;
   invalidateSession();
@@ -289,6 +386,23 @@ async function disconnect(): Promise<void> {
     }
   }
 } // End of function disconnect()
+
+/**
+ * Mirrors a connection reset the main process performed on its own — a
+ * settings save that changed the controller URL, or a certificate reset
+ * (results carrying `connectionReset`): main already invalidated every
+ * in-flight attempt and detached and logged out the controller, so the
+ * renderer only drops its session (bumping the session generation discards
+ * any in-flight load result) and shows the plain disconnected state with
+ * cleared data. Purely local — no IPC. A no-op while not connected: there is
+ * no connected UI to drop, and a status message already shown stays.
+ */
+export function handleConnectionReset(): void {
+  if (!state.isConnected) return;
+  invalidateSession();
+  resetConnectionUi(null);
+  connectBtn.disabled = false;
+} // End of function handleConnectionReset()
 
 /**
  * Connect button handler: disconnects when connected, connects otherwise.

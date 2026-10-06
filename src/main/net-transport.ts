@@ -3,9 +3,20 @@
 // Electron-dependent piece of the HTTP stack; index.ts injects it into every
 // OmadaController it creates (unit tests inject a fake transport instead).
 
-import { net } from 'electron';
+import { net, Session } from 'electron';
 import { createHardenedTransport, OmadaTransport } from './omada-transport';
 
-// Stateless, so one instance serves every controller. Electron's net module
-// handles SSL certificates via the app's certificate verify proc (index.ts)
-export const netTransport: OmadaTransport = createHardenedTransport((options) => net.request(options));
+/**
+ * Creates the production transport. Every request is sent on the session
+ * returned by `getSession()` AT REQUEST TIME — the controller session from
+ * ControllerTlsSessions (cert-verify.ts), whose verify proc applies the TOFU
+ * certificate pin and which is replaced whenever the trust inputs change — so
+ * no request (not even one from an older controller instance) can ride a
+ * verdict cached before the change. Stateless otherwise: one instance serves
+ * every controller.
+ * @param {() => Session} getSession - Returns the current controller session.
+ * @returns {OmadaTransport} The transport.
+ */
+export function createNetTransport(getSession: () => Session): OmadaTransport {
+  return createHardenedTransport((options) => net.request({ ...options, session: getSession() }));
+}

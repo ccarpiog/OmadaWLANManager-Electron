@@ -13,6 +13,7 @@
     "start": "electron .",
     "test": "node scripts/run-unit-tests.mjs",
     "smoke": "npm run build && node tests/smoke/run-smoke.mjs",
+    "tls-probe": "npm run build && node tests/tls-probe/run-tls-probe.mjs",
     "package": "npm run build && electron-builder",
     "package:mac": "npm run build && electron-builder --mac",
     "package:win": "npm run build && electron-builder --win",

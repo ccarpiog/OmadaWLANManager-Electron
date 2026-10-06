@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  CertificateActionResult,
   ConfigSavePayload,
   ConfigSaveResult,
   ConnectionResult,
@@ -26,6 +27,8 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
   OMADA_SET_WLAN: 'omada:set-wlan',
   OMADA_SELECT_SITE: 'omada:select-site',
   OMADA_DISCONNECT: 'omada:disconnect',
+  CERT_TRUST: 'cert:trust',
+  CERT_RESET: 'cert:reset',
 };
 
 // Expose a safe API to the renderer process. `satisfies OmadaAPI` (type-only,
@@ -79,5 +82,18 @@ contextBridge.exposeInMainWorld('omadaAPI', {
   // selection owning that nonce (a stale caller's call is a no-op in main)
   disconnect: (selectionNonce?: string): Promise<void> => {
     return ipcRenderer.invoke(IPC_CHANNELS.OMADA_DISCONNECT, selectionNonce);
+  },
+
+  // Certificate pinning. trustCertificate() answers a certificateUntrusted
+  // connect result: it sends ONLY the opaque trust nonce that result carried
+  // (echoed back verbatim) — the main process pins the fingerprint it
+  // recorded itself, never one supplied by the renderer. resetCertificate()
+  // forgets the pinned certificate of the configured controller
+  trustCertificate: (trustNonce: string): Promise<CertificateActionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.CERT_TRUST, trustNonce);
+  },
+
+  resetCertificate: (): Promise<CertificateActionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.CERT_RESET);
   }
 } satisfies OmadaAPI);

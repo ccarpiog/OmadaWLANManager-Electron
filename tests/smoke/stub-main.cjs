@@ -12,7 +12,7 @@
 // dist/main/index.js, config.js, net-transport.js or anything else that does
 // network or touches the user's config. It only requires two pure compiled
 // modules (shared/types.js for the channel table, main/url.js for URL
-// normalization), refuses to start unless HOME points away from the real
+// normalization and the same-controller check), refuses to start unless HOME points away from the real
 // home directory, keeps Electron's userData under that temp HOME, writes no
 // files, and cancels every non-file: request the window makes.
 
@@ -31,13 +31,14 @@ const RENDERER_HTML_PATH = path.normalize(path.join(distDir, 'renderer', 'index.
 
 // Pure compiled modules only (see the D4 note above)
 const { IPC_CHANNELS } = require(path.join(distDir, 'shared', 'types.js'));
-const { normalizeControllerUrl } = require(path.join(distDir, 'main', 'url.js'));
+const { isSameControllerUrl, normalizeControllerUrl } = require(path.join(distDir, 'main', 'url.js'));
 
 // Format guards mirrored from src/main/index.ts (keep in sync)
 const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
 const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SELECTION_NONCE_REGEX = /^[0-9a-f]{32}$/;
+const TRUST_NONCE_REGEX = /^[0-9a-f]{32}$/;
 const MAX_URL_LENGTH = 2048;
 const MAX_USERNAME_LENGTH = 256;
 const MAX_PASSWORD_LENGTH = 512;
@@ -64,8 +65,15 @@ app.setPath('userData', path.join(os.homedir(), 'electron-user-data'));
  */
 function defaultScenario() {
   return {
-    // RendererConfig returned by CONFIG_LOAD (updated by a successful CONFIG_SAVE)
-    config: { url: '', username: '', language: 'es', hasPassword: false },
+    // RendererConfig returned by CONFIG_LOAD (updated by a successful CONFIG_SAVE,
+    // CERT_TRUST and CERT_RESET; pinnedFingerprint mirrors the stored TOFU pin)
+    config: { url: '', username: '', language: 'es', hasPassword: false, pinnedFingerprint: null },
+    // Fingerprint of the self-signed certificate the fake controller presents,
+    // or null when certificate pinning is not involved (as if CA-trusted).
+    // With a value, OMADA_CONNECT mirrors certificateRejectionResult() in
+    // src/main/index.ts: no pin -> certificateUntrusted (+ trust nonce), a
+    // different pin -> certificateChanged, the same pin -> the normal flow
+    presentedFingerprint: null,
     // OMADA_CONNECT outcome template: { success: true }, a failure such as
     // { success: false, error: 'connectError', detail: '...' }, or
     // { needsSiteSelection: true } (the stub then offers `sites` with a nonce)
@@ -99,6 +107,10 @@ const stub = {
   pendingSelection: null,
   // Mirrors the site id persisted by OMADA_SELECT_SITE (in memory only)
   storedSiteId: '',
+  // Mirrors pendingCertificateTrust: { nonce, fingerprint, url } or null
+  pendingTrust: null,
+  // Trust nonces handed out by OMADA_CONNECT, in order
+  issuedTrustNonces: [],
   registeredChannels: [],
   environment: { home: os.homedir(), userData: app.getPath('userData'), platform: process.platform },
   // BrowserWindow options used by createWindow() (checked against the real app's)
@@ -129,6 +141,8 @@ const stub = {
       connected: this.connected,
       pendingSelection: this.pendingSelection,
       storedSiteId: this.storedSiteId,
+      pendingTrust: this.pendingTrust,
+      issuedTrustNonces: this.issuedTrustNonces,
       registeredChannels: this.registeredChannels,
       environment: this.environment,
       windowOptions: this.windowOptions,
@@ -213,15 +227,20 @@ function sleep(ms) {
 
 const handlers = {
   /**
-   * CONFIG_LOAD: the sanitized RendererConfig (never a password).
+   * CONFIG_LOAD: the sanitized RendererConfig (never a password; the pinned
+   * fingerprint is public data).
    * @returns {object} The configured RendererConfig.
    */
-  [IPC_CHANNELS.CONFIG_LOAD]: () => structuredClone(stub.scenario.config),
+  [IPC_CHANNELS.CONFIG_LOAD]: () => structuredClone({ pinnedFingerprint: null, ...stub.scenario.config }),
 
   /**
-   * CONFIG_SAVE: mirrors the handler's shape guard and saveConfig()'s rules
-   * (URL normalization, password keep/require, site id dropped on URL change)
-   * but only updates the in-memory scenario — nothing is written to disk.
+   * CONFIG_SAVE: mirrors the handler's shape guard and applyConfigSave()'s
+   * rules (URL normalization, password keep/require, URL-scoped credentials:
+   * a URL change requires a typed password and drops the site id and the
+   * certificate pin) but only updates the in-memory scenario — nothing is
+   * written to disk. A URL change is also a controller transition in main
+   * (ConnectionManager.applyConfigSave()): the controller and any pending
+   * decision are dropped and the result carries connectionReset.
    * @param {unknown} payload - The ConfigSavePayload sent by the renderer.
    * @returns {object} The ConfigSaveResult.
    */
@@ -240,14 +259,20 @@ const handlers = {
       return { success: false, error: 'saveFailed' };
     }
     const typedPassword = typeof payload.password === 'string' && payload.password.length > 0;
-    if (!typedPassword && !stub.scenario.config.hasPassword) {
+    const urlChanged = !isSameControllerUrl(stub.scenario.config.url, url);
+    if (!typedPassword && (urlChanged || !stub.scenario.config.hasPassword)) {
       return { success: false, error: 'passwordRequired' };
     }
-    if (stub.scenario.config.url !== url) {
+    let pinnedFingerprint = stub.scenario.config.pinnedFingerprint || null;
+    if (urlChanged) {
       stub.storedSiteId = '';
+      stub.pendingTrust = null;
+      stub.pendingSelection = null;
+      stub.connected = false;
+      pinnedFingerprint = null;
     }
-    stub.scenario.config = { url, username: payload.username.trim(), language: payload.language, hasPassword: true };
-    return { success: true };
+    stub.scenario.config = { url, username: payload.username.trim(), language: payload.language, hasPassword: true, pinnedFingerprint };
+    return urlChanged ? { success: true, connectionReset: true } : { success: true };
   }, // End of the CONFIG_SAVE handler
 
   /**
@@ -259,11 +284,29 @@ const handlers = {
    */
   [IPC_CHANNELS.OMADA_CONNECT]: () => {
     // A newer connect supersedes any pending selection (discardPendingSiteSelection)
+    // and any pending certificate trust decision
     stub.pendingSelection = null;
+    stub.pendingTrust = null;
     const config = stub.scenario.config;
     if (!config.url || !config.username || !config.hasPassword) {
       return { success: false, error: 'configIncomplete' };
     }
+    // Certificate pinning: the TLS handshake of the first request fails
+    // before anything (the password included) is sent
+    const presented = stub.scenario.presentedFingerprint;
+    if (presented) {
+      const host = new URL(config.url).host;
+      const pinned = config.pinnedFingerprint || null;
+      if (!pinned) {
+        const trustNonce = randomBytes(16).toString('hex');
+        stub.issuedTrustNonces.push(trustNonce);
+        stub.pendingTrust = { nonce: trustNonce, fingerprint: presented, url: config.url };
+        return { success: false, error: 'certificateUntrusted', certificate: { host, fingerprint: presented }, trustNonce };
+      }
+      if (pinned !== presented) {
+        return { success: false, error: 'certificateChanged', certificate: { host, fingerprint: presented, pinnedFingerprint: pinned } };
+      }
+    } // End of the certificate pinning branch
     const template = stub.scenario.connect;
     if (template.needsSiteSelection) {
       const sites = structuredClone(stub.scenario.sites);
@@ -378,9 +421,52 @@ const handlers = {
       return undefined;
     }
     stub.pendingSelection = null;
+    stub.pendingTrust = null;
     stub.connected = false;
     return undefined;
   }, // End of the OMADA_DISCONNECT handler
+
+  /**
+   * CERT_TRUST: same guards as the real handler (no extra arguments, nonce
+   * format, exact match with the current pending record while the configured
+   * URL is unchanged); pins the fingerprint the stub itself recorded.
+   * @param {unknown} nonce - Trust nonce echoed by the renderer.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The CertificateActionResult.
+   */
+  [IPC_CHANNELS.CERT_TRUST]: (nonce, ...extra) => {
+    if (extra.length > 0) {
+      throw new Error('IPC call rejected: unexpected arguments');
+    }
+    if (typeof nonce !== 'string' || !TRUST_NONCE_REGEX.test(nonce)) {
+      throw new Error('IPC call rejected: invalid trust nonce format');
+    }
+    const pending = stub.pendingTrust;
+    if (!pending || pending.nonce !== nonce || pending.url !== stub.scenario.config.url) {
+      return { success: false, error: 'trustUnavailable' };
+    }
+    stub.pendingTrust = null;
+    stub.scenario.config.pinnedFingerprint = pending.fingerprint;
+    return { success: true };
+  }, // End of the CERT_TRUST handler
+
+  /**
+   * CERT_RESET: no arguments allowed; forgets the pin and, like the real
+   * controller transition (ConnectionManager.resetCertificate()), drops the
+   * controller and any pending decision; the result carries connectionReset.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The CertificateActionResult.
+   */
+  [IPC_CHANNELS.CERT_RESET]: (...extra) => {
+    if (extra.length > 0) {
+      throw new Error('IPC call rejected: unexpected arguments');
+    }
+    stub.pendingTrust = null;
+    stub.pendingSelection = null;
+    stub.connected = false;
+    stub.scenario.config.pinnedFingerprint = null;
+    return { success: true, connectionReset: true };
+  }, // End of the CERT_RESET handler
 }; // End of the fake handlers table
 
 // Every channel of the shared table must have a fake, and vice versa: a

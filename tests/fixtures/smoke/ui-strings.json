@@ -25,7 +25,14 @@
     "#settingsBtn@title": "Ajustes",
     "#closeSettingsBtn@aria-label": "Cerrar",
     "#apList@aria-label": "Access Points",
-    "#wlanList@aria-label": "Grupos WLAN"
+    "#wlanList@aria-label": "Grupos WLAN",
+    "#labelCertPin": "Certificado de confianza (SHA-256)",
+    "#resetCertBtn": "Restablecer certificado de confianza",
+    "#cancelCertResetBtn": "Cancelar",
+    "#confirmCertResetBtn": "Restablecer",
+    "#certModalHeading": "Verificar el certificado del controlador",
+    "#cancelCertBtn": "Cancelar",
+    "#confirmCertBtn": "Confiar y conectar"
   },
   "en": {
     "#applyBtn": "Apply change",
@@ -52,6 +59,13 @@
     "#settingsBtn@title": "Settings",
     "#closeSettingsBtn@aria-label": "Close",
     "#apList@aria-label": "Access Points",
-    "#wlanList@aria-label": "WLAN Groups"
+    "#wlanList@aria-label": "WLAN Groups",
+    "#labelCertPin": "Trusted certificate (SHA-256)",
+    "#resetCertBtn": "Reset trusted certificate",
+    "#cancelCertResetBtn": "Cancel",
+    "#confirmCertResetBtn": "Reset",
+    "#certModalHeading": "Verify the controller certificate",
+    "#cancelCertBtn": "Cancel",
+    "#confirmCertBtn": "Trust and connect"
   }
 }

@@ -4,10 +4,17 @@
 
 import type { ConfigSavePayload, Language } from '../shared/types';
 import { applyTranslations } from './apply-translations';
-import { connect } from './connection';
+import { connect, disconnect, handleConnectionReset } from './connection';
 import {
+  cancelCertResetBtn,
+  cancelSettingsBtn,
+  certPinValue,
+  certResetConfirm,
+  certResetMessage,
+  confirmCertResetBtn,
   languageSelect,
   passwordInput,
+  resetCertBtn,
   saveSettingsBtn,
   settingsModal,
   urlInput,
@@ -17,6 +24,7 @@ import { setLanguage, t } from './i18n';
 import { createFocusTrap, updateBackgroundInert } from './modal-focus';
 import { isOperationInProgress, state } from './state';
 import { showToast } from './toast';
+import { isSameControllerUrl, isValidFingerprint, validateControllerUrl } from './validation';
 
 // Focus trap for the settings modal (installed on open, removed on close).
 // The element that opened the modal (focus returns there on close) and the
@@ -28,7 +36,9 @@ const settingsFocusTrap = createFocusTrap(settingsModal);
  * Opens the settings modal populated from the stored config. The password
  * never reaches the renderer: the field is always shown empty, with an
  * "(unchanged)" placeholder when a password is already stored (leaving it
- * blank keeps the stored one, see saveSettings()). The "opening" flag and the
+ * blank keeps the stored one while the URL is unchanged, see
+ * updatePasswordAffordance() and saveSettings()). The trusted-certificate
+ * section shows the pinned fingerprint (or "none"). The "opening" flag and the
  * opener element are captured synchronously BEFORE the config-load await
  * (see state.isSettingsOpening); if that load fails, both are rolled back
  * and an error toast is shown. On success it installs the Tab focus trap and
@@ -61,8 +71,12 @@ export async function openSettings(): Promise<void> {
   urlInput.value = config.url;
   usernameInput.value = config.username;
   passwordInput.value = '';
-  passwordInput.placeholder = config.hasPassword ? t('passwordUnchanged') : '';
+  state.settingsStoredUrl = config.url;
+  state.settingsHasPassword = config.hasPassword;
+  updatePasswordAffordance();
   languageSelect.value = config.language || 'es';
+  renderCertificatePin(config.pinnedFingerprint);
+  hideCertificateResetConfirm();
   document.addEventListener('keydown', settingsFocusTrap);
   settingsModal.classList.add('visible');
   updateBackgroundInert();
@@ -87,42 +101,127 @@ export function closeSettings(): void {
 } // End of function closeSettings()
 
 /**
- * Validates and normalizes the controller URL. Mirrors the main-process rules
- * (normalizeControllerUrl() in src/main/url.ts — keep both in sync): it
- * must parse, use HTTPS, and carry no embedded credentials or fragment; a
- * trailing slash is stripped.
- * @param {string} raw - The URL as typed by the user.
- * @returns {string | null} The normalized URL, or null when invalid.
+ * Updates the password field's placeholder to what leaving it blank means
+ * (credentials are URL-scoped, mirroring applyConfigSave() in
+ * src/main/config-model.ts): "(unchanged)" only while a password is stored
+ * AND the URL field still designates the stored controller URL; "(required
+ * for the new URL)" when a password is stored but the URL was changed — the
+ * stored password belongs to the old controller and is never reused; empty
+ * when no password is stored. Called on open and on every URL edit.
  */
-function validateControllerUrl(raw: string): string | null {
-  let parsed: URL;
+export function updatePasswordAffordance(): void {
+  if (!state.settingsHasPassword) {
+    passwordInput.placeholder = '';
+  } else if (isSameControllerUrl(state.settingsStoredUrl, urlInput.value)) {
+    passwordInput.placeholder = t('passwordUnchanged');
+  } else {
+    passwordInput.placeholder = t('passwordRequiredNewUrl');
+  }
+} // End of function updatePasswordAffordance()
+
+/**
+ * Shows the pinned certificate fingerprint in the trusted-certificate
+ * section (or "none"), and enables the reset button only when something is
+ * pinned. The value comes over IPC, so it is format-checked before display.
+ * @param {unknown} fingerprint - The pinned fingerprint from loadConfig().
+ */
+function renderCertificatePin(fingerprint: unknown): void {
+  const pinned = isValidFingerprint(fingerprint) ? fingerprint : null;
+  certPinValue.textContent = pinned ?? t('certPinNone');
+  certPinValue.classList.toggle('muted-text', pinned === null);
+  resetCertBtn.disabled = pinned === null;
+} // End of function renderCertificatePin()
+
+/**
+ * Hides the inline reset confirmation and shows the reset button again.
+ */
+function hideCertificateResetConfirm(): void {
+  certResetConfirm.hidden = true;
+  resetCertBtn.hidden = false;
+}
+
+/**
+ * "Reset trusted certificate" handler: asks for confirmation inline (inside
+ * the settings modal, so no second modal is stacked on top of it). The
+ * question mentions that a live connection will be closed.
+ */
+export function requestCertificateReset(): void {
+  if (isOperationInProgress() || resetCertBtn.disabled) return;
+  certResetMessage.textContent = state.isConnected ? t('certResetConfirmConnected') : t('certResetConfirm');
+  resetCertBtn.hidden = true;
+  certResetConfirm.hidden = false;
+  cancelCertResetBtn.focus();
+} // End of function requestCertificateReset()
+
+/**
+ * Cancel handler of the inline reset confirmation: back to the reset button.
+ */
+export function cancelCertificateReset(): void {
+  hideCertificateResetConfirm();
+  resetCertBtn.focus();
+}
+
+/**
+ * Confirm handler of the inline reset confirmation: closes a live session
+ * first (while its connection is still trusted, so the logout reaches the
+ * controller), then asks the main process to forget the pinned certificate.
+ * The main process closes the connection itself as part of the reset (it
+ * does not rely on this renderer-side disconnect) and reports it with
+ * `connectionReset`, which the renderer mirrors locally. On success the
+ * section shows "none" and the next connection is a first use again.
+ * Serialized with the other exclusive operations.
+ * @returns {Promise<void>}
+ */
+export async function confirmCertificateReset(): Promise<void> {
+  if (isOperationInProgress()) return;
+  if (state.isConnected) {
+    await disconnect();
+  }
+  if (isOperationInProgress()) return;
+  state.isResettingCertificate = true;
+  confirmCertResetBtn.disabled = true;
+  cancelCertResetBtn.disabled = true;
   try {
-    parsed = new URL(raw.trim());
-  } catch {
-    return null;
+    const result = await window.omadaAPI.resetCertificate();
+    if (result.connectionReset) {
+      // Main closed the connection on its own: drop any connected UI left
+      handleConnectionReset();
+    }
+    if (result.success) {
+      renderCertificatePin(null);
+      showToast(t('certResetDone'), 'success');
+    } else {
+      showToast(t('certResetError'), 'error');
+    }
+  } catch (error) {
+    console.error('Error resetting the trusted certificate:', error);
+    showToast(t('certResetError'), 'error');
+  } finally {
+    state.isResettingCertificate = false;
+    confirmCertResetBtn.disabled = false;
+    cancelCertResetBtn.disabled = false;
+    hideCertificateResetConfirm();
+    // Keep keyboard focus inside the (still open) modal: on the reset button
+    // when it is still usable, else on Cancel
+    if (settingsModal.classList.contains('visible')) {
+      (resetCertBtn.disabled ? cancelSettingsBtn : resetCertBtn).focus();
+    }
   }
-  if (parsed.protocol !== 'https:') {
-    return null;
-  }
-  if (parsed.username || parsed.password || parsed.hash) {
-    return null;
-  }
-  let normalized = parsed.toString();
-  if (normalized.endsWith('/')) {
-    normalized = normalized.slice(0, -1);
-  }
-  return normalized;
-} // End of function validateControllerUrl()
+} // End of function confirmCertificateReset()
 
 /**
  * Validates the settings form and saves the configuration. The password is
  * sent to the main process ONLY when the user typed one: a blank field keeps
  * the previously stored (encrypted) password, and is a validation error when
- * no password is stored yet (the main process enforces both rules too). The
- * URL is validated/normalized here and again in the main process. A no-op
- * while any exclusive operation is pending (including a previous save still
- * in flight — e.g. Enter-key repeat); the Save button is disabled while
- * saving so it cannot double-submit.
+ * no password is stored yet OR the URL now designates a different controller
+ * (credentials are URL-scoped; the main process enforces the same rules).
+ * The URL is validated/normalized here and again in the main process. A save
+ * that changed the controller URL makes the main process close the current
+ * connection (reported as `connectionReset`): the connected UI is dropped
+ * locally before the auto-connect starts. A no-op while any exclusive
+ * operation is pending (including a previous save still in flight — e.g.
+ * Enter-key repeat); the Save button is disabled while saving so it cannot
+ * double-submit.
  * @returns {Promise<void>}
  */
 export async function saveSettings(): Promise<void> {
@@ -133,8 +232,9 @@ export async function saveSettings(): Promise<void> {
   // supersedes the session while the save is awaiting, the auto-connect
   // below must not start
   const generation = state.sessionGeneration;
-  // Set when the save succeeds: the auto-connect starts AFTER the in-flight
-  // flag is released (connect() is itself guarded by isOperationInProgress())
+  // Set when the save succeeds while its session is still current: the
+  // auto-connect starts AFTER the in-flight flag is released (connect() is
+  // itself guarded by isOperationInProgress())
   let connectAfterSave = false;
 
   try {
@@ -155,12 +255,13 @@ export async function saveSettings(): Promise<void> {
 
     if (!typedPassword) {
       const existingConfig = await window.omadaAPI.loadConfig();
-      if (!existingConfig.hasPassword) {
-        // Blank field and nothing stored: refuse to save an unusable config
+      if (!existingConfig.hasPassword || !isSameControllerUrl(existingConfig.url, normalizedUrl)) {
+        // Blank field with nothing stored, or with a password that belongs to
+        // another controller URL: refuse (mirrors applyConfigSave())
         showToast(t('passwordRequired'), 'error');
         return;
       }
-      // Blank field while editing: the main process keeps the stored password
+      // Blank field, same controller: the main process keeps the stored password
     }
 
     const payload: ConfigSavePayload = {
@@ -180,12 +281,21 @@ export async function saveSettings(): Promise<void> {
       // connecting instead of configuring
       state.hasStoredConfig = true;
 
+      // Auto-connect only when the save's session is still current: a save
+      // that completes after a disconnect (or after a newer operation
+      // started) must not start a connection. Decided before the connection
+      // reset below, which starts a new local session itself
+      connectAfterSave = generation === state.sessionGeneration;
+      if (result.connectionReset) {
+        // The controller URL changed: main already closed the connection
+        handleConnectionReset();
+      }
+
       // Apply language change
       setLanguage(payload.language);
       applyTranslations();
 
       closeSettings();
-      connectAfterSave = true;
     } else if (result.error === 'invalidUrl') {
       showToast(t('invalidUrl'), 'error');
     } else if (result.error === 'passwordRequired') {
@@ -198,10 +308,9 @@ export async function saveSettings(): Promise<void> {
     saveSettingsBtn.disabled = false;
   }
 
-  // Auto-connect only when the save's session is still current and nothing
-  // else is in flight: a save that completes after a disconnect (or after a
-  // newer operation started) must not start a connection
-  if (connectAfterSave && generation === state.sessionGeneration && !isOperationInProgress()) {
+  // Auto-connect only when the save's session was still current (see above)
+  // and nothing else is in flight
+  if (connectAfterSave && !isOperationInProgress()) {
     // Auto-connect after saving (the main process reads its own stored
     // password; nothing credential-related comes from the renderer)
     connect();

@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { normalizeControllerUrl } from '../../src/main/url';
+import { isSameControllerUrl, normalizeControllerUrl } from '../../src/main/url';
 import urlFixtures from '../fixtures/config/controller-urls.json';
 
 /**
@@ -50,4 +50,33 @@ describe('normalizeControllerUrl', () => {
       assert.ok(!normalized?.endsWith('/'), validCase.name);
     }
   });
+
+  test('an empty fragment is rejected, never kept as a trailing "#"', () => {
+    assert.equal(normalizeControllerUrl('https://192.168.1.1:8043/#'), null);
+    assert.equal(normalizeControllerUrl('https://192.168.1.1:8043#'), null);
+    for (const validCase of fixture.valid) {
+      assert.ok(!normalizeControllerUrl(validCase.input)?.includes('#'), validCase.name);
+    }
+  });
 }); // End of the describe block for normalizeControllerUrl
+
+describe('isSameControllerUrl', () => {
+  test('same URL, and equal after normalization (legacy trailing slash, case, default port)', () => {
+    assert.equal(isSameControllerUrl('https://192.168.1.130:8043', 'https://192.168.1.130:8043'), true);
+    assert.equal(isSameControllerUrl('https://192.168.1.130:8043/', 'https://192.168.1.130:8043'), true);
+    assert.equal(isSameControllerUrl('HTTPS://Omada.Example.com:443/', 'https://omada.example.com'), true);
+  });
+
+  test('a different host, port, scheme or path is a different controller', () => {
+    assert.equal(isSameControllerUrl('https://192.168.1.130:8043', 'https://192.168.1.131:8043'), false);
+    assert.equal(isSameControllerUrl('https://192.168.1.130:8043', 'https://192.168.1.130:443'), false);
+    assert.equal(isSameControllerUrl('https://omada.example.com/a', 'https://omada.example.com/b'), false);
+    assert.equal(isSameControllerUrl('http://192.168.1.130:8043', 'https://192.168.1.130:8043'), false);
+  });
+
+  test('an empty or invalid stored URL never matches', () => {
+    assert.equal(isSameControllerUrl('', 'https://192.168.1.130:8043'), false);
+    assert.equal(isSameControllerUrl('not a url', 'not a url'), false);
+    assert.equal(isSameControllerUrl('https://192.168.1.130:8043/#', 'https://192.168.1.130:8043'), false);
+  });
+}); // End of the describe block for isSameControllerUrl

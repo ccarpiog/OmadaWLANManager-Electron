@@ -16,7 +16,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 8 | 4.1 Renderer modularization with esbuild (absorbs 3.4) — risk: high (structural, no behavior change); worker: opus | **done** — `docs/progress-archive/phase-8.md` |
 | 9 | 4.2 Test harness: `npm test` (node:test + fixtures) and committed Playwright `_electron` smoke with stubbed main (`npm run smoke`) — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-9.md` |
 | 10 | 4.3 Electron 28 → 44 (absorbs 3.3) — risk: high; worker: opus | **done** — `docs/progress-archive/phase-10.md` |
-| 11 | 4.4 URL-scoped credentials + certificate TOFU pinning (completes 2.3b) — risk: high | pending |
+| 11 | 4.4 URL-scoped credentials + certificate TOFU pinning (completes 2.3b) — risk: high; worker: opus | **done** — `docs/progress-archive/phase-11.md` |
 | 12 | 4.5 Omada 6.3 correctness: `controllerVer`, `groupModel`, full group list from `setting/wlans` (empty groups), AP/WLAN terminology — risk: routine | pending |
 | 13 | 4.6 New app shell (sidebar) + Access points view: multi-select, bulk move with per-AP results — risk: high | pending |
 | 14 | 4.7 Read-only AP groups & Wi-Fi networks views, cross-navigation, states, responsive layout — risk: routine | pending |
@@ -31,7 +31,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 
 **Deferred (need user input or live controller):**
 - ~~1.10 status-category mapping~~ — **done 2026-08-29** (see below).
-- ~~2.3b trust-on-first-use cert pinning~~ — scheduled as phase 11 (todo 4.4).
+- ~~2.3b trust-on-first-use cert pinning~~ — done in phase 11 (todo 4.4).
 - ~~3.3 Electron 28 → current major upgrade~~ — scheduled as phase 10 (todo 4.3).
 - ~~3.4 esbuild bundler for renderer~~ — scheduled as phase 8 (todo 4.1).
 - 3.10 ESLint/CI scaffolding — tests scheduled as phase 9 (todo 4.2); ESLint/CI remain optional.
@@ -48,7 +48,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 ## Environment
 
 - Dropbox strips symlinks and exec bits inside `node_modules` (todo.md 3.11). Every `tsc` run goes through `scripts/tsc.mjs` (Node + `resolveTscPath()`), so a broken `node_modules/.bin` no longer matters. Re-run `npm install` if a package itself goes missing.
-- Verification commands: `npm run build` (`tsc` for main/preload/shared → `tsc -p src/renderer` type-check → esbuild bundle via `scripts/build-renderer.mjs` → copy-static); `npm test` (unit tests, no Electron, temp HOME); `ELECTRON_PATH=<electron binary> npm run smoke` (GUI smoke, stubbed main, temp HOME). No linter. `engines.node` is `^22.18.0 || >=24.2.0` since phase 10. The local Node is 22.15.1, so `npm install` warns; only electron-builder actually breaks on it (next bullet).
+- Verification commands: `npm run build` (`tsc` for main/preload/shared → `tsc -p src/renderer` type-check → esbuild bundle via `scripts/build-renderer.mjs` → copy-static); `npm test` (unit tests, no Electron, temp HOME); `ELECTRON_PATH=<electron binary> npm run smoke` (GUI smoke, stubbed main, temp HOME); `ELECTRON_PATH=<electron binary> npm run tls-probe` (opt-in, phase 11: real Electron `net.request` and the real `dist/main/index.js` against local 127.0.0.1 HTTPS servers with openssl self-signed certificates, temp HOME; run it whenever certificate, session or connection-state code changes). No linter. `engines.node` is `^22.18.0 || >=24.2.0` since phase 10. The local Node is 22.15.1, so `npm install` warns; only electron-builder actually breaks on it (next bullet).
 - **Packaging on Node 22.12–22.17 / 24.0–24.1** (nodejs/node#58586, non-ASCII repo path): `npx electron-builder` fails with `Cannot find module 'async-exit-hook'`. Until the user upgrades Node, run `node --no-turbo-fast-api-calls node_modules/electron-builder/cli.js …` instead, building to `/private/tmp` and never `./release`. With `mac.notarize: true`, electron-builder 26 reads `APPLE_KEYCHAIN_PROFILE` (plus the optional `APPLE_KEYCHAIN`) only when neither the `APPLE_ID…` set nor the `APPLE_API_KEY…` set is in the environment.
 - Dropbox gotcha: several quick back-to-back edits to one file can leave "<name> (… conflicted copy).md" files, and once even removed `PROGRESS.md` itself (phase 8). Batch the edits to a file, then run `fd -H "conflicted copy"` before committing. Keep the newest complete copy.
 - Smoke Electron binary: `node_modules/electron/dist` is broken by Dropbox, so `npm run smoke` needs `ELECTRON_PATH`. An extracted Electron 44.5.1 lives at `/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron`. It may vanish on reboot; if so, re-extract `electron-v44.5.1-darwin-arm64.zip` (GitHub release, or `~/Library/Caches/electron/` after a packaging run) with `ditto -x -k`. The smoke fails unless every launch runs the installed Electron version, so the old 28.3.3 copy in `/private/tmp/omada-p8-smoke/` is rejected.
@@ -212,13 +212,21 @@ validation, connect-without-config, console/main-process errors).
 - Acceptance met: `npm run build` exit 0; `npm test` 143/143; smoke 40/40 on Electron 44.5.1, with zero console errors. The compiled preload still requires only `electron`. The unsigned `electron-builder --mac --dir` to `/private/tmp/omada-p10-build` exits 0 and bundles Electron Framework 44.5.1, but only through the Node workaround in *Environment*. `mac.notarize` is still `true`. `npm audit`: 24 → 8 moderate.
 - Review: Codex, `docs/reviews/phase10.md`, ship-with-fixes. The blocker was that build, build:renderer and watch still ran `tsc` through the Dropbox-breakable `.bin` shim. The orchestrator fixed it with `scripts/tsc.mjs`, then re-ran the build, the tests (143/143) and the smoke (40/40), all exit 0.
 
-## Plan status: ACTIVE — phases 8–10 done, phases 11–20 pending
+### Phase 11 — URL-scoped credentials + certificate TOFU pinning (2026-10-06)
+
+- Risk: high. Worker: opus (phase worker, plus an opus worker for the review blockers). Full narrative: `docs/progress-archive/phase-11.md`.
+- Changing the normalized controller URL drops the password, `encryptedClientSecret`, site id and pin, and a blank password is then refused (`config-model.ts`). The certificate pin is one config record `{origin, sha256, trustedAt}`. `cert-pinning.ts` decides and `cert-verify.ts` applies the decision in both the verify proc and `certificate-error`. A first use or a mismatch fails the `/api/info` handshake, so no login POST is ever sent. New IPC: `CERT_TRUST` (nonce only) and `CERT_RESET`. Renderer: `cert-modal.ts` plus a pin section in Settings. An empty URL fragment is rejected, and the README config note was rewritten.
+- Electron 44 caches verify-proc verdicts per (certificate, hostname), so controller requests use a dedicated in-memory session that is replaced on trust, reset, URL change and after a rejection.
+- Acceptance met: build exit 0; `npm test` 246/246; smoke 52/52; `npm run tls-probe` 21/21. The probe shows 0 HTTP requests reach the server before trust and covers the stale cache and the race cases.
+- Review: Codex, `docs/reviews/phase11.md`, ship-with-fixes with 2 blockers: a URL change and `CERT_RESET` did not invalidate in-flight connects, pending site selections or the installed controller. Both were fixed by moving the state logic into the Electron-free `connection-manager.ts` with one synchronous `invalidateControllerState()`, backed by 26 new unit tests and 4 new e2e probe checks. The orchestrator then re-ran build, tests, smoke and probe, all exit 0.
+
+## Plan status: ACTIVE — phases 8–11 done, phases 12–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
 ## Open risks
 
-- Verify-proc cert bypass is hostname-scoped, not origin-scoped (Electron API limitation, see phase 4 notes); fully closed only by deferred item 2.3b (TOFU pinning).
+- ~~Verify-proc cert bypass is hostname-scoped~~ — closed by phase 11: the bypass now requires the pinned fingerprint, so another certificate on another port of the same host is rejected.
 - ~~No live GUI smoke test~~ — done 2026-08-29, see above.
 - ~~Never tested against a live controller~~ — the user tested the packaged
   v1.0.0 app against a real controller on 2026-08-29 and reported it working.
@@ -236,21 +244,20 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
   `--no-turbo-fast-api-calls` workaround until the user upgrades to Node 22.18+ or 24.2+.
 - electron-builder 26 is untested for Windows/Linux, and a full signed + notarized DMG
   has not been built on it yet. Check `APPLE_KEYCHAIN_PROFILE=AC_NOTARY_PROFILE` on the next release.
-- `normalizeControllerUrl()` (`src/main/url.ts`) and the renderer mirror accept
-  `https://host/#` (empty fragment) and keep the `#`. Harmless; fix with phase
-  11, which touches URL handling.
+- ~~`normalizeControllerUrl()` keeps an empty `#`~~ — fixed in phase 11 (main and renderer reject it).
+- Phase 11 leftovers (none blocking): a stale request made after a TLS-session switch can still record a pin rejection that a concurrent connect to the same host picks up, so the dialog could show a confusing fingerprint; save/reset may take up to 3 s to reply when the old controller hangs (old-session logouts get that long); each session reset keeps an in-memory partition alive until quit; the e2e probe runs with `safeStorage` disabled. Phase 15 must route the Open API client through the same `ControllerTlsSessions` session and `ConnectionManager` invalidation, and clear `encryptedClientSecret` through the existing URL-change path in `config-model.ts`.
 - Four comments in `src/renderer/index.html`/`styles.css` still point to
   `renderer.ts` for code that moved to other renderer modules. Fix them in
   phase 13, when the markup changes anyway.
 
 ## Next action
 
-**Phase 11 — todo 4.4: URL-scoped credentials + certificate TOFU pinning (risk: high).** First read `todo.md` item 4.4 and only §3 "Security requirements" of `docs/management-design.md`. Then:
+**Phase 12 — todo 4.5: Omada 6.3 correctness & terminology (risk: routine).** First read `todo.md` item 4.5, then only §2.2 "Compatibility and capability policy", §2.3 "Data sources" and §4.1 "Vocabulary" of `docs/management-design.md`, and the internal-API parts of `docs/omada-6.3-api-findings.md`. Then:
 
-- Changing the controller URL clears the password, the Client Secret (if present), the site id and the pin, and requires new credentials. Today a blank password reuses the old controller's password: `saveConfig()` in `src/main/config.ts`.
-- TOFU pinning per normalized origin: a first-use fingerprint confirmation dialog, a mismatch dialog, and "Reset trusted certificate" in Settings. No credential is sent before the pin check passes. The pin must hold for both `setCertificateVerifyProc` and `certificate-error` (see the phase 4 notes on the hostname-only verify proc).
-- Also fix the open risk that `normalizeControllerUrl()` (`src/main/url.ts`) and its renderer mirror accept `https://host/#`. Fix README's stale "Python-compatible / plaintext" config note too.
-- Acceptance: unit tests for URL-change clearing and for pin match, mismatch and first use; the smoke covers the first-use and mismatch dialogs (stubbed); new strings in es and en. `npm run build`, `npm test` and `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` must all exit 0.
+- Keep `controllerVer` from `/api/info` and derive `groupModel` (6.3+ "AP groups" vs legacy "WLAN groups").
+- Load the authoritative group list from `GET setting/wlans`, which includes **empty** groups such as `zNinguna` that the app cannot show today, and outer-join SSID names from `GET setting/ssids`. Ignore entries whose `deviceType` is not an AP type.
+- Switch vocabulary: "AP groups" on 6.3+, "WLAN groups (legacy)" below, in es and en. Update the README and the `package.json` description.
+- Acceptance: fixtures for a 6.3 payload with an empty group (it renders) and a legacy payload (keeps "WLAN group" wording); unit tests for the join; the smoke shows an empty group as selectable. `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
 
 ## Key paths
 
@@ -261,7 +268,9 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - `docs/reviews/` — phase review briefs and reports from phase 8 on (earlier ones in `.claude/reviews/`); `docs/progress-archive/` — closed-phase narratives
 - `src/main/index.ts` — window creation, IPC handlers, cert verification
 - `src/main/omada-api.ts` — OmadaController HTTP client
-- `src/main/config.ts` — config persistence
+- `src/main/config.ts` — config persistence (save rules in the pure `config-model.ts`)
+- `src/main/cert-pinning.ts` (pure pin decision + fingerprint), `cert-verify.ts` (verify proc, `certificate-error`, `ControllerTlsSessions`), `connection-manager.ts` (connect / site selection / trust / reset / `invalidateControllerState()`, Electron-free); `src/renderer/cert-modal.ts`
+- `tests/tls-probe/` — opt-in `npm run tls-probe` (local HTTPS servers, real Electron)
 - `src/main/preload.ts` — contextBridge API
 - `docs/management-design.md` — approved spec for phases 8–20 (decisions, architecture, security, UI)
 - `docs/omada-6.3-api-findings.md` — live API findings on controller 6.3.0.45 (internal API + Open API summary)
@@ -273,3 +282,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 8: `9f147ad`, pushed.
 - Phase 9: `65dcf1a` ("Add unit tests and a GUI smoke harness"), pushed to origin/main (`f0a891e..65dcf1a`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 10: `388791f` ("Upgrade Electron to 44 and the build toolchain"), pushed to origin/main (`73ae8ed..388791f`). A follow-up commit records this SHA. Tree clean after it.
+- Phase 11: commit "Scope credentials to the controller URL and pin its certificate" (SHA recorded by the follow-up commit).

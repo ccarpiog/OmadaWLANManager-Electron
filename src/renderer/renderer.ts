@@ -8,16 +8,19 @@
 //   apply-translations.ts writes the active language into the static UI
 //   status.ts             title-bar connection status
 //   toast.ts              toast notifications
-//   validation.ts         MAC / WLAN-id / site-id format guards
+//   validation.ts         format guards (MAC, WLAN/site id, fingerprint),
+//                         controller-URL mirror of src/main/url.ts
 //   dom-helpers.ts        empty/loading blocks, listbox roving tabindex
 //   panels.ts             panel empty/loading states, selection info bar
 //   ap-list.ts            access-point list panel
 //   wlan-list.ts          WLAN group list panel
 //   modal-focus.ts        modal Tab focus trap and inert background
-//   settings-modal.ts     settings modal (open/close/save)
+//   settings-modal.ts     settings modal (open/close/save, certificate reset)
 //   confirm-modal.ts      confirm modal
 //   site-modal.ts         site-selection modal (multi-site controllers)
-//   connection.ts         connect/disconnect, site selection, load/refresh
+//   cert-modal.ts         certificate first-use / "certificate changed" modal
+//   connection.ts         connect/disconnect, site selection, certificate
+//                         trust, load/refresh
 //   apply-change.ts       assign a WLAN group to an AP
 // Shared types come from src/shared/types.ts (type-only imports), and the
 // window.omadaAPI bridge typing from global.d.ts.
@@ -29,11 +32,14 @@ import { connect, refreshData, toggleConnection } from './connection';
 import {
   apFilterInput,
   applyBtn,
+  cancelCertResetBtn,
   cancelSettingsBtn,
   closeSettingsBtn,
+  confirmCertResetBtn,
   connectBtn,
   passwordInput,
   refreshBtn,
+  resetCertBtn,
   saveSettingsBtn,
   settingsBtn,
   settingsModal,
@@ -42,7 +48,15 @@ import {
   wlanFilterInput,
 } from './elements';
 import { setLanguage, t } from './i18n';
-import { closeSettings, openSettings, saveSettings } from './settings-modal';
+import {
+  cancelCertificateReset,
+  closeSettings,
+  confirmCertificateReset,
+  openSettings,
+  requestCertificateReset,
+  saveSettings,
+  updatePasswordAffordance,
+} from './settings-modal';
 import { state } from './state';
 import { setStatus } from './status';
 import { showToast } from './toast';
@@ -72,14 +86,24 @@ cancelSettingsBtn.addEventListener('click', closeSettings);
 saveSettingsBtn.addEventListener('click', saveSettings);
 applyBtn.addEventListener('click', applyChange);
 
+// Credentials are URL-scoped: editing the URL updates what a blank password
+// field means ("unchanged" vs "required for the new URL")
+urlInput.addEventListener('input', updatePasswordAffordance);
+
+// Trusted certificate (Settings): reset with an inline confirmation
+resetCertBtn.addEventListener('click', requestCertificateReset);
+cancelCertResetBtn.addEventListener('click', cancelCertificateReset);
+confirmCertResetBtn.addEventListener('click', confirmCertificateReset);
+
 // Close modal on overlay click
 settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) closeSettings();
 });
 
-// Close the settings modal on Escape key. The confirm modal is NOT handled
-// here: showConfirm() installs its own Escape listener that routes through
-// its cancel path, so the pending promise is always resolved.
+// Close the settings modal on Escape key. The confirm, site-selection and
+// certificate modals are NOT handled here: each installs its own Escape
+// listener that routes through its cancel path, so its pending promise is
+// always resolved (and they never open on top of the settings modal).
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeSettings();

@@ -4,7 +4,7 @@ import { validateAccessPoints, validateSitePage, validateWlanGroups } from './om
 import { OmadaTransport, parseOmadaResponse, ResponseHeaders } from './omada-transport';
 
 // This module never imports Electron: all HTTP goes through the injected
-// OmadaTransport (production: netTransport from net-transport.ts), so the
+// OmadaTransport (production: createNetTransport() from net-transport.ts), so the
 // client is unit-tested with a fake transport (tests/unit/omada-controller.test.ts).
 
 /**
@@ -57,7 +57,7 @@ export class OmadaController {
    * @param {string} username - Login username.
    * @param {string} password - Login password (main process only).
    * @param {OmadaTransport} transport - HTTP transport; production passes
-   *   netTransport (net-transport.ts), tests pass a fake.
+   *   the createNetTransport() transport (net-transport.ts), tests pass a fake.
    */
   constructor(baseUrl: string, username: string, password: string, transport: OmadaTransport) {
     // Remove trailing slash if present

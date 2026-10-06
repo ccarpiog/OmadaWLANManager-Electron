@@ -98,6 +98,20 @@
             <option value="en">English</option>
           </select>
         </div>
+        <!-- Trusted controller certificate (TOFU pin): the fingerprint and
+             an inline, two-step reset (settings-modal.ts) -->
+        <div class="form-group cert-pin-group" role="group" aria-labelledby="labelCertPin">
+          <div class="form-label" id="labelCertPin"></div>
+          <p class="cert-fingerprint cert-pin-value" id="certPinValue"></p>
+          <button class="btn btn-secondary btn-compact" id="resetCertBtn"></button>
+          <div class="cert-reset-confirm" id="certResetConfirm" hidden>
+            <p id="certResetMessage"></p>
+            <div class="cert-reset-actions">
+              <button class="btn btn-secondary btn-compact" id="cancelCertResetBtn" aria-describedby="certResetMessage"></button>
+              <button class="btn btn-danger btn-compact" id="confirmCertResetBtn" aria-describedby="certResetMessage"></button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="cancelSettingsBtn"></button>
@@ -135,6 +149,25 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="cancelSiteBtn"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Certificate Modal (trust on first use: the first-use confirmation and
+       the "certificate changed" notice; cert-modal.ts fills it per open) -->
+  <div class="modal-overlay" id="certModal" role="dialog" aria-modal="true" aria-labelledby="certModalHeading" aria-describedby="certModalMessage">
+    <div class="modal modal-cert">
+      <div class="modal-header">
+        <h2 id="certModalHeading"></h2>
+      </div>
+      <div class="modal-body">
+        <p class="cert-message" id="certModalMessage"></p>
+        <dl class="cert-details" id="certDetails"></dl>
+        <p class="cert-hint" id="certModalHint" hidden></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelCertBtn"></button>
+        <button class="btn btn-primary" id="confirmCertBtn"></button>
       </div>
     </div>
   </div>

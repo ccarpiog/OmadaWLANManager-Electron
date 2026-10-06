@@ -5,16 +5,21 @@ export type Language = 'es' | 'en';
 
 // Sanitized configuration exposed to the renderer. The password itself never
 // leaves the main process — the renderer only learns whether one is stored.
+// `pinnedFingerprint` is the SHA-256 fingerprint of the trusted controller
+// certificate (public data, shown in Settings), or null when no certificate is
+// pinned for the configured controller.
 export interface RendererConfig {
   url: string;
   username: string;
   language: Language;
   hasPassword: boolean;
+  pinnedFingerprint: string | null;
 }
 
 // Payload the renderer sends when saving settings. `password` is present only
 // when the user typed a new one; when absent, the main process keeps the
-// previously stored (encrypted) password.
+// previously stored (encrypted) password — but only while the controller URL
+// is unchanged: a different URL always requires a typed password.
 export interface ConfigSavePayload {
   url: string;
   username: string;
@@ -25,10 +30,15 @@ export interface ConfigSavePayload {
 // Error codes a config save can fail with; the renderer maps them to i18n keys
 export type ConfigSaveError = 'invalidUrl' | 'passwordRequired' | 'saveFailed';
 
-// Result of a config save
+// Result of a config save. `connectionReset` is true when the save changed the
+// controller URL: the main process then invalidated every in-flight connect
+// attempt, discarded any pending site selection / certificate trust decision
+// and logged out the installed controller, so the renderer must drop its
+// connected UI (it reconnects on its own after a successful save).
 export interface ConfigSaveResult {
   success: boolean;
   error?: ConfigSaveError;
+  connectionReset?: boolean;
 }
 
 // Access Point data from Omada API
@@ -65,12 +75,47 @@ export interface OmadaApiResponse<T> {
 // a disconnect started while it was in flight (main-process serialization).
 // 'siteUnavailable': a site selection targeted an id that is not in the
 // authorized-site list, or arrived with no pending controller.
+// 'certificateUntrusted': the controller presented a self-signed certificate
+// and none is trusted yet (first use) — the result carries `certificate` and
+// a `trustNonce` for trustCertificate(). Nothing was sent to the controller.
+// 'certificateChanged': the controller presented a self-signed certificate
+// that differs from the trusted one — the result carries both fingerprints;
+// the connection is refused (the user may reset the pin in Settings).
 export type ConnectionErrorCode =
   | 'configIncomplete'
   | 'connectFailed'
   | 'connectError'
   | 'connectionSuperseded'
-  | 'siteUnavailable';
+  | 'siteUnavailable'
+  | 'certificateUntrusted'
+  | 'certificateChanged';
+
+// The controller certificate a certificateUntrusted/certificateChanged result
+// is about. `host` is the configured controller's host (with port);
+// fingerprints are SHA-256 over the certificate's DER, colon-separated
+// uppercase hex. `pinnedFingerprint` (certificateChanged only) is the trusted one.
+export interface CertificateDetails {
+  host: string;
+  fingerprint: string;
+  pinnedFingerprint?: string;
+}
+
+// Error codes of the certificate trust/reset actions: 'trustUnavailable' —
+// no first-use confirmation is pending for this nonce (superseded by a newer
+// connect, a disconnect, or a controller URL change); 'saveFailed' — the
+// config could not be written.
+export type CertificateActionError = 'trustUnavailable' | 'saveFailed';
+
+// Result of trustCertificate() / resetCertificate(). `connectionReset` (set by
+// resetCertificate(), even when the pin could not be removed) means the main
+// process closed the connection on its own — any in-flight connect attempt
+// was invalidated and the installed controller logged out — so the renderer
+// must drop its connected UI.
+export interface CertificateActionResult {
+  success: boolean;
+  error?: CertificateActionError;
+  connectionReset?: boolean;
+}
 
 // One site of a (possibly multi-site) controller, as offered to the renderer
 // for explicit selection. `name` is display-only; `id` addresses the site.
@@ -88,6 +133,10 @@ export interface SiteInfo {
 // answers with a selectSite() call that echoes the nonce back verbatim (it
 // never interprets it), tying the selection to this exact pending connect in
 // the main process.
+// Certificate errors (see ConnectionErrorCode) carry `certificate`; a
+// first-use result also carries `trustNonce`, an opaque one-time token the
+// renderer echoes back verbatim through trustCertificate() — main then pins
+// the fingerprint IT recorded, never one supplied by the renderer.
 export interface ConnectionResult {
   success: boolean;
   error?: ConnectionErrorCode;
@@ -95,6 +144,8 @@ export interface ConnectionResult {
   needsSiteSelection?: boolean;
   sites?: SiteInfo[];
   selectionNonce?: string;
+  certificate?: CertificateDetails;
+  trustNonce?: string;
 }
 
 // Data loaded from controller
@@ -118,6 +169,8 @@ export interface OmadaAPI {
   setApWlanGroup(mac: string, wlanId: string): Promise<boolean>;
   selectSite(siteId: string, selectionNonce: string): Promise<ConnectionResult>;
   disconnect(selectionNonce?: string): Promise<void>;
+  trustCertificate(trustNonce: string): Promise<CertificateActionResult>;
+  resetCertificate(): Promise<CertificateActionResult>;
 }
 
 // IPC channel names (type-safe)
@@ -133,6 +186,10 @@ export const IPC_CHANNELS = {
   OMADA_SET_WLAN: 'omada:set-wlan',
   OMADA_SELECT_SITE: 'omada:select-site',
   OMADA_DISCONNECT: 'omada:disconnect',
+
+  // Certificate pinning (trust on first use)
+  CERT_TRUST: 'cert:trust',
+  CERT_RESET: 'cert:reset',
 } as const;
 
 // Type for IPC channel values

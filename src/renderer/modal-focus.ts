@@ -1,21 +1,23 @@
 // ============================================================================
 // Modal Focus Containment (Tab focus trap + inert background), shared by the
-// settings, confirm, and site-selection modals
+// settings, confirm, site-selection and certificate modals
 // ============================================================================
 
-import { appContainer, confirmModal, settingsModal, siteModal } from './elements';
+import { appContainer, certModal, confirmModal, settingsModal, siteModal } from './elements';
 
 /**
  * Collects the keyboard-focusable elements currently inside a modal, in DOM
- * order. Recomputed on every Tab press so disabled/enabled changes (e.g. the
- * Save button while saving) are respected.
+ * order. Recomputed on every Tab press so disabled/enabled and shown/hidden
+ * changes (e.g. the Save button while saving, the certificate modal's
+ * single-button variant, the inline reset confirmation in Settings) are
+ * respected: elements inside a `hidden` subtree are skipped.
  * @param {HTMLElement} modal - The modal overlay element to search.
  * @returns {HTMLElement[]} The focusable elements inside the modal.
  */
 function getFocusableElements(modal: HTMLElement): HTMLElement[] {
   const selector = 'button, input, select, textarea, [tabindex]';
   return Array.from(modal.querySelectorAll<HTMLElement>(selector)).filter(
-    el => !el.hasAttribute('disabled') && el.tabIndex >= 0
+    el => !el.hasAttribute('disabled') && el.tabIndex >= 0 && el.closest('[hidden]') === null
   );
 }
 
@@ -56,7 +58,7 @@ export function createFocusTrap(modal: HTMLElement): (e: KeyboardEvent) => void 
 
 /**
  * Syncs the inert state of the background app container with modal
- * visibility: while either modal is open, the background is inert — its
+ * visibility: while any modal is open, the background is inert — its
  * controls can be neither Tab-focused nor clicked (Chromium has supported
  * the inert attribute natively since version 102). This complements the Tab
  * focus trap and the opener-focus restoration. Call after every modal open/close
@@ -67,7 +69,8 @@ export function updateBackgroundInert(): void {
   const anyModalOpen =
     settingsModal.classList.contains('visible') ||
     confirmModal.classList.contains('visible') ||
-    siteModal.classList.contains('visible');
+    siteModal.classList.contains('visible') ||
+    certModal.classList.contains('visible');
   if (anyModalOpen) {
     appContainer.setAttribute('inert', '');
   } else {

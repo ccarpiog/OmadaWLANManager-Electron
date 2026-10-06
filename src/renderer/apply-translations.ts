@@ -8,18 +8,25 @@ import {
   apList,
   apPanelTitle,
   applyBtn,
+  cancelCertBtn,
+  cancelCertResetBtn,
   cancelConfirmBtn,
   cancelSettingsBtn,
   cancelSiteBtn,
+  certModalTitle,
   closeSettingsBtn,
+  confirmCertBtn,
+  confirmCertResetBtn,
   confirmConfirmBtn,
   confirmModalTitle,
   connectBtn,
+  labelCertPin,
   labelLanguage,
   labelPassword,
   labelUrl,
   labelUsername,
   refreshBtn,
+  resetCertBtn,
   saveSettingsBtn,
   settingsBtn,
   settingsModalTitle,
@@ -82,6 +89,12 @@ export function applyTranslations() {
   labelLanguage.textContent = t('language');
   cancelSettingsBtn.textContent = t('cancel');
   saveSettingsBtn.textContent = t('save');
+  // Trusted-certificate section (the fingerprint value and the reset
+  // question are filled per open / per click, see settings-modal.ts)
+  labelCertPin.textContent = t('certPinLabel');
+  resetCertBtn.textContent = t('certReset');
+  cancelCertResetBtn.textContent = t('cancel');
+  confirmCertResetBtn.textContent = t('certResetAction');
 
   // Confirm modal
   confirmModalTitle.textContent = t('confirmChange');
@@ -93,6 +106,12 @@ export function applyTranslations() {
   siteModalTitle.textContent = t('siteSelectionTitle');
   siteModalMessage.textContent = t('siteSelectionMessage');
   cancelSiteBtn.textContent = t('cancel');
+
+  // Certificate modal: first-use defaults (cert-modal.ts rewrites every text
+  // for the variant it opens, so a language change in between is harmless)
+  certModalTitle.textContent = t('certUntrustedTitle');
+  cancelCertBtn.textContent = t('cancel');
+  confirmCertBtn.textContent = t('certTrustAndConnect');
 
   // Status text (depends on state)
   if (!state.isConnected) {

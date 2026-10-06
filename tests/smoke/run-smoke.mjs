@@ -66,7 +66,24 @@ const CONTROLLER_URL = 'https://controller.invalid:8043';
 const CONTROLLER_HOST = 'controller.invalid:8043';
 const MOVE_AP = data.accessPoints.find((ap) => ap.name === 'EAP Carpio');
 const MOVE_GROUP = data.wlanGroups.find((group) => group.wlanName === 'zGrupo B');
-const EXPECTED_BRIDGE = ['connect', 'disconnect', 'getAccessPoints', 'getWlanGroups', 'loadConfig', 'platform', 'saveConfig', 'selectSite', 'setApWlanGroup'];
+const EXPECTED_BRIDGE = ['connect', 'disconnect', 'getAccessPoints', 'getWlanGroups', 'loadConfig', 'platform', 'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup', 'trustCertificate'];
+// One launch per run*() function in main()
+const EXPECTED_LAUNCHES = 3;
+// Fingerprints of the fake controller's self-signed certificates (launch 3)
+const FINGERPRINT_A = Array.from({ length: 32 }, (_, index) => (index * 7 + 16).toString(16).toUpperCase().padStart(2, '0')).join(':');
+const FINGERPRINT_B = Array.from({ length: 32 }, (_, index) => (255 - index).toString(16).toUpperCase().padStart(2, '0')).join(':');
+// Certificate-related strings the checks read (src/renderer/i18n.ts)
+const CERT_TEXT = {
+  es: { pinNone: 'Ninguno', unchanged: '(sin cambios)', requiredNewUrl: '(obligatoria para la nueva URL)', passwordRequired: 'Por favor, introduce la contraseña' },
+  en: {
+    untrustedTitle: 'Verify the controller certificate', changedTitle: 'Controller certificate changed', host: 'Controller',
+    fingerprint: 'SHA-256 fingerprint', pinned: 'Trusted fingerprint', presented: 'Presented fingerprint', trust: 'Trust and connect',
+    cancel: 'Cancel', close: 'Close', changedStatus: 'Certificate changed: connection refused', pinNone: 'None',
+    resetConfirm: 'Forget the trusted certificate? The next connection will ask you to verify the controller\'s certificate again.',
+    resetConfirmConnected: 'Forget the trusted certificate? The current connection will be closed, and the next one will ask you to verify the controller\'s certificate again.',
+    resetDone: 'Trusted certificate reset',
+  },
+};
 
 const results = [];
 const tempDirs = [];
@@ -411,8 +428,54 @@ function readShell(page) {
     settingsOpen: document.getElementById('settingsModal')?.classList.contains('visible'),
     confirmOpen: document.getElementById('confirmModal')?.classList.contains('visible'),
     siteOpen: document.getElementById('siteModal')?.classList.contains('visible'),
+    certOpen: document.getElementById('certModal')?.classList.contains('visible'),
   })); // End of the in-page shell probe
 } // End of function readShell()
+
+/**
+ * Reads the certificate modal: title, message, detail rows, hint and buttons.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The modal's visible content.
+ */
+function readCertModal(page) {
+  return page.evaluate(() => {
+    const terms = Array.from(document.querySelectorAll('#certDetails dt')).map((element) => element.textContent);
+    const values = Array.from(document.querySelectorAll('#certDetails dd')).map((element) => ({
+      text: element.textContent, fingerprint: element.classList.contains('cert-fingerprint'),
+    }));
+    const hint = document.getElementById('certModalHint');
+    const confirm = document.getElementById('confirmCertBtn');
+    return {
+      title: document.getElementById('certModalHeading')?.textContent || '',
+      message: document.getElementById('certModalMessage')?.textContent || '',
+      rows: terms.map((term, index) => ({ term, value: values[index]?.text, fingerprint: values[index]?.fingerprint })),
+      hintShown: Boolean(hint && !hint.hidden && hint.textContent),
+      confirmShown: Boolean(confirm && !confirm.hidden),
+      confirmText: confirm?.textContent || '',
+      cancelText: document.getElementById('cancelCertBtn')?.textContent || '',
+      activeId: document.activeElement?.id || '',
+      inert: document.querySelector('.app-container')?.hasAttribute('inert'),
+      role: document.getElementById('certModal')?.getAttribute('role'),
+      ariaModal: document.getElementById('certModal')?.getAttribute('aria-modal'),
+    };
+  }); // End of the in-page certificate modal probe
+} // End of function readCertModal()
+
+/**
+ * Reads the trusted-certificate section of the settings modal.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} Pin value, reset button and inline confirmation state.
+ */
+function readCertPinSection(page) {
+  return page.evaluate(() => ({
+    value: document.getElementById('certPinValue')?.textContent || '',
+    resetDisabled: document.getElementById('resetCertBtn')?.disabled,
+    resetHidden: document.getElementById('resetCertBtn')?.hidden,
+    confirmShown: !document.getElementById('certResetConfirm')?.hidden,
+    confirmMessage: document.getElementById('certResetMessage')?.textContent || '',
+    activeId: document.activeElement?.id || '',
+  }));
+}
 
 /**
  * Waits until a toast of the given type with exactly the given text is shown.
@@ -630,6 +693,11 @@ async function runSpanishFirstRun(electronInfo) {
       );
     });
 
+    await check('[es] first run: the trusted-certificate section shows "Ninguno" and its reset button is disabled', async () => {
+      const section = await readCertPinSection(page);
+      return verdict(section.value === CERT_TEXT.es.pinNone && section.resetDisabled === true && section.confirmShown === false, section);
+    });
+
     await check('[es] settings: a non-https URL is rejected in the renderer (error toast, nothing saved)', async () => {
       await page.fill('#urlInput', 'http://controller.invalid:8043');
       await page.fill('#usernameInput', 'admin');
@@ -812,9 +880,26 @@ async function runSpanishFirstRun(electronInfo) {
       return verdict(shell.inert === true, shell);
     });
 
+    await check('[es] URL-scoped password: editing the URL drops "(sin cambios)", a blank password is refused (no save), restoring the URL brings it back', async () => {
+      const savesBefore = callsTo(await stubState(session), 'config:save').length;
+      await page.fill('#urlInput', 'https://otro-controlador.invalid:8043');
+      const changed = await page.evaluate(() => document.getElementById('passwordInput').placeholder);
+      await page.click('#saveSettingsBtn');
+      await waitForToast(page, 'error', CERT_TEXT.es.passwordRequired);
+      const savesAfter = callsTo(await stubState(session), 'config:save').length;
+      await page.fill('#urlInput', `${CONTROLLER_URL}/`);
+      const restored = await page.evaluate(() => document.getElementById('passwordInput').placeholder);
+      const shell = await readShell(page);
+      return verdict(
+        changed === CERT_TEXT.es.requiredNewUrl && restored === CERT_TEXT.es.unchanged && savesAfter === savesBefore && shell.settingsOpen === true,
+        { changed, restored, savesBefore, savesAfter, settingsOpen: shell.settingsOpen }
+      );
+    }); // End of check "[es] URL-scoped password: editing the URL drops ..."
+
     await check('[es] save rejected by the main process: error toast, password never echoed, settings stay open', async () => {
       await configureStub(session, { saveResult: { success: false, error: 'saveFailed' } });
       await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+      await page.fill('#urlInput', CONTROLLER_URL);
       const form = await page.evaluate(() => ({
         url: document.getElementById('urlInput').value,
         password: document.getElementById('passwordInput').value,
@@ -937,11 +1022,226 @@ async function runEnglishMultiSite(electronInfo) {
         { connects: callsTo(snapshot, 'omada:connect').length, nonces: snapshot.issuedNonces.length }
       );
     }); // End of check "[en] reconnect reuses the remembered site (no site modal, no new se..."
+
+    await check('[en] Save with a different controller URL while connected: CONFIG_SAVE reports connectionReset, the old controller\'s lists are dropped at once (no stale rows while the auto-connect runs), the remembered site is forgotten', async () => {
+      // Slow connect, so the state between the save and the reconnect is observable
+      await configureStub(session, { delays: { 'omada:connect': 1500 } });
+      try {
+        await page.click('#settingsBtn');
+        await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+        await page.fill('#urlInput', 'https://other-controller.invalid:8043');
+        await page.fill('#passwordInput', 'other-password');
+        await page.click('#saveSettingsBtn');
+        await page.waitForFunction(() => !document.getElementById('settingsModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+        const during = await readShell(page);
+        const rowsDuring = (await readApItems(page)).length;
+        const afterSave = await stubState(session);
+        // The auto-connect asks for a site again (the remembered one was dropped)
+        await page.waitForSelector('#siteModal.visible', { timeout: WAIT_MS });
+        await page.click('#cancelSiteBtn');
+        await waitForStatus(page, en.disconnected);
+        return verdict(
+          rowsDuring === 0 && during.apEmpty === en.connectToSeeAPs && during.status === en.connecting &&
+          afterSave.connected === false && afterSave.storedSiteId === '' &&
+          afterSave.scenario.config.url === 'https://other-controller.invalid:8043',
+          { rowsDuring, during, connected: afterSave.connected, storedSiteId: afterSave.storedSiteId }
+        );
+      } finally {
+        await configureStub(session, { delays: {} });
+      }
+    }); // End of check "[en] Save with a different controller URL while connected..."
   } finally {
     session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
     await session.app.close().catch(() => {});
   }
 } // End of function runEnglishMultiSite()
+
+// ============================================================================
+// Launch 3: English, stored config, self-signed certificate (TOFU pinning)
+// ============================================================================
+
+/**
+ * English launch against a fake controller presenting a self-signed
+ * certificate: first-use dialog (cancel, then trust -> connected), the pinned
+ * fingerprint in Settings, the "certificate changed" dialog (stays
+ * disconnected), the Settings reset (disconnected and connected), and first
+ * use again after a reset.
+ * @param {{ binary: string }} electronInfo - Resolved Electron binary.
+ * @returns {Promise<void>}
+ */
+async function runCertificatePinning(electronInfo) {
+  const session = await launch(electronInfo, 'tofu', {
+    config: { url: CONTROLLER_URL, username: 'admin', language: 'en', hasPassword: true, pinnedFingerprint: null },
+    connect: { success: true },
+    presentedFingerprint: FINGERPRINT_A,
+    accessPoints: data.accessPoints,
+    wlanGroups: data.wlanGroups,
+  });
+  const { page } = session;
+  const en = TEXT.en;
+  const text = CERT_TEXT.en;
+  const expectedAps = expectedApRows(data.accessPoints, 'en');
+
+  try {
+    await checkWindowLikeRealApp(session);
+
+    await check('[tofu] auto-connect meets a self-signed certificate: first-use dialog with host and SHA-256 fingerprint, focus on Cancel, inert background, no data requested', async () => {
+      await page.waitForSelector('#certModal.visible', { timeout: WAIT_MS });
+      await page.waitForFunction(() => document.activeElement?.id === 'cancelCertBtn', null, { timeout: WAIT_MS });
+      const modal = await readCertModal(page);
+      const snapshot = await stubState(session);
+      const shell = await readShell(page);
+      return verdict(
+        modal.title === text.untrustedTitle && modal.message.length > 0 && modal.role === 'dialog' && modal.ariaModal === 'true' &&
+        isDeepStrictEqual(modal.rows, [
+          { term: text.host, value: CONTROLLER_HOST, fingerprint: false },
+          { term: text.fingerprint, value: FINGERPRINT_A, fingerprint: true },
+        ]) &&
+        modal.confirmShown && modal.confirmText === text.trust && modal.cancelText === text.cancel && modal.hintShown === false &&
+        modal.inert === true && shell.status === en.connecting && callsTo(snapshot, 'omada:get-aps').length === 0 &&
+        snapshot.issuedTrustNonces.length === 1 && snapshot.pendingTrust?.nonce === snapshot.issuedTrustNonces[0],
+        { modal, status: shell.status, nonces: snapshot.issuedTrustNonces }
+      );
+    }); // End of check "[tofu] auto-connect meets a self-signed certificate..."
+
+    await check('[tofu] first-use -> Cancel: disconnected, unconditional disconnect, nothing trusted', async () => {
+      await page.click('#cancelCertBtn');
+      await waitForStatus(page, en.disconnected);
+      const snapshot = await stubState(session);
+      const disconnects = callsTo(snapshot, 'omada:disconnect');
+      const shell = await readShell(page);
+      return verdict(
+        disconnects.length === 1 && disconnects[0].args[0] == null && snapshot.pendingTrust === null &&
+        callsTo(snapshot, 'cert:trust').length === 0 && snapshot.scenario.config.pinnedFingerprint === null &&
+        shell.certOpen === false && shell.inert === false && shell.connect === en.connect,
+        { disconnects, pendingTrust: snapshot.pendingTrust, shell }
+      );
+    }); // End of check "[tofu] first-use -> Cancel..."
+
+    await check('[tofu] Connect again -> first-use dialog again; "Trust and connect" sends ONLY the new nonce, reconnects and renders the lists', async () => {
+      await page.click('#connectBtn');
+      await page.waitForSelector('#certModal.visible', { timeout: WAIT_MS });
+      await page.click('#confirmCertBtn');
+      await waitForStatus(page, CONTROLLER_HOST);
+      await waitForApCount(page, expectedAps.length);
+      const snapshot = await stubState(session);
+      const trusts = callsTo(snapshot, 'cert:trust');
+      const apVerdict = compareApRows(await readApItems(page), expectedAps);
+      return verdict(
+        trusts.length === 1 && isDeepStrictEqual(trusts[0].args, [snapshot.issuedTrustNonces[1]]) &&
+        callsTo(snapshot, 'omada:connect').length === 3 && snapshot.scenario.config.pinnedFingerprint === FINGERPRINT_A &&
+        snapshot.connected === true && apVerdict.ok,
+        { trusts, nonces: snapshot.issuedTrustNonces, connects: callsTo(snapshot, 'omada:connect').length, aps: apVerdict.detail }
+      );
+    }); // End of check "[tofu] Connect again -> first-use dialog again..."
+
+    await check('[tofu] Settings shows the pinned fingerprint and an enabled reset button', async () => {
+      await page.click('#settingsBtn');
+      await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+      const section = await readCertPinSection(page);
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.getElementById('settingsModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+      return verdict(section.value === FINGERPRINT_A && section.resetDisabled === false && section.confirmShown === false, section);
+    });
+
+    await check('[tofu] certificate changed: dialog shows trusted and presented fingerprints with a single Close button; the app stays disconnected', async () => {
+      await page.click('#connectBtn');
+      await waitForStatus(page, en.disconnected);
+      await configureStub(session, { presentedFingerprint: FINGERPRINT_B });
+      const before = await stubState(session);
+      await page.click('#connectBtn');
+      await page.waitForSelector('#certModal.visible', { timeout: WAIT_MS });
+      await page.waitForFunction(() => document.activeElement?.id === 'cancelCertBtn', null, { timeout: WAIT_MS });
+      const modal = await readCertModal(page);
+      const during = await readShell(page);
+      await page.click('#cancelCertBtn');
+      await page.waitForFunction(() => !document.getElementById('certModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+      await page.waitForFunction(() => document.getElementById('connectBtn').disabled === false, null, { timeout: WAIT_MS });
+      const after = await stubState(session);
+      const shell = await readShell(page);
+      return verdict(
+        modal.title === text.changedTitle &&
+        isDeepStrictEqual(modal.rows, [
+          { term: text.host, value: CONTROLLER_HOST, fingerprint: false },
+          { term: text.pinned, value: FINGERPRINT_A, fingerprint: true },
+          { term: text.presented, value: FINGERPRINT_B, fingerprint: true },
+        ]) &&
+        modal.confirmShown === false && modal.cancelText === text.close && modal.hintShown === true &&
+        during.status === text.changedStatus && during.indicator.split(' ').includes('error') &&
+        shell.status === text.changedStatus && shell.connect === en.connect && after.connected === false &&
+        callsTo(after, 'cert:trust').length === callsTo(before, 'cert:trust').length &&
+        callsTo(after, 'omada:get-aps').length === callsTo(before, 'omada:get-aps').length &&
+        after.scenario.config.pinnedFingerprint === FINGERPRINT_A && shell.inert === false,
+        { modal, during: during.status, shell }
+      );
+    }); // End of check "[tofu] certificate changed..."
+
+    await check('[tofu] Settings reset (disconnected): inline confirmation, CERT_RESET with no arguments, fingerprint shows "None"', async () => {
+      await page.click('#settingsBtn');
+      await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+      await page.click('#resetCertBtn');
+      await page.waitForFunction(() => document.activeElement?.id === 'cancelCertResetBtn', null, { timeout: WAIT_MS });
+      const asking = await readCertPinSection(page);
+      await page.click('#confirmCertResetBtn');
+      await waitForToast(page, 'success', text.resetDone);
+      const section = await readCertPinSection(page);
+      const snapshot = await stubState(session);
+      const resets = callsTo(snapshot, 'cert:reset');
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.getElementById('settingsModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+      return verdict(
+        asking.confirmShown === true && asking.resetHidden === true && asking.confirmMessage === text.resetConfirm &&
+        resets.length === 1 && isDeepStrictEqual(resets[0].args, []) && snapshot.scenario.config.pinnedFingerprint === null &&
+        section.value === text.pinNone && section.resetDisabled === true && section.confirmShown === false,
+        { asking, section, resets }
+      );
+    }); // End of check "[tofu] Settings reset (disconnected)..."
+
+    await check('[tofu] after the reset the next connect is a first use again (new certificate offered); Escape cancels', async () => {
+      await page.click('#connectBtn');
+      await page.waitForSelector('#certModal.visible', { timeout: WAIT_MS });
+      const modal = await readCertModal(page);
+      await page.keyboard.press('Escape');
+      await waitForStatus(page, en.disconnected);
+      const snapshot = await stubState(session);
+      return verdict(
+        modal.title === text.untrustedTitle && modal.rows[1]?.value === FINGERPRINT_B && snapshot.pendingTrust === null &&
+        callsTo(snapshot, 'cert:trust').length === 1,
+        { modal, pendingTrust: snapshot.pendingTrust }
+      );
+    }); // End of check "[tofu] after the reset the next connect is a first use again..."
+
+    await check('[tofu] Settings reset while connected: the session is closed first (OMADA_DISCONNECT before CERT_RESET)', async () => {
+      await page.click('#connectBtn');
+      await page.waitForSelector('#certModal.visible', { timeout: WAIT_MS });
+      await page.click('#confirmCertBtn');
+      await waitForStatus(page, CONTROLLER_HOST);
+      await waitForApCount(page, expectedAps.length);
+      await page.click('#settingsBtn');
+      await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+      await page.click('#resetCertBtn');
+      const asking = await readCertPinSection(page);
+      await page.click('#confirmCertResetBtn');
+      await waitForToast(page, 'success', text.resetDone);
+      const snapshot = await stubState(session);
+      const channels = snapshot.calls.map((call) => call.channel);
+      const disconnectIndex = channels.lastIndexOf('omada:disconnect');
+      const resetIndex = channels.lastIndexOf('cert:reset');
+      const shell = await readShell(page);
+      await page.keyboard.press('Escape');
+      return verdict(
+        asking.confirmMessage === text.resetConfirmConnected && disconnectIndex >= 0 && resetIndex > disconnectIndex &&
+        snapshot.calls[disconnectIndex].args[0] == null && callsTo(snapshot, 'cert:reset').length === 2 &&
+        snapshot.connected === false && snapshot.scenario.config.pinnedFingerprint === null &&
+        shell.status === en.disconnected && shell.apEmpty === en.connectToSeeAPs,
+        { asking, disconnectIndex, resetIndex, shell }
+      );
+    }); // End of check "[tofu] Settings reset while connected..."
+  } finally {
+    session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
+    await session.app.close().catch(() => {});
+  }
+} // End of function runCertificatePinning()
 
 // ============================================================================
 // Whole-run checks
@@ -964,7 +1264,7 @@ async function runGlobalChecks() {
   await check(`every launch ran the installed Electron ${installedElectron} (process.versions.electron)`, () => {
     const running = launches.map((session) => ({ label: session.label, versions: session.runningVersions }));
     return verdict(
-      running.length === 2 && running.every(({ versions }) => versions && versions.electron === installedElectron),
+      running.length === EXPECTED_LAUNCHES && running.every(({ versions }) => versions && versions.electron === installedElectron),
       running
     );
   });
@@ -999,7 +1299,7 @@ async function runGlobalChecks() {
   await check('HOME and Electron userData were fresh temp dirs on every launch', () => {
     const detail = states.map(({ session, state }) => ({ home: session.home, seen: state.environment }));
     return verdict(
-      states.length === 2 && states.every(({ session, state }) =>
+      states.length === EXPECTED_LAUNCHES && states.every(({ session, state }) =>
         state.environment && path.resolve(state.environment.home) === path.resolve(session.home) &&
         path.resolve(state.environment.userData).startsWith(path.resolve(session.home) + path.sep) &&
         path.resolve(session.home).startsWith(path.resolve(os.tmpdir()))),
@@ -1015,7 +1315,7 @@ async function runGlobalChecks() {
 } // End of function runGlobalChecks()
 
 /**
- * Entry point: resolve Electron, run both launches and the global checks,
+ * Entry point: resolve Electron, run every launch and the global checks,
  * print the summary, clean up the temp dirs and set the exit code.
  * @returns {Promise<void>}
  */
@@ -1025,7 +1325,7 @@ async function main() {
   console.log(`Electron ${electronInfo.version} (${electronInfo.source}): ${electronInfo.binary}\n`);
 
   try {
-    for (const [label, runLaunch] of [['es', runSpanishFirstRun], ['en', runEnglishMultiSite]]) {
+    for (const [label, runLaunch] of [['es', runSpanishFirstRun], ['en', runEnglishMultiSite], ['tofu', runCertificatePinning]]) {
       try {
         await runLaunch(electronInfo);
       } catch (error) {
