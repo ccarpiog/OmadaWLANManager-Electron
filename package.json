@@ -5,9 +5,11 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "npm run build && electron .",
-    "build": "tsc && npm run copy-static",
+    "build": "tsc && npm run build:renderer && npm run copy-static",
+    "build:renderer": "tsc -p src/renderer && node scripts/build-renderer.mjs",
     "copy-static": "node -e \"const fs=require('fs');fs.cpSync('src/renderer/index.html','dist/renderer/index.html');fs.cpSync('src/renderer/styles.css','dist/renderer/styles.css');\"",
     "watch": "tsc -w",
+    "watch:renderer": "node scripts/build-renderer.mjs --watch",
     "start": "electron .",
     "package": "npm run build && electron-builder",
     "package:mac": "npm run build && electron-builder --mac",
@@ -28,6 +30,7 @@
     "dmg-builder": "^24.13.3",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
+    "esbuild": "^0.28.2",
     "typescript": "^5.3.0"
   },
   "build": {

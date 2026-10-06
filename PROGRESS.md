@@ -13,7 +13,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 5 | Packaging & platform: 1.2, 3.5, 3.15 | **done** |
 | 6 | UX improvements: 3.1, 3.2, 3.7, 3.8 (+OMADA_CONNECT i18n error codes) | **done** |
 | 7 | Connection flow & multi-site: 1.11, 3.12 | **done** |
-| 8 | 4.1 Renderer modularization with esbuild (absorbs 3.4) — risk: high (structural, no behavior change) | pending |
+| 8 | 4.1 Renderer modularization with esbuild (absorbs 3.4) — risk: high (structural, no behavior change); worker: opus | **done** — `docs/progress-archive/phase-8.md` |
 | 9 | 4.2 Test harness: `npm test` (node:test + fixtures) and committed Playwright `_electron` smoke with stubbed main (`npm run smoke`) — risk: routine | pending |
 | 10 | 4.3 Electron 28 → current major (absorbs 3.3) — risk: high | pending |
 | 11 | 4.4 URL-scoped credentials + certificate TOFU pinning (completes 2.3b) — risk: high | pending |
@@ -48,7 +48,9 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 ## Environment
 
 - `npm install` re-run 2026-08-24 to restore `node_modules/.bin` (Dropbox strips symlinks — see todo.md 3.11). If `tsc: command not found` reappears, re-run `npm install`.
-- Verification command: `npm run build` (tsc + copy-static). No tests/linter exist yet.
+- Verification command: `npm run build` (`tsc` for main/preload/shared → `tsc -p src/renderer` type-check → esbuild bundle via `scripts/build-renderer.mjs` → copy-static). No tests/linter exist yet (phase 9 adds them).
+- Dropbox gotcha: several quick back-to-back edits to one file can leave "<name> (… conflicted copy).md" files, and once even removed `PROGRESS.md` itself (phase 8). Batch the edits to a file, then run `fd -H "conflicted copy"` before committing. Keep the newest complete copy.
+- Throwaway GUI launch tooling from phase 8 (may vanish on reboot): Electron 28.3.3 at `/private/tmp/omada-p8-smoke/electron/Electron.app`, playwright-core at `/private/tmp/omada-p8-smoke/pw`, script `/private/tmp/omada-p8-tools/smoke.mjs` (usage in `docs/progress-archive/phase-8.md`).
 - Git remote: `origin` → github.com/ccarpiog/OmadaWLANManager-Electron.git, branch `main`.
 
 ## Completed
@@ -186,7 +188,14 @@ validation, connect-without-config, console/main-process errors).
 - `notarize-dmg.sh` now globs the `.dmg` instead of hard-coding a version, so
   it survives future releases.
 
-## Plan status: ACTIVE — phases 8–20 pending
+### Phase 8 — renderer modularization with esbuild (2026-10-06)
+
+- Risk: high. Worker: opus. Full narrative: `docs/progress-archive/phase-8.md`.
+- The renderer is now one esbuild IIFE bundle (`dist/renderer/renderer.js`), built from 17 modules plus the `renderer.ts` entry. Shared types come from `src/shared/types.ts`, which now also holds the `OmadaAPI` bridge interface. `index.html`/`styles.css` are unchanged.
+- Acceptance met: clean build exit 0; bundle free of `require`/`exports`/`import`/`eval`; no duplicated renderer types; the markup diff is empty; isolated launch smoke 21/21 (`HOME` = temp dir).
+- Review: Codex, `docs/reviews/phase8.md`, ship-with-fixes. The 1 should-fix (watch mode skipped the renderer type-check) was fixed by the orchestrator.
+
+## Plan status: ACTIVE — phase 8 done, phases 9–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -201,14 +210,27 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - ~~Packaging never run end-to-end~~ — `electron-builder --mac` run 2026-08-29
   (signed + notarized, see the release section). Windows and Linux targets are
   still untested.
+- Phase 8 (renderer split) was verified for startup/first-run/modals only. The
+  connected paths (connect → lists, site selection, AP move with confirm,
+  refresh, disconnect) have not been GUI-tested since the split. Phase 9's
+  stubbed-main smoke must cover them, and any failure there is a phase-8
+  regression to fix first.
+- Four comments in `src/renderer/index.html`/`styles.css` still point to
+  `renderer.ts` for code that moved to other renderer modules. Fix them in
+  phase 13, when the markup changes anyway.
 
 ## Next action
 
-**Phase 8 — todo 4.1, renderer modularization with esbuild.** Read `todo.md` item 4.1 and `docs/management-design.md` §1 (invariants) first. Introduce esbuild for the renderer bundle, split `src/renderer/renderer.ts` into modules, and import shared types from `src/shared/types.ts`. No behavior or markup change; CSP stays `script-src 'self'`. Acceptance: `npm run build` exit 0, `index.html` loads one bundled renderer script, and no duplicated renderer types remain. GUI smoke coverage arrives in phase 9, so phase 8's review must check carefully that behavior is unchanged.
+**Phase 9 — todo 4.2, test harness (risk: routine).** First read `todo.md` item 4.2 and `docs/management-design.md` §1 (invariants). Then:
+
+- (a) Add `npm test` with `node:test`. Use esbuild (already a devDep) or tsx to transpile TS, with JSON fixtures for the API response validators, the cookie merge and config normalization. Move the validators/transport behind an interface so they can be tested without Electron's `net`.
+- (b) Commit a Playwright `_electron` smoke harness under `tests/smoke/` (`npm run smoke`). It must stub the main-process IPC handlers, launch with `HOME` set to a temp dir and support an `ELECTRON_PATH` override. Electron in `node_modules` is broken by Dropbox; see Environment for an extracted copy, and seed from `/private/tmp/omada-p8-tools/smoke.mjs` if it still exists.
+- Acceptance: `npm test` exit 0 with ≥ 1 fixture test per validator. `npm run smoke` covers startup in es and en, first run, connect → lists rendered, a single AP move with confirm and with cancel, and zero console errors. The smoke must also exercise the connected paths that phase 8 left unverified (see Open risks).
 
 ## Key paths
 
-- `src/renderer/renderer.ts` — UI logic, i18n table, confirm modal, connect/disconnect
+- `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `connection`, `ap-list`, `wlan-list`, `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
+- `docs/reviews/` — phase review briefs and reports from phase 8 on (earlier ones in `.claude/reviews/`); `docs/progress-archive/` — closed-phase narratives
 - `src/main/index.ts` — window creation, IPC handlers, cert verification
 - `src/main/omada-api.ts` — OmadaController HTTP client
 - `src/main/config.ts` — config persistence
@@ -220,3 +242,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 ## Git state
 
 - Phases 4 (37450f1), 5 (a7f2e30), 6 (9b685b2), and 7 (final commit on main, SHA in `git log`) all pushed to origin/main (2026-08-24). Tree clean after the phase-7 commit.
+- Phase 8 is committed on top of `45a6bd7` in the commit that carries this checkpoint (subject "Bundle the renderer with esbuild and split it into modules"; SHA in `git log`). It is pushed to origin/main, and the tree is clean after that commit.

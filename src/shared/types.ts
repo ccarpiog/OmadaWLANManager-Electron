@@ -103,6 +103,23 @@ export interface ControllerData {
   wlanGroups: WlanGroup[];
 }
 
+// The API the preload exposes to the renderer as `window.omadaAPI` (see
+// src/main/preload.ts, which checks its bridge object against this interface,
+// and src/renderer/global.d.ts, which declares it on Window). `platform` is
+// the Node `process.platform` value ('darwin' | 'win32' | 'linux' | ...),
+// typed as a plain string so the renderer type-check needs no Node typings.
+export interface OmadaAPI {
+  readonly platform: string;
+  loadConfig(): Promise<RendererConfig>;
+  saveConfig(config: ConfigSavePayload): Promise<ConfigSaveResult>;
+  connect(): Promise<ConnectionResult>;
+  getAccessPoints(): Promise<AccessPoint[]>;
+  getWlanGroups(): Promise<WlanGroup[]>;
+  setApWlanGroup(mac: string, wlanId: string): Promise<boolean>;
+  selectSite(siteId: string, selectionNonce: string): Promise<ConnectionResult>;
+  disconnect(selectionNonce?: string): Promise<void>;
+}
+
 // IPC channel names (type-safe)
 export const IPC_CHANNELS = {
   // Config operations

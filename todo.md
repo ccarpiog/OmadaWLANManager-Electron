@@ -165,10 +165,11 @@ Legend: 🔴 bug (misbehaves today) · 🟡 robustness/security gap · 🟢 impr
 - **Why:** Electron 28 (Dec 2023) is long EOL; it embeds an old Chromium/Node with known CVEs. electron-builder 24 is similarly outdated.
 - **Fix:** Bump `electron`, `electron-builder`, `typescript`, `@types/node` incrementally; retest cert verification, sandboxed preload behavior, and packaging on all three platforms.
 
-### 🟢 3.4 Share types between renderer and the rest of the app (bundler) — scheduled as 4.1 (phase 8)
+### ✅ 3.4 Share types between renderer and the rest of the app (bundler) — done as 4.1 (phase 8)
 - **Where:** `src/renderer/renderer.ts` duplicates `AccessPoint`/`WlanGroup`/`Language` because the renderer is compiled as a plain non-module script.
 - **Why:** Duplicated types drift; one accidental `import` in renderer.ts breaks the app at runtime (CommonJS `exports` doesn't exist in the browser).
 - **Fix:** Introduce esbuild (single small dev-dep) to bundle `renderer.ts` → `renderer.js`; then import shared types and drop the duplicates. Also lets you split the inline i18n table into its own module.
+- **Done:** see 4.1 — the renderer is now an esbuild-bundled set of ES modules that `import type` `AccessPoint`/`WlanGroup`/`Language`/`SiteInfo`/`ConfigSavePayload`/`OmadaAPI` from `src/shared/types.ts`; the duplicates are gone.
 
 ### ✅ 3.5 Trim the packaged app
 - **Where:** `tsconfig.json` emits `.d.ts`, `.d.ts.map`, `.js.map` into `dist/`, and `package.json` `build.files` includes all of `dist/**/*`.
@@ -238,10 +239,11 @@ Plan agreed with the user after live tests on controller 6.3.0.45 and two Codex 
 on every function, closing-brace comments on blocks > 10 lines, **no contact with the real controller
 and no use of the real `~/.omada-wlan-manager/` config** (design spec §1, D4).
 
-### 🟢 4.1 Renderer modularization with esbuild — phase 8 (absorbs 3.4)
+### ✅ 4.1 Renderer modularization with esbuild — phase 8 (absorbs 3.4)
 - **What:** Bundle the renderer with esbuild (`renderer.ts` → `renderer.js`), split the ~1,950-line `renderer.ts` into modules (i18n table, DOM helpers, AP list, group list, modals, toasts, state), import shared types from `src/shared/types.ts` and delete the duplicated renderer types.
 - **Constraints:** no behavior or markup change; CSP stays `script-src 'self'` (no inline/eval bundle output); `npm run build` still produces a runnable `dist/`; packaged files list still correct.
 - **Acceptance:** build exit 0; one bundled renderer script loaded by `index.html`; no duplicated `AccessPoint`/`WlanGroup`/`Language` types; renderer behavior unchanged (manual reasoning + phase 9 smoke).
+- **Done:** `npm run build` = `tsc` (root tsconfig now excludes `src/renderer`) → `tsc -p src/renderer` (type-check only, ESM/bundler resolution, no Node types) → `scripts/build-renderer.mjs` (esbuild, deletes `dist/renderer` then emits one strict-mode IIFE `renderer.js`, `chrome120`, linked map) → copy-static; `index.html`/`styles.css` unchanged. `renderer.ts` is now the entry (event wiring + init) over 17 modules (`state`, `elements`, `i18n`, `apply-translations`, `status`, `toast`, `validation`, `dom-helpers`, `panels`, `ap-list`, `wlan-list`, `modal-focus`, `settings-modal`, `confirm-modal`, `site-modal`, `connection`, `apply-change`; no import cycles), with all mutable state in one `state` object; function bodies moved verbatim (only `state.` qualification). `OmadaAPI` moved from the preload to `src/shared/types.ts` (`platform: string`), the `Window` augmentation to `src/renderer/global.d.ts`, and the preload checks its bridge with `satisfies OmadaAPI` (compiled preload unchanged apart from a comment). `npm run watch:renderer` rebuilds the bundle on change.
 
 ### 🟢 4.2 Test harness — phase 9 (absorbs part of 3.10; ESLint stays optional)
 - **What:** (a) `npm test` with `node:test` (+ esbuild/tsx transpile if needed) and JSON fixtures for the API response validators, cookie merge and config normalization; extract validators/transport behind an interface so they are testable without Electron's `net`. (b) Commit a Playwright `_electron` GUI smoke harness under `tests/smoke/` that stubs the main-process IPC handlers, launches with `HOME` pointed at a temp dir, and supports an `ELECTRON_PATH` override (Dropbox breaks `node_modules/electron/dist` — see PROGRESS.md "GUI smoke test").

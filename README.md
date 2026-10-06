@@ -66,12 +66,21 @@ Configuration is stored in `~/.omada-wlan-manager/config.json` and is compatible
 ## Development
 
 ```bash
-# Watch for TypeScript changes
+# Watch for TypeScript changes (main process, preload, shared types)
 npm run watch
+
+# Rebuild the renderer bundle on change
+npm run watch:renderer
 
 # Run the app (after building)
 npm start
 ```
+
+`npm run build` compiles the main process, preload and shared types with
+`tsc`, type-checks the renderer (`tsc -p src/renderer`), bundles the renderer
+modules into a single `dist/renderer/renderer.js` with esbuild
+(`scripts/build-renderer.mjs`), and copies `index.html` and `styles.css` next
+to it.
 
 ## Project Structure
 
@@ -83,12 +92,14 @@ omada-electron/
 │   │   ├── config.ts   # Configuration file management
 │   │   ├── omada-api.ts # Omada Controller API client
 │   │   └── preload.ts  # Preload script for secure IPC
-│   ├── renderer/       # Renderer process (Browser)
+│   ├── renderer/       # Renderer process (Browser), bundled by esbuild
 │   │   ├── index.html  # Main HTML
 │   │   ├── styles.css  # Styles with dark mode support
-│   │   └── renderer.ts # UI logic
+│   │   ├── renderer.ts # Entry module: event wiring and startup
+│   │   └── *.ts        # UI modules (state, i18n, lists, modals, connection, ...)
 │   └── shared/         # Shared types
 │       └── types.ts    # TypeScript interfaces
+├── scripts/            # Build scripts (renderer bundle)
 ├── assets/             # Icons and resources
 ├── dist/               # Compiled JavaScript (generated)
 └── release/            # Packaged applications (generated)

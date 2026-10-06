@@ -6,6 +6,7 @@ import type {
   AccessPoint,
   WlanGroup,
   IPC_CHANNELS as SHARED_IPC_CHANNELS,
+  OmadaAPI,
   RendererConfig
 } from '../shared/types';
 
@@ -27,7 +28,9 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
   OMADA_DISCONNECT: 'omada:disconnect',
 };
 
-// Expose a safe API to the renderer process
+// Expose a safe API to the renderer process. `satisfies OmadaAPI` (type-only,
+// erased at compile time) checks this object against the shared interface the
+// renderer is typed with (src/shared/types.ts), so the two cannot drift.
 contextBridge.exposeInMainWorld('omadaAPI', {
   // OS platform ('darwin' | 'win32' | 'linux' | ...), captured once at
   // preload time so the renderer can scope platform-specific styling (e.g.
@@ -77,23 +80,4 @@ contextBridge.exposeInMainWorld('omadaAPI', {
   disconnect: (selectionNonce?: string): Promise<void> => {
     return ipcRenderer.invoke(IPC_CHANNELS.OMADA_DISCONNECT, selectionNonce);
   }
-});
-
-// Type declaration for the exposed API (for TypeScript support in renderer)
-export interface OmadaAPI {
-  readonly platform: NodeJS.Platform;
-  loadConfig(): Promise<RendererConfig>;
-  saveConfig(config: ConfigSavePayload): Promise<ConfigSaveResult>;
-  connect(): Promise<ConnectionResult>;
-  getAccessPoints(): Promise<AccessPoint[]>;
-  getWlanGroups(): Promise<WlanGroup[]>;
-  setApWlanGroup(mac: string, wlanId: string): Promise<boolean>;
-  selectSite(siteId: string, selectionNonce: string): Promise<ConnectionResult>;
-  disconnect(selectionNonce?: string): Promise<void>;
-}
-
-declare global {
-  interface Window {
-    omadaAPI: OmadaAPI;
-  }
-}
+} satisfies OmadaAPI);

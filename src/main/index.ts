@@ -42,7 +42,7 @@ let pendingSiteSelection: PendingSiteSelection | null = null;
 const RENDERER_HTML_PATH = path.normalize(path.join(__dirname, '../renderer/index.html'));
 
 // Format guards for identifiers crossing the IPC boundary. The renderer
-// applies the same patterns (src/renderer/renderer.ts — keep both in sync)
+// applies the same patterns (src/renderer/validation.ts — keep both in sync)
 const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
 const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;

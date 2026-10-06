@@ -1,0 +1,19 @@
+{
+  // Type-check-only config for the renderer (tsc -p src/renderer). The root
+  // tsconfig.json excludes src/renderer; esbuild bundles it instead
+  // (scripts/build-renderer.mjs), so tsc must not emit anything here.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    // Browser code: no Node globals (process, require, Buffer...) in scope
+    "types": []
+  },
+  "include": ["./**/*.ts"],
+  "exclude": []
+}
