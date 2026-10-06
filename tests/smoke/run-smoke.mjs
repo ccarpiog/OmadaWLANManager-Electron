@@ -11,9 +11,12 @@
 // every non-file: request) and writes no files. No controller is contacted.
 //
 // Electron binary: ELECTRON_PATH (a binary or an .app bundle) when set,
-// otherwise the `electron` npm package's binary if it actually runs. Dropbox
-// breaks node_modules/electron/dist (it strips symlinks and exec bits), so in
-// a Dropbox checkout set ELECTRON_PATH to an Electron extracted elsewhere.
+// otherwise the `electron` npm package's binary if it was already downloaded
+// and actually runs (the runner never triggers Electron 42+'s on-first-use
+// download). Dropbox breaks node_modules/electron/dist (it strips symlinks and
+// exec bits), so in a Dropbox checkout set ELECTRON_PATH to an Electron
+// extracted elsewhere. Every launch must run the installed `electron`
+// package's version (checked against the running process.versions.electron).
 //
 // Usage: [ELECTRON_PATH=/path/to/Electron] node tests/smoke/run-smoke.mjs
 
@@ -164,9 +167,34 @@ function probeElectron(binary) {
 }
 
 /**
+ * Returns the `electron` npm package's binary when it has ALREADY been
+ * downloaded, without triggering a download. Since Electron 42 the package no
+ * longer fetches its binary in postinstall: `require('electron')` (and
+ * `npx electron`) download it on first use into node_modules/electron/dist.
+ * The smoke must not start a ~100 MB download as a side effect (into Dropbox
+ * here, which would break it anyway), so the package's path.txt is read
+ * directly instead of requiring the package.
+ * @returns {{ binary: string | null; reason: string }} The binary, or why there is none.
+ */
+function findDownloadedPackageBinary() {
+  let packageDir;
+  try {
+    packageDir = path.dirname(require.resolve('electron/package.json'));
+  } catch (error) {
+    return { binary: null, reason: error.message };
+  }
+  const pathFile = path.join(packageDir, 'path.txt');
+  if (!existsSync(pathFile)) {
+    return { binary: null, reason: 'its binary was never downloaded (Electron 42+ downloads it on first use, e.g. `npx install-electron --no`)' };
+  }
+  const binary = path.join(packageDir, 'dist', readFileSync(pathFile, 'utf8').trim());
+  return existsSync(binary) ? { binary, reason: '' } : { binary: null, reason: `binary not found (${binary})` };
+} // End of function findDownloadedPackageBinary()
+
+/**
  * Resolves the Electron executable: ELECTRON_PATH (binary or .app bundle)
- * first, then the `electron` npm package's binary; exits with a clear message
- * when neither works.
+ * first, then the `electron` npm package's already-downloaded binary; exits
+ * with a clear message when neither works.
  * @returns {{ binary: string; version: string; source: string }} The binary to launch.
  */
 function resolveElectron() {
@@ -186,21 +214,14 @@ function resolveElectron() {
     return { binary, version, source: 'ELECTRON_PATH' };
   } // End of the ELECTRON_PATH branch
 
-  let packaged = null;
-  let reason = '';
-  try {
-    packaged = require('electron');
-  } catch (error) {
-    reason = error.message;
-  }
-  if (typeof packaged === 'string' && existsSync(packaged)) {
-    const version = probeElectron(packaged);
+  const packaged = findDownloadedPackageBinary();
+  let reason = packaged.reason;
+  if (packaged.binary) {
+    const version = probeElectron(packaged.binary);
     if (version) {
-      return { binary: packaged, version, source: 'electron npm package' };
+      return { binary: packaged.binary, version, source: 'electron npm package' };
     }
-    reason = `${packaged} does not run`;
-  } else if (!reason) {
-    reason = `binary not found (${packaged})`;
+    reason = `${packaged.binary} does not run`;
   }
   fail(
     `the electron npm package's binary is unusable (${reason}).\n` +
@@ -217,11 +238,12 @@ function resolveElectron() {
 // ============================================================================
 
 /**
- * Launches the stubbed app with a fresh temp HOME and an initial scenario.
+ * Launches the stubbed app with a fresh temp HOME and an initial scenario,
+ * and prints the running main process's Electron/Chromium/Node versions.
  * @param {{ binary: string }} electronInfo - Resolved Electron binary.
  * @param {string} label - Short launch label used in check names.
  * @param {object} scenario - Initial stub scenario (merged over the defaults).
- * @returns {Promise<{ label: string; app: import('playwright-core').ElectronApplication; page: import('playwright-core').Page; home: string; mainOutput: string[] }>}
+ * @returns {Promise<{ label: string; app: import('playwright-core').ElectronApplication; page: import('playwright-core').Page; home: string; mainOutput: string[]; runningVersions: { electron: string; chrome: string; node: string } }>}
  */
 async function launch(electronInfo, label, scenario) {
   const home = mkdtempSync(path.join(os.tmpdir(), 'omada-smoke-home-'));
@@ -234,6 +256,16 @@ async function launch(electronInfo, label, scenario) {
   app.process().stdout?.on('data', (chunk) => mainOutput.push(String(chunk)));
   app.process().stderr?.on('data', (chunk) => mainOutput.push(String(chunk)));
 
+  // The versions of the Electron main process actually running (not just the
+  // ELECTRON_RUN_AS_NODE probe of the binary), printed so the run proves which
+  // Electron it used and checked in runGlobalChecks()
+  const runningVersions = await app.evaluate(() => ({
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+  }));
+  console.log(`[${label}] running Electron ${runningVersions.electron} (Chromium ${runningVersions.chrome}, Node ${runningVersions.node})`);
+
   const page = await app.firstWindow();
   page.on('console', (message) => {
     if (message.type() === 'error') {
@@ -243,7 +275,7 @@ async function launch(electronInfo, label, scenario) {
   page.on('pageerror', (error) => playwrightPageErrors.push(`[${label}] ${error}`));
   await page.waitForLoadState('domcontentloaded');
 
-  const session = { label, app, page, home, mainOutput };
+  const session = { label, app, page, home, mainOutput, runningVersions };
   launches.push(session);
   return session;
 } // End of function launch()
@@ -478,9 +510,14 @@ function compareApRows(items, expected) {
 /**
  * Checks that the window was created like the real app's (createWindow() in
  * src/main/index.ts): one window with the real preload, sandbox + context
- * isolation and no Node integration, a renderer process the OS reports as
- * sandboxed (macOS/Windows; Linux reports nothing), the bundled renderer, the
- * full omadaAPI bridge and no Node globals in the page.
+ * isolation and no Node integration in the preferences the webContents
+ * actually runs with (webContents.getLastWebPreferences(): undocumented and
+ * absent from electron.d.ts, but present at runtime; a missing method fails
+ * the check), a renderer process the OS reports as sandboxed (macOS/Windows;
+ * Linux reports nothing), the bundled renderer, the full omadaAPI bridge and
+ * no Node globals in the page. The options the stub recorded must match the
+ * real app's too, including the preload path and window size, which the
+ * effective preferences do not report.
  * @param {object} session - The launch.
  * @returns {Promise<void>}
  */
@@ -491,10 +528,21 @@ async function checkWindowLikeRealApp(session) {
       const contents = windows[0].webContents;
       const pid = contents.getOSProcessId();
       const metric = app.getAppMetrics().find((entry) => entry.pid === pid);
-      return { windows: windows.length, url: contents.getURL(), rendererSandboxed: metric ? metric.sandboxed : null };
-    });
+      const effective = typeof contents.getLastWebPreferences === 'function' ? contents.getLastWebPreferences() : null;
+      return {
+        windows: windows.length,
+        url: contents.getURL(),
+        rendererSandboxed: metric ? metric.sandboxed : null,
+        effectivePreferences: effective && {
+          sandbox: effective.sandbox,
+          contextIsolation: effective.contextIsolation,
+          nodeIntegration: effective.nodeIntegration,
+        },
+      };
+    }); // End of the main-process evaluation
     const { windowOptions, environment } = await stubState(session);
     const preferences = windowOptions?.webPreferences || {};
+    const effective = main.effectivePreferences || {};
     const renderer = await session.page.evaluate(() => ({
       scripts: Array.from(document.scripts).map((script) => script.src),
       bridge: Object.keys(window.omadaAPI || {}).sort(),
@@ -504,6 +552,7 @@ async function checkWindowLikeRealApp(session) {
     }));
     return verdict(
       main.windows === 1 && main.url.endsWith('/dist/renderer/index.html') && main.rendererSandboxed !== false &&
+      effective.sandbox === true && effective.contextIsolation === true && effective.nodeIntegration === false &&
       preferences.preload === PRELOAD_PATH && preferences.sandbox === true && preferences.contextIsolation === true &&
       preferences.nodeIntegration === false &&
       windowOptions.width === 900 && windowOptions.height === 650 && windowOptions.minWidth === 700 && windowOptions.minHeight === 500 &&
@@ -899,14 +948,26 @@ async function runEnglishMultiSite(electronInfo) {
 // ============================================================================
 
 /**
- * Checks that span every launch: IPC table coverage, console/page errors,
- * network, sender trust and HOME isolation.
+ * Checks that span every launch: the Electron version that ran, IPC table
+ * coverage, console/page errors, network, sender trust and HOME isolation.
  * @returns {Promise<void>}
  */
 async function runGlobalChecks() {
   const { IPC_CHANNELS } = require(path.join(projectRoot, 'dist', 'shared', 'types.js'));
   const channels = Object.values(IPC_CHANNELS).sort();
   const states = launches.map((session) => ({ session, state: session.finalState || {} }));
+
+  // The installed electron package's version (its package.json is intact even
+  // where Dropbox broke node_modules/electron/dist): every launch must have run
+  // exactly that Electron, so a stale ELECTRON_PATH cannot pass silently
+  const installedElectron = require('electron/package.json').version;
+  await check(`every launch ran the installed Electron ${installedElectron} (process.versions.electron)`, () => {
+    const running = launches.map((session) => ({ label: session.label, versions: session.runningVersions }));
+    return verdict(
+      running.length === 2 && running.every(({ versions }) => versions && versions.electron === installedElectron),
+      running
+    );
+  });
 
   await check(`stub registered a handler for every IPC channel (${channels.length}) on every launch`, () =>
     verdict(states.every(({ state }) => isDeepStrictEqual([...(state.registeredChannels || [])].sort(), channels)), {

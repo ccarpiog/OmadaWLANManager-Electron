@@ -438,9 +438,11 @@ function createWindow() {
   const mainWindow = new BrowserWindow(windowOptions);
 
   const contents = mainWindow.webContents;
-  contents.on('console-message', (_event, level, message, line, sourceId) => {
-    if (level >= 3) {
-      stub.rendererErrors.push(`console.error: ${message} (${sourceId}:${line})`);
+  // Message details come on the event object (Electron 35 deprecated the
+  // positional level/message/line/sourceId arguments; `level` is now a string)
+  contents.on('console-message', (details) => {
+    if (details.level === 'error') {
+      stub.rendererErrors.push(`console.error: ${details.message} (${details.sourceId}:${details.lineNumber})`);
     }
   });
   contents.on('preload-error', (_event, preloadPath, error) => {
@@ -460,8 +462,8 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
   // Same navigation / new-window guards as the real app
-  contents.on('will-navigate', (event, url) => {
-    if (new URL(url).protocol !== 'file:') {
+  contents.on('will-navigate', (event) => {
+    if (new URL(event.url).protocol !== 'file:') {
       event.preventDefault();
     }
   });

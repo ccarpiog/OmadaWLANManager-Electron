@@ -11,11 +11,11 @@
 
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
+import { resolveTscPath } from './resolve-tsc.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const unitDir = path.join(projectRoot, 'tests', 'unit');
@@ -58,11 +58,11 @@ const forbidElectronPlugin = {
 
 /**
  * Runs `tsc -p tests` through Node directly (node_modules/.bin may be broken
- * by Dropbox, which strips symlinks).
+ * by Dropbox, which strips symlinks; see scripts/resolve-tsc.mjs).
  * @returns {boolean} True when the type-check passed.
  */
 function typeCheck() {
-  const tscPath = createRequire(import.meta.url).resolve('typescript/bin/tsc');
+  const tscPath = resolveTscPath();
   const result = spawnSync(process.execPath, [tscPath, '-p', 'tests'], { cwd: projectRoot, stdio: 'inherit' });
   return result.status === 0;
 }

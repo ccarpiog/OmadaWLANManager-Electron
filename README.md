@@ -13,9 +13,19 @@ A modern desktop application for managing TP-Link Omada Controller WLAN group as
 
 ## Requirements
 
-- Node.js 20+ (required by the `playwright-core` smoke harness)
+- Node.js 22.18+ (or 24.2+) for development. The `electron` npm package needs
+  22.12+, and Node 22.12–22.17 and 24.0–24.1 have a module-resolution bug with
+  non-ASCII project paths ([nodejs/node#58586](https://github.com/nodejs/node/issues/58586))
+  that makes `electron-builder` fail with `Cannot find module ...` when the
+  checkout lives under a path such as `.../InformáticaHispanoInglés/...`. On an
+  affected Node, run it as
+  `node --no-turbo-fast-api-calls node_modules/electron-builder/cli.js ...`.
 - npm or yarn
+- macOS 13 (Ventura) or later to run the macOS build (Electron 44 dropped macOS 12)
 - TP-Link Omada Controller (tested with controller versions 5.x and 6.1.0.19)
+
+Toolchain: Electron 44 (Chromium 152, Node.js 24), TypeScript 7, esbuild,
+electron-builder 26, Playwright (`playwright-core`) for the GUI smoke test.
 
 ## Installation
 
@@ -80,7 +90,9 @@ npm start
 `tsc`, type-checks the renderer (`tsc -p src/renderer`), bundles the renderer
 modules into a single `dist/renderer/renderer.js` with esbuild
 (`scripts/build-renderer.mjs`), and copies `index.html` and `styles.css` next
-to it.
+to it. Every `tsc` run goes through `scripts/tsc.mjs`, which starts the
+compiler with Node directly rather than through `node_modules/.bin`, whose
+symlinks Dropbox strips.
 
 ## Testing
 
@@ -101,10 +113,16 @@ npm run smoke   # build, then the GUI smoke test against a stubbed main process
   the real preload and renderer, with fixture-driven fake IPC handlers. It
   prints PASS/FAIL per check and exits non-zero on any failure.
 - **Electron binary:** `ELECTRON_PATH` (an executable or an `.app` bundle) wins;
-  otherwise the `electron` npm package's binary is used if it runs. In a
-  Dropbox checkout `node_modules/electron/dist` is broken (Dropbox strips
-  symlinks and exec bits), so extract Electron outside Dropbox and run e.g.
+  otherwise the `electron` npm package's binary is used if it was already
+  downloaded and runs. Since Electron 42, `npm install` no longer downloads the
+  binary: the package fetches it on first use (`npm start`, `npx electron`, or
+  `npx install-electron --no`); the smoke runner never triggers that download.
+  In a Dropbox checkout `node_modules/electron/dist` is broken (Dropbox strips
+  symlinks and exec bits), so extract the matching Electron release zip outside
+  Dropbox (`ditto -x -k` keeps the symlinks) and run e.g.
   `ELECTRON_PATH=/private/tmp/electron/Electron.app/Contents/MacOS/Electron npm run smoke`.
+  The smoke fails unless every launch runs exactly the installed `electron`
+  package version (it prints the running Electron, Chromium and Node versions).
 - **Isolation:** both commands point `HOME` (and `USERPROFILE`) at a fresh temp
   directory. The smoke stub refuses to start with the real home, keeps
   Electron's profile inside the temp dir, never loads the real main process,

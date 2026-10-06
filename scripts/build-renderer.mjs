@@ -12,10 +12,10 @@
 
 import { spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
+import { resolveTscPath } from './resolve-tsc.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const rendererOutDir = path.join(projectRoot, 'dist', 'renderer');
@@ -31,8 +31,8 @@ const buildOptions = {
   bundle: true,
   format: 'iife',
   platform: 'browser',
-  // Electron 28 ships Chromium 120
-  target: 'chrome120',
+  // Electron 44 ships Chromium 152
+  target: 'chrome152',
   // Linked source map for DevTools; build.files in package.json keeps *.map
   // out of the packaged app
   sourcemap: true,
@@ -43,12 +43,12 @@ const buildOptions = {
  * Starts `tsc -p src/renderer --watch` as a child process so watch mode keeps
  * type-checking the renderer (esbuild alone would emit code with type errors).
  * tsc is run through Node directly rather than node_modules/.bin, which
- * Dropbox breaks by stripping symlinks. The child is stopped when this script
- * exits.
+ * Dropbox breaks by stripping symlinks (see scripts/resolve-tsc.mjs). The
+ * child is stopped when this script exits.
  * @returns {void}
  */
 function startTypeCheckWatcher() {
-  const tscPath = createRequire(import.meta.url).resolve('typescript/bin/tsc');
+  const tscPath = resolveTscPath();
   const typeChecker = spawn(
     process.execPath,
     [tscPath, '-p', 'src/renderer', '--watch', '--preserveWatchOutput'],

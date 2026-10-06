@@ -57,9 +57,9 @@ export function createFocusTrap(modal: HTMLElement): (e: KeyboardEvent) => void 
 /**
  * Syncs the inert state of the background app container with modal
  * visibility: while either modal is open, the background is inert — its
- * controls can be neither Tab-focused nor clicked (Electron 28's Chromium
- * supports the inert attribute natively). This complements the Tab focus
- * trap and the opener-focus restoration. Call after every modal open/close
+ * controls can be neither Tab-focused nor clicked (Chromium has supported
+ * the inert attribute natively since version 102). This complements the Tab
+ * focus trap and the opener-focus restoration. Call after every modal open/close
  * transition; on close, call it BEFORE refocusing the opener (focus cannot
  * enter an inert subtree).
  */

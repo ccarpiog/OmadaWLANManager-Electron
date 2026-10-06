@@ -1,8 +1,15 @@
 {
+  // Main process, preload and shared code, emitted as CommonJS into dist/ and
+  // run by Electron's bundled Node.js. `nodenext` models Node's own module
+  // resolution (package.json has no "type", so every file here is CommonJS);
+  // TypeScript 7 removed the old `moduleResolution: node` (node10) mode.
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "lib": ["ES2022", "DOM"],
+    // TypeScript 6+ no longer loads every @types package by default
+    "types": ["node"],
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
@@ -12,8 +19,7 @@
     "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true,
-    "moduleResolution": "node"
+    "sourceMap": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "release", "src/renderer"]

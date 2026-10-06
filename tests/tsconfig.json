@@ -4,8 +4,10 @@
   // tsconfig.json only includes src/, so no test code can reach dist/.
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
-    "moduleResolution": "node",
+    // Same module model as the root tsconfig.json (the src/main modules under
+    // test are CommonJS run by Node); TypeScript 7 removed `moduleResolution: node`
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "lib": ["ES2022"],
     // Node globals and node:test typings only — no DOM, and no Electron:
     // the modules under test must stay Electron-free

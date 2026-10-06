@@ -15,7 +15,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 7 | Connection flow & multi-site: 1.11, 3.12 | **done** |
 | 8 | 4.1 Renderer modularization with esbuild (absorbs 3.4) — risk: high (structural, no behavior change); worker: opus | **done** — `docs/progress-archive/phase-8.md` |
 | 9 | 4.2 Test harness: `npm test` (node:test + fixtures) and committed Playwright `_electron` smoke with stubbed main (`npm run smoke`) — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-9.md` |
-| 10 | 4.3 Electron 28 → current major (absorbs 3.3) — risk: high | pending |
+| 10 | 4.3 Electron 28 → 44 (absorbs 3.3) — risk: high; worker: opus | **done** — `docs/progress-archive/phase-10.md` |
 | 11 | 4.4 URL-scoped credentials + certificate TOFU pinning (completes 2.3b) — risk: high | pending |
 | 12 | 4.5 Omada 6.3 correctness: `controllerVer`, `groupModel`, full group list from `setting/wlans` (empty groups), AP/WLAN terminology — risk: routine | pending |
 | 13 | 4.6 New app shell (sidebar) + Access points view: multi-select, bulk move with per-AP results — risk: high | pending |
@@ -47,10 +47,11 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 
 ## Environment
 
-- `npm install` re-run 2026-08-24 to restore `node_modules/.bin` (Dropbox strips symlinks — see todo.md 3.11). If `tsc: command not found` reappears, re-run `npm install`.
-- Verification commands: `npm run build` (`tsc` for main/preload/shared → `tsc -p src/renderer` type-check → esbuild bundle via `scripts/build-renderer.mjs` → copy-static); `npm test` (unit tests, no Electron, temp HOME); `ELECTRON_PATH=<electron binary> npm run smoke` (GUI smoke, stubbed main, temp HOME). No linter. Node.js ≥ 20 (`engines`).
+- Dropbox strips symlinks and exec bits inside `node_modules` (todo.md 3.11). Every `tsc` run goes through `scripts/tsc.mjs` (Node + `resolveTscPath()`), so a broken `node_modules/.bin` no longer matters. Re-run `npm install` if a package itself goes missing.
+- Verification commands: `npm run build` (`tsc` for main/preload/shared → `tsc -p src/renderer` type-check → esbuild bundle via `scripts/build-renderer.mjs` → copy-static); `npm test` (unit tests, no Electron, temp HOME); `ELECTRON_PATH=<electron binary> npm run smoke` (GUI smoke, stubbed main, temp HOME). No linter. `engines.node` is `^22.18.0 || >=24.2.0` since phase 10. The local Node is 22.15.1, so `npm install` warns; only electron-builder actually breaks on it (next bullet).
+- **Packaging on Node 22.12–22.17 / 24.0–24.1** (nodejs/node#58586, non-ASCII repo path): `npx electron-builder` fails with `Cannot find module 'async-exit-hook'`. Until the user upgrades Node, run `node --no-turbo-fast-api-calls node_modules/electron-builder/cli.js …` instead, building to `/private/tmp` and never `./release`. With `mac.notarize: true`, electron-builder 26 reads `APPLE_KEYCHAIN_PROFILE` (plus the optional `APPLE_KEYCHAIN`) only when neither the `APPLE_ID…` set nor the `APPLE_API_KEY…` set is in the environment.
 - Dropbox gotcha: several quick back-to-back edits to one file can leave "<name> (… conflicted copy).md" files, and once even removed `PROGRESS.md` itself (phase 8). Batch the edits to a file, then run `fd -H "conflicted copy"` before committing. Keep the newest complete copy.
-- Smoke Electron binary: `node_modules/electron/dist` is broken by Dropbox, so `npm run smoke` needs `ELECTRON_PATH`. An extracted Electron 28.3.3 lives at `/private/tmp/omada-p8-smoke/electron/Electron.app/Contents/MacOS/Electron` (may vanish on reboot; re-extract the matching Electron zip to `/private/tmp` if it does — after phase 10 it must match the new Electron version).
+- Smoke Electron binary: `node_modules/electron/dist` is broken by Dropbox, so `npm run smoke` needs `ELECTRON_PATH`. An extracted Electron 44.5.1 lives at `/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron`. It may vanish on reboot; if so, re-extract `electron-v44.5.1-darwin-arm64.zip` (GitHub release, or `~/Library/Caches/electron/` after a packaging run) with `ditto -x -k`. The smoke fails unless every launch runs the installed Electron version, so the old 28.3.3 copy in `/private/tmp/omada-p8-smoke/` is rejected.
 - Git remote: `origin` → github.com/ccarpiog/OmadaWLANManager-Electron.git, branch `main`.
 
 ## Completed
@@ -203,7 +204,15 @@ validation, connect-without-config, console/main-process errors).
 - The smoke found a pre-existing focus bug (`.btn { transition: all }` hid Confirm when it was focused), fixed in `styles.css`.
 - Review: Codex, `docs/reviews/phase9.md`, ship-with-fixes. The 1 should-fix (playwright-core needs Node ≥ 20; README said 18+) was fixed by the orchestrator: README and `engines` now say Node ≥ 20.
 
-## Plan status: ACTIVE — phases 8–9 done, phases 10–20 pending
+### Phase 10 — Electron upgrade (2026-10-06)
+
+- Risk: high. Worker: opus. Full narrative, including the breaking-change table for Electron 29 → 44: `docs/progress-archive/phase-10.md`.
+- Electron 28.3.3 → **44.5.1** (Chromium 152, Node 24.21). electron-builder/dmg-builder 24.13.3 → 26.17.0, TypeScript 5.9.3 → 7.0.2, @types/node → 24. The esbuild target is now `chrome152`.
+- Code: `will-navigate` reads `event.url`. A new `select-client-certificate` handler never sends a client certificate: in Electron 44 it also fires for `net.request`. Both tsconfigs moved to `nodenext` with `types: ["node"]`, because TypeScript 7 dropped `moduleResolution: node`. `scripts/resolve-tsc.mjs` and `scripts/tsc.mjs` run the compiler without `.bin`. The smoke checks the sandbox through `getLastWebPreferences()` and asserts the Electron version on every launch.
+- Acceptance met: `npm run build` exit 0; `npm test` 143/143; smoke 40/40 on Electron 44.5.1, with zero console errors. The compiled preload still requires only `electron`. The unsigned `electron-builder --mac --dir` to `/private/tmp/omada-p10-build` exits 0 and bundles Electron Framework 44.5.1, but only through the Node workaround in *Environment*. `mac.notarize` is still `true`. `npm audit`: 24 → 8 moderate.
+- Review: Codex, `docs/reviews/phase10.md`, ship-with-fixes. The blocker was that build, build:renderer and watch still ran `tsc` through the Dropbox-breakable `.bin` shim. The orchestrator fixed it with `scripts/tsc.mjs`, then re-ran the build, the tests (143/143) and the smoke (40/40), all exit 0.
+
+## Plan status: ACTIVE — phases 8–10 done, phases 11–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -220,9 +229,13 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
   still untested.
 - ~~Phase 8 connected paths not GUI-tested~~ — covered by phase 9's smoke
   (connect → lists, site selection, AP move, refresh, disconnect); all pass.
-- `npm install` reports 24 audit vulnerabilities (1 critical, 17 high) from
-  the Electron 28 / electron-builder 24 toolchain. Phase 10 should clear most;
-  re-run `npm audit` there and record what is left.
+- `npm audit`: 8 moderate remain after phase 10 (down from 24: 1 critical and 17 high). All 8 are in
+  electron-builder's `@electron/get@3` → `global-agent` → `roarr` → `sprintf-js` chain, which is
+  build-time only and has no upstream fix yet.
+- Local Node 22.15.1 is below the new `engines` range. electron-builder needs the
+  `--no-turbo-fast-api-calls` workaround until the user upgrades to Node 22.18+ or 24.2+.
+- electron-builder 26 is untested for Windows/Linux, and a full signed + notarized DMG
+  has not been built on it yet. Check `APPLE_KEYCHAIN_PROFILE=AC_NOTARY_PROFILE` on the next release.
 - `normalizeControllerUrl()` (`src/main/url.ts`) and the renderer mirror accept
   `https://host/#` (empty fragment) and keep the `#`. Harmless; fix with phase
   11, which touches URL handling.
@@ -232,15 +245,17 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 
 ## Next action
 
-**Phase 10 — todo 4.3, Electron upgrade (risk: high).** First read `todo.md` item 4.3 (Electron 28 → current stable major; bump electron-builder, TypeScript, @types/node) and the PROGRESS.md release notes (`mac.notarize` must stay a plain `true`; build to `/private/tmp`, never `./release`). Then:
+**Phase 11 — todo 4.4: URL-scoped credentials + certificate TOFU pinning (risk: high).** First read `todo.md` item 4.4 and only §3 "Security requirements" of `docs/management-design.md`. Then:
 
-- Upgrade, and re-check the sandboxed preload, `setCertificateVerifyProc`, `certificate-error`, the CSP, `net.request` behaviour (`src/main/net-transport.ts`) and the packaging config. Record breaking changes in PROGRESS.md.
-- Extract the new Electron version's macOS arm64 zip to `/private/tmp` (Dropbox breaks `node_modules/electron/dist`) and point `ELECTRON_PATH` at it. `tests/smoke/stub-main.cjs` can switch its sandbox check to `webContents.getLastWebPreferences()` if the new Electron has it.
-- Acceptance: `npm run build`, `npm test` and `ELECTRON_PATH=… npm run smoke` all exit 0 on the new Electron; `electron-builder --mac --dir` (unsigned, output under `/private/tmp`) succeeds; `npm audit` re-run and the remainder recorded.
+- Changing the controller URL clears the password, the Client Secret (if present), the site id and the pin, and requires new credentials. Today a blank password reuses the old controller's password: `saveConfig()` in `src/main/config.ts`.
+- TOFU pinning per normalized origin: a first-use fingerprint confirmation dialog, a mismatch dialog, and "Reset trusted certificate" in Settings. No credential is sent before the pin check passes. The pin must hold for both `setCertificateVerifyProc` and `certificate-error` (see the phase 4 notes on the hostname-only verify proc).
+- Also fix the open risk that `normalizeControllerUrl()` (`src/main/url.ts`) and its renderer mirror accept `https://host/#`. Fix README's stale "Python-compatible / plaintext" config note too.
+- Acceptance: unit tests for URL-change clearing and for pin match, mismatch and first use; the smoke covers the first-use and mismatch dialogs (stubbed); new strings in es and en. `npm run build`, `npm test` and `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` must all exit 0.
 
 ## Key paths
 
 - `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `connection`, `ap-list`, `wlan-list`, `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
+- `scripts/tsc.mjs` + `scripts/resolve-tsc.mjs` — run TypeScript 7 through Node (no `.bin` shim)
 - `tests/unit/` + `tests/fixtures/` — `npm test` (runner `scripts/run-unit-tests.mjs`); `tests/smoke/` — `npm run smoke` (`stub-main.cjs`, `run-smoke.mjs`)
 - `src/main/omada-transport.ts` (transport interface + hardened request logic), `net-transport.ts` (Electron `net`), `omada-validators.ts`, `cookie-jar.ts`, `url.ts`
 - `docs/reviews/` — phase review briefs and reports from phase 8 on (earlier ones in `.claude/reviews/`); `docs/progress-archive/` — closed-phase narratives
@@ -257,3 +272,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phases 4 (37450f1), 5 (a7f2e30), 6 (9b685b2), and 7 (final commit on main, SHA in `git log`) all pushed to origin/main (2026-08-24). Tree clean after the phase-7 commit.
 - Phase 8: `9f147ad`, pushed.
 - Phase 9: `65dcf1a` ("Add unit tests and a GUI smoke harness"), pushed to origin/main (`f0a891e..65dcf1a`). A follow-up commit records this SHA. Tree clean after it.
+- Phase 10: committed with this checkpoint ("Upgrade Electron to 44 and the build toolchain"). A follow-up commit records the SHA and the push result.

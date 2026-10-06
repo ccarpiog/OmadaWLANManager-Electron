@@ -144,6 +144,12 @@ function isValidConfigSavePayload(payload: unknown): payload is ConfigSavePayloa
   return true;
 } // End of function isValidConfigSavePayload()
 
+/**
+ * Creates the main window: sandboxed renderer with context isolation and the
+ * compiled preload, the bundled renderer HTML, and the navigation/new-window
+ * guards. Shown on 'ready-to-show' (or right away when the HTML fails to
+ * load, so the failure is visible).
+ */
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 900,
@@ -182,9 +188,11 @@ function createWindow(): void {
   });
 
   // Security: Prevent navigation to external URLs
-  // (file:// URLs have origin "null", so compare the protocol instead)
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    const parsedUrl = new URL(url);
+  // (file:// URLs have origin "null", so compare the protocol instead). The
+  // target URL is read from the event details (the positional `url` argument
+  // is deprecated)
+  mainWindow.webContents.on('will-navigate', (event) => {
+    const parsedUrl = new URL(event.url);
     if (parsedUrl.protocol !== 'file:') {
       event.preventDefault();
     }
@@ -194,7 +202,7 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler(() => {
     return { action: 'deny' };
   });
-}
+} // End of function createWindow()
 
 // Bypass SSL for self-signed certificates (Omada controllers use self-signed certs)
 app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
@@ -217,6 +225,18 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
   }
   callback(false);
 }); // End of the certificate-error handler
+
+// Never present a client certificate. Since Electron 44 this event also fires
+// for net.request() (with a null webContents) and, when left unhandled,
+// Electron answers with the first matching certificate from the system store;
+// before, such a net request failed with ERR_SSL_CLIENT_AUTH_CERT_NEEDED. The
+// app uses no client certificates (and its renderer only loads file: URLs),
+// so it continues without one: a controller can never receive the user's
+// certificate identity.
+app.on('select-client-certificate', (event, _webContents, _url, _certificateList, callback) => {
+  event.preventDefault();
+  callback();
+});
 
 // App ready
 app.whenReady().then(() => {
