@@ -44,9 +44,22 @@
 //   bound AP groups; its only caller is ControllerSession, which plans the
 //   change on fresh data first (never for an "All access points" or
 //   unknown-scope network). The ids are sanity-checked here too.
+// - AP membership and AP moves (inbox item I-1b1, cloud controllers only):
+//   listApGroupAps() (v1 `GET …/ap-groups/aps`, paged) and setApWlanGroup()
+//   (v1 `PATCH …/aps/{apMac}/wlan-group` with exactly `{wlanGroupId}`).
+//   Their only caller is the cloud controller session
+//   (cloud-controller-session.ts), which checks the MAC and the group id
+//   first and counts a move only when a re-read shows the AP in its
+//   destination. The local controller keeps the internal move.
 // - Errors: OpenApiError with a stable `code` and a sanitized diagnostic
 //   (redact.ts plus the client's own secret and tokens scrubbed by value);
-//   never a raw request or response body, the Client Secret or a token.
+//   never a raw request or response body, the Client Secret or a token. On
+//   the cloud route only, a refusal (a non-zero errorCode, also inside a
+//   non-2xx answer) keeps TP-Link's message as well, redacted and scrubbed
+//   (`controllerMessage`, scrubbed of the account's secret and tokens too).
+//   describeOpenApiFailure() appends it: the spec shows a view-only
+//   credential's refusal with its code and message. The local route never
+//   keeps controller text.
 // - The Client Secret and the token are private class fields (#…): they are
 //   not enumerable, so JSON.stringify() and util.inspect() never show them.
 // - Routes (inbox item I-1, docs/omada-cloud-openapi.md §6): 'local' (the
@@ -195,26 +208,37 @@ const RESERVED_HEADERS = new Set(['authorization', 'cookie', 'host', 'content-le
 // How many of this client's tokens are remembered to scrub them by value
 const MAX_REMEMBERED_TOKENS = 8;
 
+/** The optional details of an OpenApiError. */
+export interface OpenApiErrorDetails {
+  httpStatus?: number;
+  controllerErrorCode?: number;
+  // Cloud route only: TP-Link's message of a refusal, already scrubbed
+  controllerMessage?: string;
+}
+
 /**
  * Error thrown by OpenApiClient: a stable code plus a sanitized diagnostic
  * (redacted, at most MAX_DIAGNOSTIC_CHARS characters; never a raw body, the
  * Client Secret or a token). `httpStatus` / `controllerErrorCode` are set
- * when known.
+ * when known. `controllerMessage` is set on the cloud route only, for a
+ * refusal that carried a message (see the header).
  */
 export class OpenApiError extends Error {
   readonly code: OpenApiErrorCode;
   readonly diagnostic: string;
   readonly httpStatus: number | null;
   readonly controllerErrorCode: number | null;
+  readonly controllerMessage: string | null;
 
   /**
-   * Creates the error. The diagnostic is redacted again here (idempotent),
-   * so no caller can put an unredacted secret pattern into a message.
+   * Creates the error. The diagnostic and the controller message are
+   * redacted again here (idempotent), so no caller can put an unredacted
+   * secret pattern into either.
    * @param {OpenApiErrorCode} code - Stable error code.
    * @param {string} diagnostic - Sanitized diagnostic text.
-   * @param {{ httpStatus?: number; controllerErrorCode?: number }} [details] - Status / errorCode.
+   * @param {OpenApiErrorDetails} [details] - Status, errorCode and (cloud route) the refusal's message.
    */
-  constructor(code: OpenApiErrorCode, diagnostic: string, details: { httpStatus?: number; controllerErrorCode?: number } = {}) {
+  constructor(code: OpenApiErrorCode, diagnostic: string, details: OpenApiErrorDetails = {}) {
     const safeDiagnostic = redactText(diagnostic).slice(0, MAX_DIAGNOSTIC_CHARS);
     super(`Open API ${code}: ${safeDiagnostic}`);
     this.name = 'OpenApiError';
@@ -222,8 +246,36 @@ export class OpenApiError extends Error {
     this.diagnostic = safeDiagnostic;
     this.httpStatus = details.httpStatus ?? null;
     this.controllerErrorCode = details.controllerErrorCode ?? null;
-  }
+    const message = typeof details.controllerMessage === 'string' ? redactText(details.controllerMessage).trim().slice(0, MAX_DIAGNOSTIC_CHARS) : '';
+    this.controllerMessage = message === '' ? null : message;
+  } // End of constructor
 } // End of class OpenApiError
+
+/**
+ * Builds the diagnostic of a failed Open API call from its stable code, HTTP
+ * status and controller errorCode, e.g. "httpError, HTTP 404" or "apiError,
+ * errorCode -1". Controller text is added only where the client kept it: on
+ * the cloud route a refusal's message, already redacted and scrubbed
+ * (`controllerMessage`, see the header), e.g. "apiError, errorCode -44121
+ * (No permission.)". The local route never keeps one, so its diagnostics are
+ * codes only. Anything that is not an OpenApiError is reported as "unexpected".
+ * @param {unknown} error - The thrown value.
+ * @returns {string} The diagnostic.
+ */
+export function describeOpenApiFailure(error: unknown): string {
+  if (!(error instanceof OpenApiError)) {
+    return 'unexpected';
+  }
+  const parts: string[] = [error.code];
+  if (error.httpStatus !== null) {
+    parts.push(`HTTP ${error.httpStatus}`);
+  }
+  if (error.controllerErrorCode !== null) {
+    parts.push(`errorCode ${error.controllerErrorCode}`);
+  }
+  const codes = parts.join(', ');
+  return error.controllerMessage === null ? codes : `${codes} (${error.controllerMessage})`;
+} // End of function describeOpenApiFailure()
 
 /** A validated access token (memory only). */
 export interface AccessTokenState {
@@ -322,6 +374,25 @@ export interface OpenApiApGroupLimits {
 /** The AP groups of a site plus the SSID limits of its first page. */
 export interface OpenApiApGroupList extends PagedList<OpenApiApGroup> {
   limits: OpenApiApGroupLimits;
+}
+
+/**
+ * An access point as listed by `GET /openapi/v1/{omadacId}/sites/{siteId}/ap-groups/aps`
+ * (validateOpenApiApGroupAp()). `mac` is required; every other field is
+ * present only when the controller reports it sanely (never a default):
+ * `name` and `apGroupName` as non-empty strings, `apGroupId` as a usable id,
+ * `clientNum` as a non-negative integer, `statusCategory` as an integer (the
+ * ops doc: 0 Disconnected, 1 Connected, 2 Pending, 3 Heartbeat Missed, 4
+ * Isolated), `deviceType` as a short string (e.g. "EAP").
+ */
+export interface OpenApiApGroupAp {
+  mac: string;
+  name?: string;
+  apGroupId?: string;
+  apGroupName?: string;
+  clientNum?: number;
+  statusCategory?: number;
+  deviceType?: string;
 }
 
 /**
@@ -596,6 +667,56 @@ export function validateApGroupLimits(result: unknown): OpenApiApGroupLimits {
   }
   return limits;
 } // End of function validateApGroupLimits()
+
+/**
+ * The key two AP MAC addresses are compared by, and the form a cloud move
+ * sends (the ops doc's "AA-BB-CC-DD-EE-FF"): upper case, ':' turned into '-'.
+ * @param {string} mac - A MAC address as listed or as received.
+ * @returns {string} The key.
+ */
+export function apMacKey(mac: string): string {
+  return mac.toUpperCase().replace(/:/g, '-');
+}
+
+/**
+ * Validates one entry of `GET …/sites/{siteId}/ap-groups/aps`: a plain
+ * object with a usable `mac` (its required identifier; otherwise the whole
+ * listing is refused, as the internal device list does); every other field
+ * is kept only when sane (see OpenApiApGroupAp) and otherwise left out — an
+ * unknown, never a guessed default.
+ * @param {unknown} entry - One raw entry of `result.data`.
+ * @returns {OpenApiApGroupAp} The access point.
+ * @throws {OpenApiError} 'malformedResponse' when the entry or its MAC is unusable.
+ */
+export function validateOpenApiApGroupAp(entry: unknown): OpenApiApGroupAp {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw malformed('ap-groups/aps');
+  }
+  const raw = entry as Record<string, unknown>;
+  if (!isUsableId(raw.mac)) {
+    throw malformed('ap-groups/aps');
+  }
+  const ap: OpenApiApGroupAp = { mac: raw.mac };
+  if (typeof raw.name === 'string' && raw.name !== '') {
+    ap.name = raw.name;
+  }
+  if (isUsableId(raw.apGroupId)) {
+    ap.apGroupId = raw.apGroupId;
+  }
+  if (typeof raw.apGroupName === 'string' && raw.apGroupName !== '') {
+    ap.apGroupName = raw.apGroupName;
+  }
+  if (isCount(raw.clientNum)) {
+    ap.clientNum = raw.clientNum;
+  }
+  if (typeof raw.statusCategory === 'number' && Number.isSafeInteger(raw.statusCategory)) {
+    ap.statusCategory = raw.statusCategory;
+  }
+  if (typeof raw.deviceType === 'string' && raw.deviceType !== '' && raw.deviceType.length <= 64) {
+    ap.deviceType = raw.deviceType;
+  }
+  return ap;
+} // End of function validateOpenApiApGroupAp()
 
 /**
  * Validates the `result` of `POST …/ap-groups` (ops doc: `{id}`, the new AP
@@ -1108,6 +1229,48 @@ export class OpenApiClient {
   }
 
   /**
+   * Lists the access points of one site with their AP group
+   * (`GET /openapi/v1/{omadacId}/sites/{siteId}/ap-groups/aps`, paged like
+   * every listing: listAll(), deduplicated by MAC — apMacKey()). Each entry is
+   * validated by validateOpenApiApGroupAp(): one without a usable MAC rejects
+   * the listing. A possibly incomplete listing comes back `truncated`; the
+   * cloud controller session refuses it. Unverified live (I-1b1): the fields
+   * the tunnel really returns.
+   * @param {string} siteId - The site id.
+   * @returns {Promise<PagedList<OpenApiApGroupAp>>} The access points and the truncation flag.
+   * @throws {OpenApiError} On any failure; Error on an unusable site id.
+   */
+  listApGroupAps(siteId: string): Promise<PagedList<OpenApiApGroupAp>> {
+    if (!isUsableId(siteId)) {
+      throw new Error('Invalid site id');
+    }
+    return this.listAll('v1', ['sites', siteId, 'ap-groups', 'aps'], validateOpenApiApGroupAp, (ap) => apMacKey(ap.mac));
+  }
+
+  /**
+   * Moves an access point into an AP group: `PATCH
+   * /openapi/v1/{omadacId}/sites/{siteId}/aps/{apMac}/wlan-group` with exactly
+   * `{wlanGroupId}` (the ops doc: the group must be in the AP's site and must
+   * not be its current one). The answer carries no result: errorCode 0 only
+   * means the controller accepted it — the cloud controller session counts
+   * the move only when a re-read shows the AP in the group. Unverified live
+   * (I-1b1): that an AP-group id is accepted as `wlanGroupId` on 6.3 through
+   * the tunnel, and the MAC form (the ops doc's "AA-BB-CC-DD-EE-FF").
+   * @param {string} siteId - The site id.
+   * @param {string} apMac - The AP's MAC (checked by the caller).
+   * @param {string} wlanGroupId - The destination AP-group id (checked by the caller).
+   * @returns {Promise<void>} Resolves once the controller accepted it.
+   * @throws {OpenApiError} On any failure (-39303 "AP does not exist" is an
+   *   'apiError' carrying it); Error on an unusable argument.
+   */
+  async setApWlanGroup(siteId: string, apMac: string, wlanGroupId: string): Promise<void> {
+    if (!isUsableId(siteId) || !isUsableId(apMac) || !isUsableId(wlanGroupId)) {
+      throw new Error('Invalid AP wlan-group arguments');
+    }
+    await this.request('PATCH', 'v1', ['sites', siteId, 'aps', apMac, 'wlan-group'], { body: { wlanGroupId } });
+  }
+
+  /**
    * Lists the Wi-Fi networks of one site: the paged v2 catalog
    * `GET /openapi/v2/{omadacId}/sites/{siteId}/wireless-network/ssids?page&pageSize`
    * (listAll(): ⌈N / page size⌉ GET requests — the page size is
@@ -1546,11 +1709,26 @@ export class OpenApiClient {
     }
     if (envelope.errorCode !== 0) {
       throw new OpenApiError('apiError', this.#envelopeDiagnostic(`${method} request failed`, envelope, secrets), {
-        controllerErrorCode: envelope.errorCode
+        controllerErrorCode: envelope.errorCode,
+        controllerMessage: this.#refusalMessage(envelope, secrets)
       });
     }
     return { kind: 'ok', result: envelope.result };
   } // End of function #call()
+
+  /**
+   * The message of a refusal kept on the cloud route only (see the header):
+   * TP-Link's `msg`, scrubbed like every diagnostic. The local route keeps none.
+   * @param {OpenApiEnvelope} envelope - The parsed envelope.
+   * @param {readonly string[]} secrets - The call's own secrets (scrubbed by value).
+   * @returns {string | undefined} The scrubbed message, or undefined.
+   */
+  #refusalMessage(envelope: OpenApiEnvelope, secrets: readonly string[]): string | undefined {
+    if (this.route !== 'cloud' || envelope.msg === '') {
+      return undefined;
+    }
+    return this.#scrub(envelope.msg, secrets);
+  }
 
   /**
    * Sends a request through the transport, turning transport failures into
@@ -1614,24 +1792,19 @@ export class OpenApiClient {
   #httpError(response: OmadaHttpResponse, secrets: readonly string[] = []): OpenApiError {
     let diagnostic = `HTTP ${response.statusCode}`;
     let controllerErrorCode: number | undefined;
+    let controllerMessage: string | undefined;
     try {
       const parsed = JSON.parse(response.body) as Record<string, unknown>;
       if (parsed !== null && typeof parsed === 'object' && Number.isSafeInteger(parsed.errorCode)) {
         controllerErrorCode = parsed.errorCode as number;
-        diagnostic = this.#envelopeDiagnostic(
-          diagnostic,
-          {
-            errorCode: controllerErrorCode,
-            msg: typeof parsed.msg === 'string' ? parsed.msg : '',
-            result: undefined
-          },
-          secrets
-        );
+        const envelope: OpenApiEnvelope = { errorCode: controllerErrorCode, msg: typeof parsed.msg === 'string' ? parsed.msg : '', result: undefined };
+        diagnostic = this.#envelopeDiagnostic(diagnostic, envelope, secrets);
+        controllerMessage = this.#refusalMessage(envelope, secrets);
       }
     } catch {
       // Not JSON (e.g. an HTML error page): the status alone
     }
-    return new OpenApiError('httpError', diagnostic, { httpStatus: response.statusCode, controllerErrorCode });
+    return new OpenApiError('httpError', diagnostic, { httpStatus: response.statusCode, controllerErrorCode, controllerMessage });
   } // End of function #httpError()
 
   /**
@@ -1648,14 +1821,16 @@ export class OpenApiClient {
 
   /**
    * Redacts a diagnostic text, also removing this client's Client Secret,
-   * every token it received and the call's own secrets by value, and cuts it
-   * to MAX_DIAGNOSTIC_CHARS.
+   * every token it received, the call's own secrets and (cloud route) the
+   * token provider's live secrets — the account's cloud Client Secret and
+   * tokens — by value, and cuts it to MAX_DIAGNOSTIC_CHARS.
    * @param {string} text - The raw text.
    * @param {readonly string[]} [secrets] - The call's own secrets (e.g. a passphrase).
    * @returns {string} The sanitized text.
    */
   #scrub(text: string, secrets: readonly string[] = []): string {
-    return redactText(text, [this.#clientSecret, ...this.#knownTokens, ...secrets]).slice(0, MAX_DIAGNOSTIC_CHARS);
+    const providerSecrets = this.#tokenProvider?.liveSecrets?.() ?? [];
+    return redactText(text, [this.#clientSecret, ...this.#knownTokens, ...providerSecrets, ...secrets]).slice(0, MAX_DIAGNOSTIC_CHARS);
   }
 
   /**

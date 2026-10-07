@@ -37,6 +37,7 @@ import {
   updateNetworkReply
 } from './controller-session';
 import {
+  MAC_REGEX,
   NONCE_REGEX,
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
@@ -48,7 +49,8 @@ import {
   parseNetworkPasswordRequest,
   parseNetworkUpdateRequest,
   requireNoExtraArguments,
-  requireSessionNonce
+  requireSessionNonce,
+  WLAN_ID_REGEX
 } from './ipc-guards';
 import { createTrustedIpcRegistrar } from './ipc-trust';
 import { createCloudNetTransport, createNetTransport } from './net-transport';
@@ -168,9 +170,9 @@ const certificateTrustSource: CertificateTrustSource = {
 const RENDERER_HTML_PATH = path.normalize(path.join(__dirname, '../renderer/index.html'));
 
 // Format guards for identifiers crossing the IPC boundary. The renderer
-// applies the same patterns (src/renderer/validation.ts — keep both in sync)
-const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
-const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+// applies the same patterns (src/renderer/validation.ts — keep both in sync).
+// The AP-move guards, MAC_REGEX and WLAN_ID_REGEX, come from ipc-guards.ts
+// (the cloud controller session checks a move with them too)
 const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 // The opaque nonces (site selection, certificate trust, the controller
 // session) are checked with NONCE_REGEX, and the session-owned management

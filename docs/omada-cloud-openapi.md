@@ -1,7 +1,8 @@
 # TP-Link cloud controllers — the Account Level Open API contract the app follows
 
 Inbox item I-1 (spec: `autoclaude/processed/10-tplink-cloud-controllers.md`, user decisions D5–D7). This file is the
-contract the main-process code of phase I-1a follows (`src/main/cloud-*.ts`, the `OpenApiClient` cloud route). Every
+contract the main-process code of phases I-1a (`src/main/cloud-*.ts`, the `OpenApiClient` cloud route) and I-1b1 (the
+cloud controller session, §12) follows. Every
 detail marked **UNVERIFIED** is taken from the documentation only and is a live-test item (I-1c adds them to
 `docs/live-test-checklist.md`).
 
@@ -143,7 +144,13 @@ The template is `{serverHost}/v1/cloudaccess/{deviceId}/**`, followed by the sel
   - Cloud token failures map to `OpenApiError` codes: `credentialInvalid` becomes `invalidCredentials`, and the
     other codes keep their names.
   - The local route is unchanged: its own `/openapi/authorize/token`, the pinned controller session, no throttle.
-- `ControllerSession` and `ConnectionManager` do not use the cloud route yet (phase I-1b).
+  - On the cloud route only, a refusal (a non-zero `errorCode`, also inside a non-2xx answer) keeps TP-Link's message
+    as `OpenApiError.controllerMessage`. It is redacted and scrubbed by value of the client's tokens and of the token
+    provider's live secrets (the account's cloud Client Secret and tokens: `CloudTokenProvider.liveSecrets()`).
+    `describeOpenApiFailure()` appends it to the codes, e.g. `apiError, errorCode -44121 (…)`. The local route never
+    keeps controller text.
+- The cloud controller session (§12, phase I-1b1) uses the cloud route for all its calls. `ConnectionManager` does
+  not install it yet (phase I-1b2).
 - **UNVERIFIED:** whether the tunnel forwards `/openapi/v2/…` paths (the SSID catalog and create) and every v1 path
   the app uses (spec: each failure shows its own diagnostic); which token-error codes the tunnel answers; whether
   `-44121` ("no permission to access this organization") is what a credential limited to other organizations gets.
@@ -273,3 +280,92 @@ Other outcomes:
 6. The tunnel: every v1 path the app uses, `/openapi/v2/…` paths (SSID catalog, create), write calls with a full and
    a view-only credential, and `-44121` for an organization outside the credential.
 7. Whether the cloud's TLS certificates verify normally in Electron's network stack (expected: public CA).
+8. `GET …/sites/{siteId}/ap-groups/aps` through the tunnel (§12): the fields it really returns (the `mac` form,
+   `apGroupId`, `apGroupName`, `statusCategory`, `clientNum`), the `deviceType` values of APs, gateways and switches,
+   and paging with `pageSize=100` and `totalRows`.
+9. `PATCH …/aps/{apMac}/wlan-group` through the tunnel on 6.3 (§12):
+   - whether an AP-group id is accepted as `wlanGroupId`, and which MAC form it expects (`AA-BB-CC-DD-EE-FF` is sent);
+   - how long `ap-groups/aps` takes to show the new group (the session re-reads up to 3 times, 1 s apart);
+   - the errorCode for a move into the AP's current group ("cannot be the current wlan group").
+10. What a view-only credential answers for each write (AP-group create / rename / delete, the SSID writes and
+    bindings, the AP move): its code and message, which the session shows.
+11. Whether a bulk move stays under the rate limit: each move is 1 PATCH plus 1–3 paged reads, through the one
+    throttle of the credential.
+12. Whether the tunnel's `GET …/sites` lists the controller's site ids in the format the IPC site-id guard accepts
+    (`[A-Za-z0-9_-]{1,64}`).
+
+## 12. The cloud controller session (phase I-1b1)
+
+`new ControllerSession({kind: 'cloud', omadacId, name, orgVersion, createOpenApiClient, sleep?})`
+(`src/main/controller-session.ts`; its data side is `CloudControllerBackend` in `src/main/cloud-controller-session.ts`).
+It is Electron-free and unit-tested on fixtures (`tests/unit/cloud-controller-session.test.ts`,
+`tests/fixtures/cloud/controller-tunnel.json`). `ConnectionManager` and IPC do not use it yet (phase I-1b2).
+
+- **Inputs** (main only):
+  - the organization's `omadacId`, name and `orgVersion`, from the organization list, never `/api/info`;
+  - a factory of cloud-route `OpenApiClient`s for that organization. Production:
+    `new OpenApiClient({route: 'cloud', target, tokenProvider: account, throttle: account.throttle, transport})`.
+
+  A factory rather than one client: the session creates one data client per connect and one management client per
+  capability run, and closes them as the local session does. All of them share the account token and the
+  credential's throttle. A created client that is not a cloud-route client of this `omadacId` is closed and refused.
+- **No internal client.** The session never calls `/api/info`, `/api/v2/…` or the controller's own token endpoint.
+- **Version:** `orgVersion` goes through `controller-version.ts`. Without a dotted version or below 6.3, `connect()`
+  refuses with `versionUnknown` / `versionTooOld` before any request, and the capability checks answer
+  `legacyController` without one.
+
+### The calls
+
+| Need | Call (behind `{serverHost}/v1/cloudaccess/{deviceId}`) | Rule |
+|---|---|---|
+| Sites (connect) | `GET /openapi/v1/{omadacId}/sites` (paged) | the only site, or the remembered id while it is listed (`pickSite()`, the local rule); otherwise the user picks a listed id; none → `noSites` |
+| Access points | `GET …/sites/{siteId}/ap-groups/aps` (paged to `totalRows`) | see below |
+| Groups | `GET …/sites/{siteId}/ap-groups` (paged) | see below |
+| Capability check | `GET /openapi/v1/{omadacId}/sites` | the token works and the site is still listed |
+| AP move | `PATCH …/sites/{siteId}/aps/{apMac}/wlan-group` `{"wlanGroupId": "<AP-group id>"}`, then `GET …/ap-groups/aps` | see below |
+| Management | the phase 16–19 calls (§6) | the shared `ControllerSession` code, unchanged |
+
+- **Access points** (`toCloudAccessPoint()`), the renderer's `AccessPoint`:
+  - A field not reported sanely is unknown, never a default that looks real. No `statusCategory` → `-1` (shown as
+    unknown, not as disconnected); no `clientNum` → absent; no `apGroupId` → no `wlanId`; no `apGroupName` → `''`;
+    no name → the MAC (as the internal list does).
+  - `wlanId` (new, optional) is the AP's group id.
+  - A row whose `deviceType` is `Gateway` or `Switch` is left out. Every other row is an AP, one without the field
+    included.
+  - A row without a usable MAC refuses the listing (`malformedResponse`); a listing not proven complete is
+    `listIncomplete`. Sorted by name.
+- **Groups** (`toCloudGroupListing()`, through the management DTO rules of `toManagedApGroup()`):
+  - every group, empty ones included;
+  - `wlanId` is the Open API id, so a move target id is the Open API id;
+  - the SSID names, with `ssidListUnknown: true` and an empty list when they are not reported sanely (never "no
+    networks");
+  - the default flag, and `remainingBinding` (the per-band remaining capacity; new and optional).
+
+  Sorted by name; an incomplete listing is `listIncomplete`.
+- **Capabilities:** checks 1, 3 and the sites read of check 4 run. §2.2 (4)–(5) compare internal with Open API data
+  and do not apply: the site came from the Open API list itself, so the sites read only proves that it is still
+  listed, and the AP-group comparison never runs. Management is on when the token works and the site is listed. No
+  reason code is new. Every refusal's diagnostic carries the controller's code and redacted message (§6), so a
+  view-only credential's refusal of a write shows both.
+- **AP moves:** the MAC and the group id pass the `omada:set-wlan` guards (`MAC_REGEX`, `WLAN_ID_REGEX` in
+  `ipc-guards.ts`) before any request. The MAC is sent as `AA-BB-CC-DD-EE-FF`, the ops doc's form.
+  - **The verification rule:** an AP counts as moved only when a re-read of `ap-groups/aps` lists it (by MAC) with
+    the destination group's id. There are up to 3 reads (`CLOUD_MOVE_VERIFY_READS`): the first right after the PATCH,
+    then 1 s apart (`CLOUD_MOVE_VERIFY_DELAY_MS`, an injected sleep).
+  - **Failures** (the last read decides): `moveRequestFailed` (the PATCH failed; codes and the controller's message),
+    `moveNotConfirmed` (the AP is in another group, or missing from a complete list), `moveUnverified` (the read
+    failed, was incomplete without the AP, or reported no group for it).
+  - **The result keeps the shape of `omada:set-wlan`:** `true`, or a rejection whose message starts with the code
+    (`moveNotConfirmed (AP listed in another group, 3 reads)`), so the 13b results flow shows it with Retry.
+  - The candidate fallback `PATCH ap-groups/{id}` with `{name, addApMacs}` is not implemented (spec).
+- **Close and supersede** (the `ManagedController` contract):
+  - `close()` drops the management clients and the capabilities with the local session's code; the management
+    replies then answer `notConnected` / `superseded` the same way.
+  - The data client keeps serving until `logout()` (the release), as the local internal client does. `logout()`
+    closes it and sends nothing: there is no server-side session, and the account token belongs to the account
+    client.
+  - Afterwards every data call is `notConnected`; a call whose client closes while it runs is `superseded`.
+- **Errors:** `CloudSessionError` carries a stable code (`CLOUD_SESSION_ERROR_CODES`; each has an es / en text
+  `cloudSessionError…` in `src/renderer/i18n-strings.ts`), a sanitized diagnostic and `openApiCode`: the failed call's
+  `OpenApiError` code, e.g. `invalidCredentials` or `rateLimited`, for the I-1b2 / I-1c messages. Its message is
+  `<code> (<diagnostic>)`.

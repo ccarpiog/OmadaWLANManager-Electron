@@ -1,17 +1,28 @@
 // The controller session facade (docs/management-design.md §2.1, §2.2;
 // todo.md 4.8): one connected Omada controller as the IPC handlers see it.
-// A ControllerSession wraps the internal client (OmadaController: /api/info,
-// login, sites, the data and every AP move) and, once management access is
-// verified, an OpenApiClient; it knows the normalized URL, the controller id
-// (omadacId), the selected site (id + name), the controller version, the
-// group model and the management capabilities. ConnectionManager
-// (connection-manager.ts) installs, detaches and closes sessions like any
-// ManagedController; index.ts only shape-checks payloads and calls in here.
-// A failure of the internal client leaves the session only sanitized
-// (#internalCall()): a new Error with the redacted message, every credential
-// the client holds or held (password, CSRF tokens, session-cookie values)
-// scrubbed by value — so neither the connect result's detail nor an IPC
-// rejection nor a log line can carry one a controller message echoed bare.
+// Its data side — connect, sites, the AP and group lists, AP moves — is a
+// ControllerBackend of one of two kinds:
+// - local (LocalControllerBackend below): the configured controller, reached
+//   directly through the internal client (OmadaController: /api/info, login,
+//   sites, the data and every AP move);
+// - cloud (CloudControllerBackend, cloud-controller-session.ts; inbox item
+//   I-1b1): a controller of the TP-Link cloud account, reached through the
+//   Open API only (OpenApiClient's cloud route). It has no internal client
+//   and never calls the internal API.
+// On top of either, once management access is verified, an OpenApiClient.
+// The session knows the normalized URL ('' for a cloud controller), the
+// controller id (omadacId), the selected site (id + name), the controller
+// version, the group model and the management capabilities. Everything from
+// the capability checks on — the AP-group, Wi-Fi network and binding reads
+// and writes, and their policy on fresh data — is ONE code path for both
+// kinds. ConnectionManager (connection-manager.ts) installs, detaches and
+// closes sessions like any ManagedController; index.ts only shape-checks
+// payloads and calls in here. A failure of the internal client leaves the
+// session only sanitized (#internalCall() of the local backend): a new Error
+// with the redacted message, every credential the client holds or held
+// (password, CSRF tokens, session-cookie values) scrubbed by value — so
+// neither the connect result's detail nor an IPC rejection nor a log line
+// can carry one a controller message echoed bare.
 //
 // Capability checks (spec §2.2) run in the background when a session becomes
 // the installed one (activate()) — so they never delay or fail the connect
@@ -29,12 +40,21 @@
 //   5. GET …/sites/{siteId}/ap-groups has exactly the id set of the internal
 //      setting/wlans list (never matched by name)       else 'apGroupsMismatch'
 //   (a read probe of 4 or 5 that cannot be read:        'probeFailed')
+// A cloud controller (spec "Architecture"): check 2 is its account's
+// credential (the injected cloud route: always configured), and §2.2
+// (4)–(5), which compare internal with Open API data, do not apply. Its site
+// was chosen from the Open API site list itself, so the sites read of step 4
+// only proves that the site is still listed, and step 5 never runs (there is
+// no internal list). Management is on when the token works and the site is
+// listed; no reason code is new.
 //
 // Security: the Open API client is created only by a check run of an
-// installed session — i.e. after the internal /api/info handshake and login
-// passed the certificate pin check — with the same transport (the net
-// transport on the pinned ControllerTlsSessions session), and only while the
-// configured URL is still this session's URL. close() (called by
+// installed session — locally, after the internal /api/info handshake and
+// login passed the certificate pin check — with the same transport (the net
+// transport on the pinned ControllerTlsSessions session; a cloud session's
+// clients come from the injected cloud route: its own Electron session and
+// the origin allowlist), and, locally, only while the configured URL is
+// still this session's URL. close() (called by
 // ConnectionManager on every detach/release — URL change, certificate reset
 // or trust, disconnect, superseded connect — and as soon as a newer connect
 // attempt starts while this session is installed) synchronously closes
@@ -45,8 +65,11 @@
 // (capabilitiesReply()). The capabilities and
 // every reply built here carry flags, reason codes and a diagnostic made of
 // error codes and counts only — never the Client Secret, a token or
-// controller text. Electron-free (unit-tested in
-// tests/unit/controller-session.test.ts and tests/unit/ap-group-management.test.ts).
+// controller text; on a cloud controller only, a refusal's diagnostic adds
+// TP-Link's message, redacted and scrubbed by the client
+// (describeOpenApiFailure()). Electron-free (unit-tested in
+// tests/unit/controller-session.test.ts, tests/unit/ap-group-management.test.ts
+// and, for the cloud kind, tests/unit/cloud-controller-session.test.ts).
 //
 // AP-group management (todo.md 4.9; spec §3, §4.4): listManagedApGroups(),
 // createApGroup(), renameApGroup() and deleteApGroup() are the only callers
@@ -133,6 +156,7 @@ import type {
   ApGroupOperationError,
   ApGroupRenameRequest,
   ConfigSavePayload,
+  ControllerInfo,
   GroupListing,
   GroupModel,
   ManagedApGroupsResult,
@@ -163,11 +187,20 @@ import {
   toManagedApGroup,
   validateApGroupName
 } from './ap-group-policy';
+import { CloudControllerBackend, CloudControllerSessionOptions } from './cloud-controller-session';
 import { ConnectionManager, createNonce, InstalledDetails, ManagedController } from './connection-manager';
 import { bindingRefusalReply, checkBindingRequest, checkBindingScope, networkBindingFacts, planNetworkBindings } from './network-binding-plan';
 import { ConnectOutcome, OmadaController } from './omada-api';
 import type { OmadaTransport } from './omada-transport';
-import { OpenApiApGroupList, OpenApiClient, OpenApiClientOptions, OpenApiError, OpenApiSsidWriteDetail, PagedList } from './openapi-client';
+import {
+  describeOpenApiFailure,
+  OpenApiApGroupList,
+  OpenApiClient,
+  OpenApiClientOptions,
+  OpenApiError,
+  OpenApiSsidWriteDetail,
+  PagedList
+} from './openapi-client';
 import { redactErrorMessage, redactText } from './redact';
 import { MAX_MANAGED_NETWORKS, OpenApiSsid, OpenApiSsidBindings, OpenApiSsidDetail, toManagedNetwork } from './wifi-network-model';
 import {
@@ -189,8 +222,19 @@ export interface ManagementCredentials {
   clientSecret: string;
 }
 
-/** Constructor options of ControllerSession (index.ts passes config.ts and the net transport). */
+// The cloud kind's options and errors live with its backend
+export type { CloudControllerSessionOptions } from './cloud-controller-session';
+// Kept here as well: the management replies and the tests use it
+export { describeOpenApiFailure } from './openapi-client';
+
+/**
+ * Constructor options of a local ControllerSession (index.ts passes config.ts
+ * and the net transport). A cloud session takes CloudControllerSessionOptions
+ * (`kind: 'cloud'`) instead.
+ */
 export interface ControllerSessionOptions {
+  // Optional discriminant: a local session (the default)
+  kind?: 'local';
   // The configured controller URL (normalized) and the login credentials
   url: string;
   username: string;
@@ -253,28 +297,6 @@ export function managementOff(reason: ManagementReason, diagnostic?: string): Ma
   }
   return capabilities;
 }
-
-/**
- * Builds the diagnostic of a failed Open API call from its stable code, HTTP
- * status and controller errorCode only (never its message, which may quote
- * controller text), e.g. "httpError, HTTP 404" or "apiError, errorCode -1".
- * Anything that is not an OpenApiError is reported as "unexpected".
- * @param {unknown} error - The thrown value.
- * @returns {string} The diagnostic.
- */
-export function describeOpenApiFailure(error: unknown): string {
-  if (!(error instanceof OpenApiError)) {
-    return 'unexpected';
-  }
-  const parts: string[] = [error.code];
-  if (error.httpStatus !== null) {
-    parts.push(`HTTP ${error.httpStatus}`);
-  }
-  if (error.controllerErrorCode !== null) {
-    parts.push(`errorCode ${error.controllerErrorCode}`);
-  }
-  return parts.join(', ');
-} // End of function describeOpenApiFailure()
 
 /**
  * Compares the Open API AP-group ids with the internal group-list ids as SETS
@@ -571,19 +593,221 @@ function isContextFailure(value: ManagementContext | ContextFailure): value is C
 }
 
 /**
- * One connected controller: the internal client, the Open API client once
- * management access is verified, and the capabilities (see the header).
+ * Check 2 of a capability run (docs/management-design.md §2.2): the Open API
+ * access the run uses — how to create its client, and the values its log
+ * lines scrub by value (the local Client Secret).
  */
-export class ControllerSession implements ManagedController {
-  readonly url: string;
-  // Opaque token of this session: the renderer echoes it with the
-  // management-access calls (see getSessionCapabilities())
-  readonly sessionNonce: string;
+export interface ManagementAccess {
+  secrets: string[];
+  createClient(omadacId: string): OpenApiClient;
+}
+
+/**
+ * The data side of a ControllerSession (see the header): the local
+ * controller (LocalControllerBackend) or a cloud controller
+ * (CloudControllerBackend). Every failure it throws is already sanitized.
+ */
+export interface ControllerBackend {
+  readonly kind: 'local' | 'cloud';
+  // The controller id (null before a local connect read it), the selected
+  // site, the version and group model, and (cloud only) the display name
+  readonly omadacId: string | null;
+  readonly site: SiteInfo | null;
+  readonly info: ControllerInfo;
+  readonly name: string | null;
+  connect(preferredSiteId?: string): Promise<ConnectOutcome>;
+  selectSite(siteId: string): boolean;
+  // Ends the data side for good (the internal logout; a cloud backend closes
+  // its data client). close() of the session leaves the data side serving
+  // until then (ManagedController.close(): until the instance is released)
+  logout(): Promise<void>;
+  getAccessPoints(): Promise<AccessPoint[]>;
+  getWlanGroups(): Promise<GroupListing>;
+  setApWlanGroup(mac: string, wlanId: string): Promise<boolean>;
+  // Check 2: the access of a check run, or null when none is configured
+  managementAccess(): ManagementAccess | null;
+  // Check 5: reads the internal group-list ids the Open API AP groups must
+  // equal, or null when the check does not apply (a cloud controller has no
+  // internal data)
+  internalGroupIds(): (() => Promise<string[]>) | null;
+}
+
+/**
+ * The local controller's data side: the internal client, plus the configured
+ * management credentials for the check runs.
+ */
+class LocalControllerBackend implements ControllerBackend {
+  readonly kind = 'local';
+  readonly name = null;
+  readonly #url: string;
   readonly #internal: OmadaController;
   readonly #transport: OmadaTransport;
   readonly #getManagementCredentials: () => ManagementCredentials | null;
   readonly #getConfiguredUrl: () => string;
   readonly #createOpenApiClient: (options: OpenApiClientOptions) => OpenApiClient;
+
+  /**
+   * Creates the internal client. Nothing is sent until connect().
+   * @param {ControllerSessionOptions} options - URL, credentials, transport and config accessors.
+   */
+  constructor(options: ControllerSessionOptions) {
+    this.#url = options.url;
+    this.#transport = options.transport;
+    this.#internal = new OmadaController(options.url, options.username, options.password, options.transport);
+    this.#getManagementCredentials = options.getManagementCredentials;
+    this.#getConfiguredUrl = options.getConfiguredUrl;
+    this.#createOpenApiClient = options.createOpenApiClient ?? ((clientOptions) => new OpenApiClient(clientOptions));
+  }
+
+  /**
+   * The controller id /api/info reported (null before connect()).
+   * @returns {string | null} The controller id.
+   */
+  get omadacId(): string | null {
+    return this.#internal.controllerId;
+  }
+
+  /**
+   * The selected site of the internal client.
+   * @returns {SiteInfo | null} The site, or null.
+   */
+  get site(): SiteInfo | null {
+    return this.#internal.selectedSite;
+  }
+
+  /**
+   * The controllerVer /api/info reported and its group model.
+   * @returns {ControllerInfo} A copy.
+   */
+  get info(): ControllerInfo {
+    return this.#internal.info;
+  }
+
+  /**
+   * Connects the internal client (/api/info, login, sites).
+   * @param {string} [preferredSiteId] - The remembered site id.
+   * @returns {Promise<ConnectOutcome>} The connect outcome.
+   */
+  connect(preferredSiteId?: string): Promise<ConnectOutcome> {
+    return this.#internalCall(() => this.#internal.connect(preferredSiteId));
+  }
+
+  /**
+   * Selects an authorized site of the internal client.
+   * @param {string} siteId - The site id.
+   * @returns {boolean} True when accepted.
+   */
+  selectSite(siteId: string): boolean {
+    return this.#internal.selectSite(siteId);
+  }
+
+  /**
+   * Logs the internal client out (best-effort; network errors are swallowed
+   * by OmadaController.logout()).
+   * @returns {Promise<void>} Settles when the logout attempt is over.
+   */
+  logout(): Promise<void> {
+    return this.#internal.logout();
+  }
+
+  /**
+   * The access points (internal client).
+   * @returns {Promise<AccessPoint[]>} The access points, sorted by name.
+   */
+  getAccessPoints(): Promise<AccessPoint[]> {
+    return this.#internalCall(() => this.#internal.getAccessPoints());
+  }
+
+  /**
+   * The group listing (internal client).
+   * @returns {Promise<GroupListing>} The groups, version and group model.
+   */
+  getWlanGroups(): Promise<GroupListing> {
+    return this.#internalCall(() => this.#internal.getWlanGroups());
+  }
+
+  /**
+   * Moves an access point into a group (the internal move, the local
+   * controller's only move path).
+   * @param {string} mac - The AP's MAC (format-checked by index.ts).
+   * @param {string} wlanId - The group id (format-checked by index.ts).
+   * @returns {Promise<boolean>} True when the controller accepted it.
+   */
+  setApWlanGroup(mac: string, wlanId: string): Promise<boolean> {
+    return this.#internalCall(() => this.#internal.setApWlanGroup(mac, wlanId));
+  }
+
+  /**
+   * Check 2: the Client ID and Client Secret configured for THIS controller
+   * (read now; none while the configured URL is another one).
+   * @returns {ManagementAccess | null} The access of the run, or null.
+   */
+  managementAccess(): ManagementAccess | null {
+    const credentials = this.#getConfiguredUrl() === this.#url ? this.#getManagementCredentials() : null;
+    if (credentials === null) {
+      return null;
+    }
+    return {
+      secrets: [credentials.clientSecret],
+      /**
+       * Creates the run's local-route client with these credentials.
+       * @param {string} omadacId - The controller id from /api/info.
+       * @returns {OpenApiClient} The client.
+       */
+      createClient: (omadacId: string) =>
+        this.#createOpenApiClient({
+          baseUrl: this.#url,
+          omadacId,
+          clientId: credentials.clientId,
+          clientSecret: credentials.clientSecret,
+          transport: this.#transport
+        })
+    };
+  } // End of function managementAccess()
+
+  /**
+   * Check 5: the internal setting/wlans ids.
+   * @returns {() => Promise<string[]>} Reads them.
+   */
+  internalGroupIds(): () => Promise<string[]> {
+    return () => this.#internal.listGroupIds();
+  }
+
+  /**
+   * Runs one internal-client call; a failure leaves the backend only as a
+   * new Error carrying the redacted message, with every credential the
+   * internal client holds or held (OmadaController.sessionSecrets(): the
+   * password, the CSRF tokens, the session-cookie values) scrubbed by value
+   * — never the original error, its stack or another property. It reaches
+   * the connect result's detail, the IPC rejection the renderer gets and the
+   * log lines, and a controller message can echo a credential bare.
+   * @template T The call's result.
+   * @param {() => Promise<T>} call - The internal-client call.
+   * @returns {Promise<T>} Its result.
+   * @throws {Error} The sanitized failure.
+   */
+  async #internalCall<T>(call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (error) {
+      throw new Error(redactErrorMessage(error, this.#internal.sessionSecrets()));
+    }
+  }
+} // End of class LocalControllerBackend
+
+/**
+ * One connected controller: its data side (the internal client, or a cloud
+ * controller's Open API data client), the Open API client once management
+ * access is verified, and the capabilities (see the header).
+ */
+export class ControllerSession implements ManagedController {
+  // The configured controller URL ('' for a cloud controller: it has none)
+  readonly url: string;
+  // Opaque token of this session: the renderer echoes it with the
+  // management-access calls (see getSessionCapabilities())
+  readonly sessionNonce: string;
+  // The data side: the local controller or a cloud controller
+  readonly #backend: ControllerBackend;
   #closed = false;
   #activated = false;
   // The result of the latest completed check run (null: not checked yet,
@@ -611,16 +835,39 @@ export class ControllerSession implements ManagedController {
 
   /**
    * Creates the session. Nothing is sent until connect().
-   * @param {ControllerSessionOptions} options - URL, credentials, transport and config accessors.
+   * @param {ControllerSessionOptions | CloudControllerSessionOptions} options -
+   *   Local: URL, credentials, transport and config accessors. Cloud
+   *   (`kind: 'cloud'`): the organization (omadacId, name, orgVersion) and
+   *   the factory of its cloud-route Open API clients.
+   * @throws {Error} On unusable cloud options (see CloudControllerBackend).
    */
-  constructor(options: ControllerSessionOptions) {
-    this.url = options.url;
+  constructor(options: ControllerSessionOptions | CloudControllerSessionOptions) {
     this.sessionNonce = createNonce();
-    this.#transport = options.transport;
-    this.#internal = new OmadaController(options.url, options.username, options.password, options.transport);
-    this.#getManagementCredentials = options.getManagementCredentials;
-    this.#getConfiguredUrl = options.getConfiguredUrl;
-    this.#createOpenApiClient = options.createOpenApiClient ?? ((clientOptions) => new OpenApiClient(clientOptions));
+    if (options.kind === 'cloud') {
+      this.url = '';
+      this.#backend = new CloudControllerBackend(options);
+    } else {
+      this.url = options.url;
+      this.#backend = new LocalControllerBackend(options);
+    }
+  } // End of constructor
+
+  /**
+   * Which kind of controller this session is for.
+   * @returns {'local' | 'cloud'} 'local' (the configured controller, reached
+   *   directly) or 'cloud' (a TP-Link cloud controller, Open API only).
+   */
+  get kind(): 'local' | 'cloud' {
+    return this.#backend.kind;
+  }
+
+  /**
+   * The controller's display name: a cloud controller's organization name;
+   * null for the local controller (the app names it itself).
+   * @returns {string | null} The name.
+   */
+  get controllerName(): string | null {
+    return this.#backend.name;
   }
 
   /**
@@ -632,11 +879,12 @@ export class ControllerSession implements ManagedController {
   }
 
   /**
-   * The controller id (`omadacId`), or null before the connect read it.
+   * The controller id (`omadacId`): locally null before the connect read it;
+   * a cloud controller's comes from the organization list.
    * @returns {string | null} The controller id.
    */
   get omadacId(): string | null {
-    return this.#internal.controllerId;
+    return this.#backend.omadacId;
   }
 
   /**
@@ -644,15 +892,17 @@ export class ControllerSession implements ManagedController {
    * @returns {SiteInfo | null} The site.
    */
   get site(): SiteInfo | null {
-    return this.#internal.selectedSite;
+    return this.#backend.site;
   }
 
   /**
-   * The controllerVer /api/info reported (null when absent or not sane).
+   * The controller version (null when absent or not sane): /api/info's
+   * controllerVer locally, the organization's orgVersion for a cloud
+   * controller.
    * @returns {string | null} The controller version.
    */
   get controllerVersion(): string | null {
-    return this.#internal.info.controllerVersion;
+    return this.#backend.info.controllerVersion;
   }
 
   /**
@@ -660,7 +910,7 @@ export class ControllerSession implements ManagedController {
    * @returns {GroupModel} 'apGroup' (6.3+) or 'wlanGroup'.
    */
   get groupModel(): GroupModel {
-    return this.#internal.info.groupModel;
+    return this.#backend.info.groupModel;
   }
 
   /**
@@ -682,44 +932,25 @@ export class ControllerSession implements ManagedController {
   }
 
   /**
-   * Connects the internal client (/api/info, login, sites). The capability
-   * checks wait for activate(): ConnectionManager activates only the session
-   * it installs, never a stale or parked one.
+   * Connects the data side: locally the internal client (/api/info, login,
+   * sites); for a cloud controller the Open API site list (refused before
+   * any request below Omada 6.3). The capability checks wait for activate():
+   * ConnectionManager activates only the session it installs, never a stale
+   * or parked one.
    * @param {string} [preferredSiteId] - The remembered site id.
    * @returns {Promise<ConnectOutcome>} The connect outcome.
    */
   connect(preferredSiteId?: string): Promise<ConnectOutcome> {
-    return this.#internalCall(() => this.#internal.connect(preferredSiteId));
+    return this.#backend.connect(preferredSiteId);
   }
 
   /**
-   * Runs one internal-client call; a failure leaves the session only as a
-   * new Error carrying the redacted message, with every credential the
-   * internal client holds or held (OmadaController.sessionSecrets(): the
-   * password, the CSRF tokens, the session-cookie values) scrubbed by value
-   * — never the original error, its stack or another property. It reaches
-   * the connect result's detail, the IPC rejection the renderer gets and the
-   * log lines, and a controller message can echo a credential bare.
-   * @template T The call's result.
-   * @param {() => Promise<T>} call - The internal-client call.
-   * @returns {Promise<T>} Its result.
-   * @throws {Error} The sanitized failure.
-   */
-  async #internalCall<T>(call: () => Promise<T>): Promise<T> {
-    try {
-      return await call();
-    } catch (error) {
-      throw new Error(redactErrorMessage(error, this.#internal.sessionSecrets()));
-    }
-  }
-
-  /**
-   * Selects an authorized site of the internal client.
+   * Selects one of the sites the connect listed.
    * @param {string} siteId - The site id.
    * @returns {boolean} True when accepted.
    */
   selectSite(siteId: string): boolean {
-    return this.#internal.selectSite(siteId);
+    return this.#backend.selectSite(siteId);
   }
 
   /**
@@ -745,8 +976,10 @@ export class ControllerSession implements ManagedController {
    * result is ignored, nothing more is sent for it) and its waiters get null;
    * no check run can start afterwards. Idempotent. Called by
    * ConnectionManager on every detach / release, and when a newer connect
-   * attempt starts while this session is installed (its internal client may
-   * keep serving the data until that attempt succeeds).
+   * attempt starts while this session is installed (its data side — the
+   * internal client, or a cloud controller's data client — may keep serving
+   * the data and AP moves until that attempt succeeds and the session is
+   * released: logout()).
    */
   close(): void {
     if (this.#closed) {
@@ -773,39 +1006,47 @@ export class ControllerSession implements ManagedController {
   }
 
   /**
-   * Closes the session (close()) and logs the internal client out
-   * (best-effort; network errors are swallowed by OmadaController.logout()).
+   * Closes the session (close()) and ends its data side: locally the
+   * internal logout (best-effort; network errors are swallowed by
+   * OmadaController.logout()); a cloud controller's data client is closed
+   * (there is no server-side session to end; the account token belongs to
+   * the cloud account client and stays).
    * @returns {Promise<void>} Settles when the logout attempt is over.
    */
   async logout(): Promise<void> {
     this.close();
-    await this.#internal.logout();
+    await this.#backend.logout();
   }
 
   /**
-   * The access points (internal client).
+   * The access points: the internal device list, or a cloud controller's
+   * Open API `ap-groups/aps` (cloud-controller-session.ts).
    * @returns {Promise<AccessPoint[]>} The access points, sorted by name.
    */
   getAccessPoints(): Promise<AccessPoint[]> {
-    return this.#internalCall(() => this.#internal.getAccessPoints());
+    return this.#backend.getAccessPoints();
   }
 
   /**
-   * The group listing (internal client).
+   * The group listing: the internal setting/wlans + setting/ssids, or a
+   * cloud controller's Open API `ap-groups` (Open API group ids).
    * @returns {Promise<GroupListing>} The groups, version and group model.
    */
   getWlanGroups(): Promise<GroupListing> {
-    return this.#internalCall(() => this.#internal.getWlanGroups());
+    return this.#backend.getWlanGroups();
   }
 
   /**
-   * Moves an access point into a group (internal client, the only move path).
+   * Moves an access point into a group: the internal move locally (the local
+   * controller's only move path); on a cloud controller the Open API `PATCH
+   * …/aps/{apMac}/wlan-group`, counted only once a re-read shows the AP in
+   * the group (cloud-controller-session.ts).
    * @param {string} mac - The AP's MAC (format-checked by index.ts).
    * @param {string} wlanId - The group id (format-checked by index.ts).
-   * @returns {Promise<boolean>} True when the controller accepted it.
+   * @returns {Promise<boolean>} True when the move is done (see above).
    */
   setApWlanGroup(mac: string, wlanId: string): Promise<boolean> {
-    return this.#internalCall(() => this.#internal.setApWlanGroup(mac, wlanId));
+    return this.#backend.setApWlanGroup(mac, wlanId);
   }
 
   /**
@@ -1170,10 +1411,13 @@ export class ControllerSession implements ManagedController {
   } // End of function #runChecks()
 
   /**
-   * The checks of docs/management-design.md §2.2, in order (see the header).
-   * After every await the run stops when it is no longer current (a newer
-   * run or close()), so nothing more is sent and nothing is reported for it.
-   * The run's Open API client is closed unless management ends up enabled.
+   * The checks of docs/management-design.md §2.2, in order (see the header;
+   * a cloud controller runs checks 1–4 with its account's access, check 4
+   * proving only that its Open-API-chosen site is still listed, and never
+   * check 5). After every await the run stops when it is no longer current
+   * (a newer run or close()), so nothing more is sent and nothing is
+   * reported for it. The run's Open API client is closed unless management
+   * ends up enabled.
    * @param {number} sequence - This run's number.
    * @returns {Promise<CheckOutcome | null>} The outcome, or null when superseded.
    */
@@ -1188,9 +1432,10 @@ export class ControllerSession implements ManagedController {
     if (this.groupModel !== 'apGroup') {
       return { capabilities: managementOff('legacyController'), client: null };
     }
-    // Check 2: credentials configured — for THIS controller only
-    const credentials = this.#getConfiguredUrl() === this.url ? this.#getManagementCredentials() : null;
-    if (credentials === null) {
+    // Check 2: management access configured — locally the credentials for
+    // THIS controller only; a cloud controller's is its account's
+    const access = this.#backend.managementAccess();
+    if (access === null) {
       return { capabilities: managementOff('managementNotConfigured'), client: null };
     }
     const omadacId = this.omadacId;
@@ -1199,24 +1444,18 @@ export class ControllerSession implements ManagedController {
       return { capabilities: managementOff('probeFailed', 'notConnected'), client: null };
     }
 
-    const client = this.#createOpenApiClient({
-      baseUrl: this.url,
-      omadacId,
-      clientId: credentials.clientId,
-      clientSecret: credentials.clientSecret,
-      transport: this.#transport
-    });
+    const client = access.createClient(omadacId);
     this.#checkClient = client;
     /**
      * Turns management off for a failed check and logs it: the reason and
-     * the codes-only diagnostic (never controller text, which could echo a
-     * credential), passed through the redactor all the same.
+     * the diagnostic (codes only; on a cloud controller a refusal's message,
+     * already scrubbed), passed through the redactor all the same.
      * @param {ManagementReason} reason - The reason code.
-     * @param {string} diagnostic - The codes-only diagnostic.
+     * @param {string} diagnostic - The diagnostic.
      * @returns {CheckOutcome} The outcome.
      */
     const failed = (reason: ManagementReason, diagnostic: string): CheckOutcome => {
-      console.warn(redactText(`Management access check: ${reason} (${diagnostic})`, [credentials.clientSecret]));
+      console.warn(redactText(`Management access check: ${reason} (${diagnostic})`, access.secrets));
       return { capabilities: managementOff(reason, diagnostic), client: null };
     };
 
@@ -1232,7 +1471,9 @@ export class ControllerSession implements ManagedController {
       }
       if (!isCurrent()) return null;
 
-      // Check 4: the Open API sees the selected internal site (by id)
+      // Check 4: the Open API sees the selected internal site (by id); on a
+      // cloud controller, whose site came from this very list, only that the
+      // site is still listed
       let siteIds: string[];
       let sitesTruncated: boolean;
       try {
@@ -1248,8 +1489,15 @@ export class ControllerSession implements ManagedController {
         return failed('siteNotFound', sitesTruncated ? `sites ${siteIds.length}, truncated` : `sites ${siteIds.length}`);
       }
 
-      // Check 5: the AP-group id set equals the internal group-list id set
-      const [apGroups, internalIds] = await Promise.allSettled([client.listApGroups(site.id), this.#internal.listGroupIds()]);
+      // Check 5: the AP-group id set equals the internal group-list id set.
+      // Not applicable to a cloud controller (no internal data): nothing is
+      // read, and management is on once the token works and the site is listed
+      const readInternalIds = this.#backend.internalGroupIds();
+      if (readInternalIds === null) {
+        keepClient = true;
+        return { capabilities: managementOn(), client };
+      }
+      const [apGroups, internalIds] = await Promise.allSettled([client.listApGroups(site.id), readInternalIds()]);
       if (!isCurrent()) return null;
       if (apGroups.status === 'rejected') {
         return failed('probeFailed', `ap-groups: ${describeOpenApiFailure(apGroups.reason)}`);

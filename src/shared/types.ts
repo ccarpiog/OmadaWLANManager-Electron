@@ -132,7 +132,12 @@ export interface ConfigSaveResult {
 // Access Point data from Omada API. `clientNum` (optional) is the number of
 // clients connected to the AP, present only when the controller's device
 // entry carries it as a non-negative integer (absent = unknown; the UI then
-// shows no client count).
+// shows no client count). `wlanGroup` is the name of the AP's group ('' when
+// none is reported). `wlanId` (optional) is the id of that group, present
+// only when the source reports one: the cloud controller session's Open API
+// `ap-groups/aps` list (the internal device list carries no group id). A
+// cloud AP whose status is not reported has statusCategory -1 (shown as
+// unknown, never as disconnected).
 export interface AccessPoint {
   mac: string;
   name: string;
@@ -140,6 +145,7 @@ export interface AccessPoint {
   wlanGroup: string;
   statusCategory: number;
   clientNum?: number;
+  wlanId?: string;
 }
 
 // A group access points are assigned to: an AP group on Omada 6.3+, a WLAN
@@ -152,11 +158,20 @@ export interface AccessPoint {
 // (`primary: true` in the internal setting/wlans list); it is absent for every
 // other group and whenever the list came from the legacy setting/ssids
 // fallback, which carries no such flag.
+// Only the cloud controller session (Open API `ap-groups`) fills the two
+// optional fields below; the internal listing never does:
+// - `remainingBinding`: how many more networks each band can take, the bands
+//   reported sanely only;
+// - `ssidListUnknown`: true when the controller did not report the group's
+//   networks sanely — `ssidList` is then empty and means "unknown", never
+//   "no networks".
 export interface WlanGroup {
   wlanId: string;
   wlanName: string;
   ssidList: Ssid[];
   isDefault?: boolean;
+  remainingBinding?: ApGroupBandValues;
+  ssidListUnknown?: true;
 }
 
 // One Wi-Fi network (SSID) broadcast by a group
@@ -314,7 +329,10 @@ export type ManagementReason =
 // true only when every §2.2 check passed; `reason` says why they are off
 // (null when they are on). `diagnostic` optionally adds a short technical
 // detail built by main from error codes and counts only (e.g. "httpError,
-// HTTP 404"), never from controller text.
+// HTTP 404"), never from controller text — except on a cloud controller,
+// where a refusal also carries TP-Link's message, redacted (spec: a view-only
+// credential's refusal shows its code and message); the same holds for the
+// `diagnostic` of every management reply below.
 export interface ManagementCapabilities {
   manageApGroups: boolean;
   manageWifiNetworks: boolean;
@@ -357,7 +375,8 @@ export interface ManagementCapabilitiesResult {
 //   could not be read completely, so the name or delete rules cannot be
 //   verified);
 // 'requestFailed' — the controller could not be asked or refused for another
-//   reason (`diagnostic` carries error codes only).
+//   reason (`diagnostic` carries error codes only; a cloud controller adds
+//   TP-Link's redacted message to a refusal, see ManagementCapabilities).
 export type ApGroupOperationError =
   | ManagementCheckError
   | 'managementUnavailable'
@@ -490,7 +509,8 @@ export interface ManagedNetwork {
 // — the controller lists more networks than one read handles (or the list
 // could not be read completely); 'requestFailed' — the controller could not
 // be asked, refused, or answered something malformed (`diagnostic` carries
-// the failed call and error codes only).
+// the failed call and error codes only; a cloud controller adds TP-Link's
+// redacted message to a refusal, see ManagementCapabilities).
 export type ManagedNetworksError = ManagementCheckError | 'managementUnavailable' | 'networkListIncomplete' | 'requestFailed';
 
 // Result of getManagedNetworks(): the site's Wi-Fi networks, in the
@@ -539,7 +559,8 @@ export type WritableNetworkSecurity = Extract<NetworkSecurity, 'open' | 'wpaPers
 //   cannot be merged safely);
 // 'requestFailed' — the controller could not be asked, refused for another
 //   reason or answered something malformed (`diagnostic` carries the failed
-//   call and error codes only).
+//   call and error codes only; a cloud controller adds TP-Link's redacted
+//   message to a refusal, see ManagementCapabilities).
 export type NetworkOperationError =
   | ManagementCheckError
   | 'managementUnavailable'
@@ -653,7 +674,9 @@ export interface NetworkActionResult {
 //   or does not report it — `capacityProblems` names EVERY such group and
 //   band);
 // 'requestFailed' — the controller could not be asked, refused or answered
-//   something malformed (`diagnostic` carries the failed call and error codes only).
+//   something malformed (`diagnostic` carries the failed call and error codes
+//   only; a cloud controller adds TP-Link's redacted message to a refusal, see
+//   ManagementCapabilities).
 export type NetworkBindingsError =
   | ManagementCheckError
   | 'managementUnavailable'

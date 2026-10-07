@@ -34,6 +34,14 @@ import { NETWORK_BANDS, NETWORK_SECURITIES } from './wifi-network-write';
 // see createNonce() in connection-manager.ts)
 export const NONCE_REGEX = /^[0-9a-f]{32}$/;
 
+// Format guards of an AP move (omada:set-wlan in index.ts, and the cloud
+// controller session again before it sends anything): the AP's MAC address
+// (six hex pairs separated by ':' or '-') and the destination group id
+// (legacy WLAN-group ids are not 24-hex). The renderer applies the same
+// patterns (src/renderer/validation.ts — keep both in sync)
+export const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
+export const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+
 // Upper bound for a group name as it arrives (before trimming): a defense
 // against absurd payloads. The name rules proper (1–128 characters after
 // trimming) are applied by validateApGroupName() and answered with codes

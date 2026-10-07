@@ -28,6 +28,26 @@ export interface ConnectOutcome {
   sites: SiteInfo[];
 }
 
+/**
+ * The site a connect selects on its own (shared by OmadaController and the
+ * cloud controller session): the only authorized site when there is exactly
+ * one; with several, the preferred (stored) id only when it is still in the
+ * list; otherwise none — the user then chooses (the first site is never
+ * silently picked).
+ * @param {readonly SiteInfo[]} sites - The authorized sites.
+ * @param {string} [preferredSiteId] - The remembered site id, if any.
+ * @returns {string | null} The selected site id, or null.
+ */
+export function pickSite(sites: readonly SiteInfo[], preferredSiteId?: string): string | null {
+  if (sites.length === 1) {
+    return sites[0].id;
+  }
+  if (preferredSiteId && sites.some((site) => site.id === preferredSiteId)) {
+    return preferredSiteId;
+  }
+  return null;
+}
+
 // Omada errorCode values that mean the session is no longer authenticated
 // (-1200 = "login required"; extend this set if other codes show up)
 const AUTH_ERROR_CODES = new Set<number>([-1200]);
@@ -141,17 +161,8 @@ export class OmadaController {
 
       // Step 4: Pick the site. Auto-select ONLY when exactly one site
       // exists; with several, reuse the preferred (stored) id only when it
-      // is still authorized, and otherwise defer to the user
-      if (this.availableSites.length === 1) {
-        this.siteId = this.availableSites[0].id;
-      } else if (
-        preferredSiteId &&
-        this.availableSites.some((site) => site.id === preferredSiteId)
-      ) {
-        this.siteId = preferredSiteId;
-      } else {
-        this.siteId = null;
-      }
+      // is still authorized, and otherwise defer to the user (pickSite())
+      this.siteId = pickSite(this.availableSites, preferredSiteId);
 
       return { siteSelected: this.siteId !== null, sites: this.availableSites };
     } catch (error) {

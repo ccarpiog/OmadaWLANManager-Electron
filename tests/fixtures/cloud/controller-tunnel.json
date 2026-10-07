@@ -1,0 +1,97 @@
+{
+  "description": "A cloud controller as its Open API would answer through the TP-Link cloud tunnel ({serverHost}/v1/cloudaccess/{deviceId} + the self-hosted path), shaped by the controller's own 6.3.0.45 spec (docs/omada-openapi-ops.md): the site list, the AP groups (an empty one, and one whose network list and capacity are not sane) and the paged AP membership list ap-groups/aps (totalRows 5 over two pages: fully reported APs, one AP whose every optional field is missing or insane, a gateway row). Every value is a fixture: nothing was read from a real controller or a tplinkcloud.com host. The AP-group ids and the site id are those of tests/fixtures/openapi/ssids.json, so its Wi-Fi network fixtures bind to these groups. `viewOnlyRefusal` is ILLUSTRATIVE: what a view-only credential really answers is UNVERIFIED (docs/omada-cloud-openapi.md §2, §11).",
+  "siteId": "64f0c0ffee0000000000a001",
+  "groupIds": {
+    "default": "6512a0e1f3b2c41d2e3f4a5b",
+    "grupoB": "6512a0e1f3b2c41d2e3f4a5c",
+    "silencio": "6512a0e1f3b2c41d2e3f4a5d",
+    "desconocido": "6512a0e1f3b2c41d2e3f4a5e"
+  },
+  "sites": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "totalRows": 1,
+      "currentPage": 1,
+      "currentSize": 100,
+      "data": [{ "siteId": "64f0c0ffee0000000000a001", "name": "Planta 4", "type": 0, "primary": true }]
+    }
+  },
+  "sitesTwo": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "totalRows": 2,
+      "currentPage": 1,
+      "currentSize": 100,
+      "data": [
+        { "siteId": "64f0c0ffee0000000000a001", "name": "Planta 4", "primary": true },
+        { "siteId": "64f0c0ffee0000000000a002", "name": "Almacén" }
+      ]
+    }
+  },
+  "apGroups": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "totalRows": 4,
+      "currentPage": 1,
+      "currentSize": 100,
+      "maxSsids2G": 8,
+      "maxSsids5G": 8,
+      "maxSsids6G": 8,
+      "maxSsidsMlo": 4,
+      "data": [
+        { "id": "6512a0e1f3b2c41d2e3f4a5b", "name": "Default", "primary": true, "apNum": 1, "ssidNameList": ["Casa", "Invitados"], "remainingBinding": { "0": 6, "1": 6, "2": 8 } },
+        { "id": "6512a0e1f3b2c41d2e3f4a5c", "name": "zGrupo B", "primary": false, "apNum": 2, "ssidNameList": ["Casa"], "remainingBinding": { "0": 7, "1": 7, "2": 8 } },
+        { "id": "6512a0e1f3b2c41d2e3f4a5d", "name": "Silencio", "primary": false, "apNum": 0, "ssidNameList": [], "remainingBinding": { "0": 8, "1": 8, "2": 8 } },
+        { "id": "6512a0e1f3b2c41d2e3f4a5e", "name": "Desconocido", "apNum": 0, "ssidNameList": [null], "remainingBinding": { "0": "x", "9": 3 } }
+      ]
+    }
+  },
+  "apGroupApsPage1": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "totalRows": 5,
+      "currentPage": 1,
+      "currentSize": 100,
+      "data": [
+        {
+          "id": "6600c0ffee0000000000d001",
+          "mac": "AA-BB-CC-00-00-01",
+          "name": "EAP Planta 4 Norte",
+          "model": "EAP650",
+          "modelVersion": "1.0",
+          "apGroupName": "Default",
+          "apGroupId": "6512a0e1f3b2c41d2e3f4a5b",
+          "clientNum": 7,
+          "traffic": 123456789,
+          "deviceType": "EAP",
+          "ip": "192.168.40.11",
+          "showModel": "EAP650(EU) v1.0",
+          "status": 14,
+          "statusCategory": 1,
+          "overrideNum": 0
+        },
+        { "mac": "AA-BB-CC-00-00-02", "name": "EAP Planta 4 Sur", "apGroupName": "zGrupo B", "apGroupId": "6512a0e1f3b2c41d2e3f4a5c", "clientNum": 0, "deviceType": "EAP", "statusCategory": 3 },
+        { "mac": "aa:bb:cc:00:00:03", "name": "", "apGroupName": "", "apGroupId": 42, "clientNum": -1, "statusCategory": "1" }
+      ]
+    }
+  },
+  "apGroupApsPage2": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "totalRows": 5,
+      "currentPage": 2,
+      "currentSize": 100,
+      "data": [
+        { "mac": "AA-BB-CC-00-00-04", "name": "EAP Almacén", "apGroupName": "zGrupo B", "apGroupId": "6512a0e1f3b2c41d2e3f4a5c", "clientNum": 2, "deviceType": "eap", "statusCategory": 0 },
+        { "mac": "AA-BB-CC-00-00-09", "name": "Router", "deviceType": "Gateway", "statusCategory": 1 }
+      ]
+    }
+  },
+  "viewOnlyRefusal": { "errorCode": -1005, "msg": "Operation not allowed: this Open API credential has view-only access." },
+  "apNotFound": { "errorCode": -39303, "msg": "AP does not exist." }
+}

@@ -299,6 +299,19 @@ export interface Translations {
   retryDestinationAmbiguous: string;
   retryNothingLeft: string;
   moveError: string;
+  // Cloud controller sessions (inbox item I-1b1, src/main/cloud-controller-session.ts):
+  // one message per CloudSessionErrorCode a cloud connect, data load or AP move
+  // can fail with (cloudSessionError + the code; I-1b2 / I-1c show them)
+  cloudSessionErrorVersionTooOld: string;
+  cloudSessionErrorVersionUnknown: string;
+  cloudSessionErrorNotConnected: string;
+  cloudSessionErrorSuperseded: string;
+  cloudSessionErrorNoSites: string;
+  cloudSessionErrorListIncomplete: string;
+  cloudSessionErrorRequestFailed: string;
+  cloudSessionErrorMoveRequestFailed: string;
+  cloudSessionErrorMoveNotConfirmed: string;
+  cloudSessionErrorMoveUnverified: string;
   // AP group management (groups-view.ts, group-dialog.ts, group-flow.ts;
   // todo.md 4.9): the actions, why Delete is unavailable, the per-band
   // capacity and the master list's Capacity warning badge (with which bands
@@ -846,6 +859,16 @@ export const translations: Record<Language, Translations> = {
     retryDestinationAmbiguous: 'No se puede reintentar: ahora otro grupo tiene el mismo nombre que "{group}".',
     retryNothingLeft: 'No se puede reintentar: no queda ningún AP fallido que reintentar.',
     moveError: 'Error al mover los puntos de acceso',
+    cloudSessionErrorVersionTooOld: 'Este controlador tiene una versión anterior a Omada 6.3; la aplicación necesita la 6.3 o posterior.',
+    cloudSessionErrorVersionUnknown: 'El controlador no indica una versión válida de Omada; la aplicación necesita la 6.3 o posterior.',
+    cloudSessionErrorNotConnected: 'No hay conexión con el controlador en la nube. Conecta y vuelve a intentarlo.',
+    cloudSessionErrorSuperseded: 'La conexión cambió antes de que respondiera el controlador en la nube. Actualiza los datos para ver si se aplicó el cambio.',
+    cloudSessionErrorNoSites: 'El controlador no muestra ningún sitio a esta credencial de la nube de TP-Link.',
+    cloudSessionErrorListIncomplete: 'No se pudo leer la lista completa del controlador; se ha descartado para no mostrar datos incompletos.',
+    cloudSessionErrorRequestFailed: 'El controlador no pudo completar la solicitud a través de la nube de TP-Link.',
+    cloudSessionErrorMoveRequestFailed: 'El controlador rechazó el cambio de grupo, o no se pudo enviar.',
+    cloudSessionErrorMoveNotConfirmed: 'El controlador aceptó el cambio, pero al volver a leer la lista el AP sigue en otro grupo.',
+    cloudSessionErrorMoveUnverified: 'El controlador aceptó el cambio, pero no se pudo comprobar que el AP esté en el grupo de destino.',
     newGroup: 'Nuevo grupo',
     renameGroup: 'Cambiar nombre',
     deleteGroup: 'Eliminar',
@@ -1356,6 +1379,16 @@ export const translations: Record<Language, Translations> = {
     retryDestinationAmbiguous: 'Retry is not available: another group now has the same name as "{group}".',
     retryNothingLeft: 'Retry is not available: no failed AP is left to retry.',
     moveError: 'Error moving the access points',
+    cloudSessionErrorVersionTooOld: 'This controller runs a version older than Omada 6.3; the app needs 6.3 or later.',
+    cloudSessionErrorVersionUnknown: 'The controller does not report a valid Omada version; the app needs 6.3 or later.',
+    cloudSessionErrorNotConnected: 'Not connected to the cloud controller. Connect and try again.',
+    cloudSessionErrorSuperseded: 'The connection changed before the cloud controller answered. Refresh the data to see whether the change was made.',
+    cloudSessionErrorNoSites: 'The controller shows no site to this TP-Link cloud credential.',
+    cloudSessionErrorListIncomplete: 'The controller\'s list could not be read completely; it was discarded rather than shown incomplete.',
+    cloudSessionErrorRequestFailed: 'The controller could not complete the request through the TP-Link cloud.',
+    cloudSessionErrorMoveRequestFailed: 'The controller refused the group change, or it could not be sent.',
+    cloudSessionErrorMoveNotConfirmed: 'The controller accepted the change, but a re-read still shows the AP in another group.',
+    cloudSessionErrorMoveUnverified: 'The controller accepted the change, but whether the AP is in the destination group could not be checked.',
     newGroup: 'New group',
     renameGroup: 'Rename',
     deleteGroup: 'Delete',

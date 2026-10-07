@@ -430,6 +430,74 @@ everything is built against the documented contract and fixtures.
     every switch.
   - Populate `localOmadacId` on a local connect; persist `activeController` / `cloudSites`.
   - Bind cloud sessions to session nonces; race tests; `npm run tls-probe` still green.
+- **Split (2026-10-07, before starting):**
+  - ✅ **I-1b1 — cloud controller session (risk: high):** the Open-API-only session object behind the interface
+    `ConnectionManager` installs (sites, APs from `ap-groups/aps`, groups from `ap-groups`, Wi-Fi networks and the
+    phase 16–19 writes over the cloud route, `orgVersion` → version / group model, capabilities without §2.2 (4)–(5),
+    AP moves by `PATCH …/aps/{mac}/wlan-group` verified by re-read), Electron-free and unit-tested on fixtures; not
+    wired into `ConnectionManager` or IPC yet.
+  - ✅ **Done (I-1b1):** the contract is `docs/omada-cloud-openapi.md` §12.
+    - **How:**
+      - `ControllerSession` runs on a data-side backend (`ControllerBackend`, `controller-session.ts`).
+        `LocalControllerBackend` is the former internal-client code, moved as is (with `#internalCall()`).
+        `CloudControllerBackend` is new (`src/main/cloud-controller-session.ts`).
+      - `new ControllerSession({kind: 'cloud', omadacId, name, orgVersion, createOpenApiClient, sleep?})` builds the
+        cloud kind; the local constructor call is unchanged.
+      - The capability checks and every AP-group, network and binding read and write, with their policy on fresh
+        data, stay one code path. The backend supplies only check 2 (the access: the local credentials, or the
+        account's cloud route) and check 5 (the internal ids: none for a cloud controller).
+    - **Cloud data side:**
+      - Sites: `GET …/sites`, picked by `pickSite()` (now shared with `OmadaController`).
+      - APs: `ap-groups/aps` through the new `OpenApiClient.listApGroupAps()`, paged. An unreported field stays
+        unknown: status -1, no client count, no `wlanId`, `''` as the group name.
+      - Groups: `ap-groups`, with the Open API ids, SSID names, default flag and per-band capacity.
+      - Version: from `orgVersion`. Below 6.3 or not dotted → `versionTooOld` / `versionUnknown`, before any request.
+    - **Moves:**
+      - The new `OpenApiClient.setApWlanGroup()` sends `PATCH …/aps/{apMac}/wlan-group` `{wlanGroupId}`.
+      - The MAC and the id pass `MAC_REGEX` / `WLAN_ID_REGEX` first (moved from `index.ts` to `ipc-guards.ts` and
+        imported back).
+      - Then up to 3 re-reads, 1 s apart. `true` only when a re-read lists the AP in the destination; otherwise
+        `moveRequestFailed`, `moveNotConfirmed` or `moveUnverified`. No `PATCH ap-groups/{id}` fallback.
+    - **Capabilities:**
+      - Checks 1, 3 and the sites read run; §2.2 (5) never runs; no new reason code.
+      - On the cloud route a refusal keeps TP-Link's message (`OpenApiError.controllerMessage`). It is scrubbed of
+        the account's secret and tokens too, through the new optional `CloudTokenProvider.liveSecrets()`.
+      - `describeOpenApiFailure()` (moved to `openapi-client.ts`, re-exported) appends it, so a view-only refusal
+        shows its code and message. The local route is unchanged (codes only).
+    - **Shared types** (optional fields; the renderer is unchanged): `AccessPoint.wlanId`, `WlanGroup.remainingBinding`
+      and `WlanGroup.ssidListUnknown`.
+    - **Strings:** es / en `cloudSessionError…` for the 10 `CloudSessionErrorCode`s; no renderer code shows them yet.
+    - **Choices:**
+      - A factory of cloud-route clients is injected, not one client: one data client per connect and one management
+        client per check run, closed as the local session closes its clients. They share the account token.
+      - The `ManagedController` contract wins: `close()` drops the management clients, and the data client serves
+        until `logout()` (the release), like the internal client.
+      - Errors are `CloudSessionError` (`code`, `diagnostic`, `openApiCode`; message `<code> (<diagnostic>)`). The
+        `omada:set-wlan` shape (`true` or a rejection) is kept: no extension.
+      - `ap-groups/aps` rows whose `deviceType` is `Gateway` / `Switch` are dropped; any other value counts as an AP.
+    - **For I-1b2:**
+      - Build the session with `createOpenApiClient: () => new OpenApiClient({route: 'cloud', target, tokenProvider:
+        account, throttle: account.throttle, transport})` (`target` from `cloudControllerTarget()`), and pass
+        `cloudSites[omadacId]` to `connect()`.
+      - A cloud session's `url` is `''`; `kind` and `controllerName` tell the kinds apart.
+      - Map `CloudSessionError.code` / `openApiCode` to renderer text: the connect `detail` and the move rejection
+        message start with the code.
+      - `applyManagementAccessChange()` also invalidates an installed cloud session on a local management save. It is
+        harmless (one extra check run); skip it for `kind === 'cloud'` if preferred.
+      - The renderer's `applyMovedGroup()` keeps a stale `wlanId` until the reload; no renderer code reads it yet.
+    - **Unverified (live checklist, `docs/omada-cloud-openapi.md` §11 items 8–12):**
+      - the `ap-groups/aps` fields and the `deviceType` values through the tunnel;
+      - the move PATCH with an AP-group id on 6.3, the MAC form, how fast a re-read shows the move, and the errorCode
+        for a move into the current group;
+      - what a view-only credential answers for each write;
+      - the rate limit during bulk moves;
+      - the tunnel's site-id format.
+    - **Tests:** unit 1122 → 1153 (`tests/unit/cloud-controller-session.test.ts`, 31 tests, on
+      `tests/fixtures/cloud/controller-tunnel.json`); smoke and the TLS probe unchanged.
+  - **I-1b2 — `ConnectionManager` targets and wiring (risk: high):** local / cloud targets, the switch IPC with the
+    synchronous invalidation, `localOmadacId` learned on a local connect, `activeController` / `cloudSites` persisted
+    with a local fallback, session nonces on `omada:get-aps` / `omada:get-wlans` / `omada:set-wlan`, race tests, smoke
+    stub, `npm run tls-probe` green.
 
 ### I-1c Settings cloud section, controller switcher, docs — risk: high
 - **What (spec "UI"):**

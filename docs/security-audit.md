@@ -1,6 +1,6 @@
 # Security, async-race and accessibility audit (phase 20a)
 
-Date: 2026-10-07. Scope: todo.md 4.13 first half — the IPC surface, redaction, async races in the renderer, destructive confirmations, and accessibility / keyboard behaviour at the three window widths. Measured against `docs/management-design.md` §3 and §4.6–§4.7. The line numbers refer to the tree at the end of phase 20a, except the rows marked I-1a (the TP-Link cloud channels and log lines added by inbox phase I-1a, `docs/omada-cloud-openapi.md`), which refer to the tree at the end of I-1a.
+Date: 2026-10-07. Scope: todo.md 4.13 first half — the IPC surface, redaction, async races in the renderer, destructive confirmations, and accessibility / keyboard behaviour at the three window widths. Measured against `docs/management-design.md` §3 and §4.6–§4.7. The line numbers refer to the tree at the end of phase 20a, except the rows marked I-1a (the TP-Link cloud channels and log lines added by inbox phase I-1a, `docs/omada-cloud-openapi.md`) and I-1b1 (the cloud controller session), which refer to the tree at the end of those phases.
 
 Verification: `npm run build`, `npm test` (1033 tests after the review fixes), `npm run smoke` (270 checks, 10 launches, new `[a11y]`) and `npm run tls-probe` (25 checks) all pass. Every fix below was reverted on its own, and a test then failed (see "Fixed in 20a").
 
@@ -56,7 +56,7 @@ Central redactor: `src/main/redact.ts`.
 - **Handler failures:** the rejection messages of every channel, which also appear in Electron's "Error occurred in handler" line. They go through `sanitizeIpcError()` (`ipc-trust.ts`).
 - **Internal-client failures:** they leave `ControllerSession` only as a new Error with the redacted message, every credential the internal client holds or held (password, CSRF tokens, session-cookie values: `OmadaController.sessionSecrets()`) scrubbed by value (`#internalCall()`, `controller-session.ts:708`; fixed in the 20a review). This covers the connect detail, the data and AP-move rejections, and their log lines.
 - **Connect detail:** the connect result's `detail` is shown to the user. It is `redactErrorMessage(error, [password])` (`connection-manager.ts:499`) over that sanitized failure.
-- **Management replies:** they carry codes and codes-only diagnostics (`describeOpenApiFailure()`); Open API diagnostics are scrubbed in `OpenApiClient.#scrub()`.
+- **Management replies:** they carry codes and codes-only diagnostics (`describeOpenApiFailure()`); Open API diagnostics are scrubbed in `OpenApiClient.#scrub()`. I-1b1: on a cloud controller only, a refusal's diagnostic also carries TP-Link's message (`OpenApiError.controllerMessage`, spec: a view-only credential's refusal shows its code and message). It is redacted and scrubbed by value of the client's tokens and of the account's cloud Client Secret and tokens (`CloudTokenProvider.liveSecrets()`); the local route keeps no controller text.
 - **Transport bodies:** the transport's HTTP error excerpt is redacted before it is cut (`omada-transport.ts:115`). The internal client's session credentials are scrubbed before the cut too, so a bare one across the boundary leaves no prefix (fixed in the 20a review).
 
 **Log lines in main.** A lint test fails if any `console.*` call passes an error or rejection reason other than through the redactor or its `.name` (`redaction-audit.test.ts`, "log lint"). The lines:
@@ -72,7 +72,9 @@ Central redactor: `src/main/redact.ts`.
 | `omada-api.ts:158`, `:267`, `:432` | `redactedMessage()`: the redactor plus every session credential by value — password, CSRF tokens, session-cookie values (fixed in 20a; the cookies in the 20a review) |
 | `omada-api.ts:337`, `:424` | counts and ids only |
 | `connection-manager.ts:251`, `:500` | `redactErrorMessage()` (`:500` fixed in 20a) |
-| `controller-session.ts:865` … `:1914` (11 lines) | `redactText()` of codes-only text, with the call's secrets |
+| `controller-session.ts:865` … `:1914` (11 lines) | `redactText()` of codes-only text, with the call's secrets (I-1b1: on a cloud controller, plus a refusal's scrubbed TP-Link message) |
+| I-1b1: `cloud-controller-session.ts:400` | counts only |
+| I-1b1: `cloud-controller-session.ts:652` | `redactText()` of a failed cloud move's code and diagnostic |
 | `openapi-client.ts:849` (I-1a: `:770`, the shared page walker) | counts only |
 | I-1a: `cloud-access.ts:218` | `redactErrorMessage()` with the live cloud secret and tokens |
 | I-1a: `cloud-access.ts:223` | the reply's codes-only diagnostic (already scrubbed by value) |

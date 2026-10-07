@@ -129,6 +129,11 @@ export interface CloudTokenProvider {
   // The token to retry with after `rejectedToken` was rejected: a newer one,
   // or a fresh get_tokens (shared with every concurrent caller)
   renewAccessToken(rejectedToken: string): Promise<string>;
+  // Optional: the values the cloud route scrubs from its diagnostics by value
+  // (CloudAccountClient: the cloud Client Secret and its tokens), so a
+  // TP-Link message a cloud controller session passes on (a refusal's code
+  // and message) can never carry them
+  liveSecrets?(): string[];
 }
 
 /**
