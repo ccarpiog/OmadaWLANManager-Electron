@@ -10,8 +10,9 @@
 // that they cannot be shown instead of inventing badges.
 //
 // The pane takes the destination pane's place while it is open (the
-// destination pane keeps its state and comes back on Close), which keeps the
-// 700×500 window usable. Pure logic: inventory-model.ts.
+// destination pane keeps its state and comes back on Close). In the
+// single-pane layout (700–799 px) it is a drill-in pane in the AP list's
+// place, with its own Back (layout.ts). Pure logic: inventory-model.ts.
 // ============================================================================
 
 import { focusApListAt } from './ap-focus';
@@ -19,6 +20,7 @@ import { createStatusElement } from './ap-status';
 import { apDetailsContent, apDetailsPanel, apFilterInput, apList, destinationPanel } from './elements';
 import { t, tFormat, tGroup } from './i18n';
 import { apGroupLink, describeApDetails, networkLink, type ApDetailsModel } from './inventory-model';
+import { applyPaneLayout } from './layout';
 import {
   createCrossLink,
   createDetailHeading,
@@ -154,6 +156,9 @@ export function renderApDetails(): void {
   }
   apDetailsPanel.hidden = ap === undefined;
   destinationPanel.hidden = ap !== undefined;
+  // The single-pane layout shows the details, or the list, before any
+  // focus moves below
+  applyPaneLayout();
 
   if (ap === undefined) {
     apDetailsContent.replaceChildren();
@@ -179,7 +184,8 @@ export function renderApDetails(): void {
 /**
  * Opens the details pane for one AP (a click on its row, Enter on its
  * checkbox, or a cross-link). The pane replaces the destination pane until
- * it is closed.
+ * it is closed (in the single-pane layout it replaces the list, and closing
+ * it returns to the list, not to a destination picker opened before).
  * @param {string} mac - The AP's MAC.
  * @param {boolean} focusHeading - True to move keyboard focus to the pane's
  *   heading (the AP's name).
@@ -190,6 +196,7 @@ export function openApDetails(mac: string, focusHeading: boolean): boolean {
     return false;
   }
   state.apDetailsMac = mac;
+  state.destinationPaneOpen = false;
   renderApDetails();
   if (focusHeading) {
     focusApDetailsHeading();

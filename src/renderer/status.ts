@@ -1,8 +1,8 @@
 // ============================================================================
 // Header bar status: the connection state (indicator colour + text), the
 // connected controller's host and site, the "Updated hh:mm" time of the last
-// successful load (or "Refreshing…" while a refresh runs) and the controller
-// version
+// successful load ("Refreshing…" while a refresh runs; marked as stale after
+// a failed refresh) and the controller version
 // ============================================================================
 
 import {
@@ -79,7 +79,7 @@ export function setStatus(status: 'disconnected' | 'connecting' | 'connected' | 
  * @param {number} timestamp - Milliseconds since the epoch.
  * @returns {string} The formatted time, e.g. "10:42".
  */
-function formatTime(timestamp: number): string {
+export function formatTime(timestamp: number): string {
   return new Intl.DateTimeFormat(state.currentLanguage, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(timestamp));
 }
 
@@ -98,7 +98,8 @@ function setHeaderDetail(element: HTMLElement, text: string | null): void {
  * name (when the renderer knows it — see state.siteName), the controller
  * host, "Updated hh:mm" of the last successful load ("Refreshing…" while a
  * refresh keeps the previous data on screen; a failed refresh brings the
- * previous time back) and "Omada <version>". Everything is hidden while not
+ * previous time back, marked as stale with the refresh-error text as its
+ * tooltip) and "Omada <version>". Everything is hidden while not
  * connected. The load time is also exposed as `data-updated-at` (ms since
  * the epoch). Called by setStatus(), loadData() and applyTranslations().
  */
@@ -118,6 +119,9 @@ export function renderHeaderMeta(): void {
     lastUpdatedText.dataset.updatedAt = String(state.lastUpdatedAt);
   }
   lastUpdatedText.classList.toggle('is-refreshing', connected && refreshing);
+  const stale = connected && !refreshing && state.refreshError && state.lastUpdatedAt !== null;
+  lastUpdatedText.classList.toggle('is-stale', stale);
+  lastUpdatedText.title = stale && state.lastUpdatedAt !== null ? tFormat('refreshFailedNotice', { time: formatTime(state.lastUpdatedAt) }) : '';
 
   const version = connected ? state.controllerVersion : null;
   setHeaderDetail(controllerVersionText, version !== null ? tFormat('controllerVersionLabel', { version }) : null);

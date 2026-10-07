@@ -151,7 +151,9 @@ function locationForLink(link: LinkTarget): NavLocation | null {
 /**
  * Brings a location on screen: shows its view, restores its search and its
  * item (an item no longer loaded is dropped: no AP details, no selection),
- * re-renders the view and restores the scroll offsets of its panes.
+ * re-renders the view and restores the scroll offsets of its panes. In the
+ * single-pane layout the item's detail is the pane shown (a location with
+ * an item is always a detail: cross-links live in the details).
  * @param {NavLocation} location - The location.
  */
 function applyLocation(location: NavLocation): void {
@@ -159,16 +161,19 @@ function applyLocation(location: NavLocation): void {
   if (location.view === 'accessPoints') {
     const loaded = location.item !== null && state.accessPoints.some(ap => ap.mac === location.item);
     state.apDetailsMac = loaded ? location.item : null;
+    state.destinationPaneOpen = false;
     renderApDetails();
   } else if (location.view === 'groups') {
     state.groupSearchText = location.search;
     groupSearchInput.value = location.search;
     state.selectedGroupId = location.item;
+    state.groupDetailOpen = location.item !== null;
     renderGroupsView();
   } else {
     state.networkSearchText = location.search;
     networkSearchInput.value = location.search;
     state.selectedNetworkName = location.item;
+    state.networkDetailOpen = location.item !== null;
     renderNetworksView();
   }
   const panes = scrollPanes(location.view);
@@ -331,13 +336,16 @@ export function renderInventoryViews(): void {
 } // End of function renderInventoryViews()
 
 /**
- * Forgets every view selection, search and the Back history (a disconnect
- * or a connection reset), then re-renders the views.
+ * Forgets every view selection, search, single-pane drill-in and the Back
+ * history (a disconnect or a connection reset), then re-renders the views.
  */
 export function resetInventoryViews(): void {
   state.apDetailsMac = null;
   state.selectedGroupId = null;
   state.selectedNetworkName = null;
+  state.destinationPaneOpen = false;
+  state.groupDetailOpen = false;
+  state.networkDetailOpen = false;
   state.groupSearchText = '';
   state.networkSearchText = '';
   state.navHistory = [];

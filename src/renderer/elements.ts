@@ -30,13 +30,24 @@ export const viewAccessPoints = document.getElementById('viewAccessPoints') as H
 export const viewGroups = document.getElementById('viewGroups') as HTMLElement;
 export const viewNetworks = document.getElementById('viewNetworks') as HTMLElement;
 
+// Notices above the views (notices.ts): the read-only banner of the AP
+// groups and Wi-Fi networks views, and the refresh-error notice with Retry
+export const readOnlyBanner = document.getElementById('readOnlyBanner') as HTMLElement;
+export const readOnlyBannerText = document.getElementById('readOnlyBannerText') as HTMLElement;
+export const refreshNotice = document.getElementById('refreshNotice') as HTMLElement;
+export const refreshNoticeText = document.getElementById('refreshNoticeText') as HTMLElement;
+export const refreshNoticeRetryBtn = document.getElementById('refreshNoticeRetryBtn') as HTMLButtonElement;
+
 // Cross-navigation: the "Back to …" bar above the views
 export const backBar = document.getElementById('backBar') as HTMLElement;
 export const backBtn = document.getElementById('backBtn') as HTMLButtonElement;
 export const backBtnLabel = document.getElementById('backBtnLabel') as HTMLElement;
 
 // AP groups view: master list (title, search, list, aria-live results
-// summary) and the selected group's detail
+// summary) and the selected group's detail (with its single-pane Back)
+export const groupMasterPanel = document.getElementById('groupMasterPanel') as HTMLElement;
+export const groupDetailPanel = document.getElementById('groupDetailPanel') as HTMLElement;
+export const groupDetailBackBtn = document.getElementById('groupDetailBackBtn') as HTMLButtonElement;
 export const groupsPanelTitle = document.getElementById('groupsPanelTitle') as HTMLElement;
 export const groupSearchInput = document.getElementById('groupSearch') as HTMLInputElement;
 export const groupList = document.getElementById('groupList') as HTMLElement;
@@ -44,7 +55,11 @@ export const groupListSummary = document.getElementById('groupListSummary') as H
 export const groupDetailPanelTitle = document.getElementById('groupDetailPanelTitle') as HTMLElement;
 export const groupDetail = document.getElementById('groupDetail') as HTMLElement;
 
-// Wi-Fi networks view: master list and the selected network's detail
+// Wi-Fi networks view: master list and the selected network's detail (with
+// its single-pane Back)
+export const networkMasterPanel = document.getElementById('networkMasterPanel') as HTMLElement;
+export const networkDetailPanel = document.getElementById('networkDetailPanel') as HTMLElement;
+export const networkDetailBackBtn = document.getElementById('networkDetailBackBtn') as HTMLButtonElement;
 export const networksPanelTitle = document.getElementById('networksPanelTitle') as HTMLElement;
 export const networkSearchInput = document.getElementById('networkSearch') as HTMLInputElement;
 export const networkList = document.getElementById('networkList') as HTMLElement;
@@ -52,7 +67,10 @@ export const networkListSummary = document.getElementById('networkListSummary') 
 export const networkDetailPanelTitle = document.getElementById('networkDetailPanelTitle') as HTMLElement;
 export const networkDetail = document.getElementById('networkDetail') as HTMLElement;
 
-// Access points panel: list, filters, selection toolbar and summary
+// Access points panel: list, filters, selection toolbar and summary, and the
+// single-pane layout's "Choose destination"
+export const apPanel = document.getElementById('apPanel') as HTMLElement;
+export const openDestinationBtn = document.getElementById('openDestinationBtn') as HTMLButtonElement;
 export const apList = document.getElementById('apList') as HTMLElement;
 export const apFilterInput = document.getElementById('apFilter') as HTMLInputElement;
 export const apStatusFilterSelect = document.getElementById('apStatusFilter') as HTMLSelectElement;
@@ -63,16 +81,20 @@ export const clearApSelectionBtn = document.getElementById('clearApSelectionBtn'
 export const apSelectionSummary = document.getElementById('apSelectionSummary') as HTMLElement;
 
 // Destination pane: group search, the radio list, the move preview and the
-// move button. The AP details pane takes its place while open
+// move button (and its single-pane Back). The AP details pane takes its
+// place while open
 export const destinationPanel = document.getElementById('destinationPanel') as HTMLElement;
+export const destinationBackBtn = document.getElementById('destinationBackBtn') as HTMLButtonElement;
 export const destinationSearchInput = document.getElementById('destinationSearch') as HTMLInputElement;
 export const destinationList = document.getElementById('destinationList') as HTMLElement;
 export const moveStatus = document.getElementById('moveStatus') as HTMLElement;
 export const movePreview = document.getElementById('movePreview') as HTMLElement;
 export const moveBtn = document.getElementById('moveBtn') as HTMLButtonElement;
 
-// AP details pane (Access points view): title, Close, content
+// AP details pane (Access points view): title, Close, content, and its
+// single-pane Back
 export const apDetailsPanel = document.getElementById('apDetailsPanel') as HTMLElement;
+export const apDetailsBackBtn = document.getElementById('apDetailsBackBtn') as HTMLButtonElement;
 export const apDetailsPanelTitle = document.getElementById('apDetailsPanelTitle') as HTMLElement;
 export const closeApDetailsBtn = document.getElementById('closeApDetailsBtn') as HTMLButtonElement;
 export const apDetailsContent = document.getElementById('apDetailsContent') as HTMLElement;

@@ -3,15 +3,22 @@
 // networks with their total counts, Settings at the bottom) and the switch
 // between the three views (docs/management-design.md §4.2). The sidebar and
 // the cross-links both switch views through showView(); the Back history of
-// the cross-links lives in navigation.ts.
+// the cross-links lives in navigation.ts. The window width restyles the
+// sidebar (styles.css, §4.7): full, compact (icons, the labels as tooltips)
+// or a top view switcher. Also writes the single-pane layout's Back labels
+// (layout.ts), which name the views' lists.
 // ============================================================================
 
 import { countDistinctSsids } from './ap-selection';
 import {
+  apDetailsBackBtn,
+  destinationBackBtn,
+  groupDetailBackBtn,
   groupsPanelTitle,
   navAccessPointsBtn,
   navGroupsBtn,
   navNetworksBtn,
+  networkDetailBackBtn,
   networksPanelTitle,
   settingsBtnLabel,
   viewAccessPoints,
@@ -20,6 +27,8 @@ import {
   viewNetworks,
 } from './elements';
 import { t, tGroup } from './i18n';
+import { setDrillBackLabel } from './layout';
+import { renderReadOnlyBanner } from './notices';
 import { state, type AppView } from './state';
 
 // Each view with its sidebar button and its container
@@ -41,7 +50,8 @@ export function isAppView(value: string | undefined): value is AppView {
 /**
  * Shows one view and hides the others; the sidebar button of the shown view
  * carries aria-current="page". Navigation works connected or not (spec §4.6:
- * "Disconnected: navigation stays").
+ * "Disconnected: navigation stays"). The read-only banner follows the view
+ * (it belongs to the AP groups and Wi-Fi networks views).
  * @param {AppView} view - The view to show.
  */
 export function showView(view: AppView): void {
@@ -55,6 +65,7 @@ export function showView(view: AppView): void {
       entry.nav.removeAttribute('aria-current');
     }
   }
+  renderReadOnlyBanner();
 } // End of function showView()
 
 /**
@@ -84,29 +95,39 @@ export function renderNavCounts(): void {
 
 /**
  * Writes the shell's group-vocabulary texts ("AP groups" on Omada 6.3+,
- * "WLAN groups (legacy)" before — see tGroup()): the sidebar entry and the
- * AP groups view's list title. Called by applyGroupVocabulary() (panels.ts).
+ * "WLAN groups (legacy)" before — see tGroup()): the sidebar entry (its
+ * label and tooltip), the AP groups view's list title and its detail's
+ * single-pane Back. Called by applyGroupVocabulary() (panels.ts).
  */
 export function applyShellVocabulary(): void {
   const title = tGroup('groupsTitle');
   const label = navGroupsBtn.querySelector('.nav-label');
   if (label) label.textContent = title;
+  navGroupsBtn.title = title;
   groupsPanelTitle.textContent = title;
+  setDrillBackLabel(groupDetailBackBtn, title);
 }
 
 /**
  * Writes every shell text in the active language: the navigation's
- * accessible name, the sidebar entries, the Settings entry and the view
- * titles; then the counts. Called by applyTranslations().
+ * accessible name, the sidebar entries (labels and tooltips: the compact
+ * sidebar shows icons only), the Settings entry, the view titles and the
+ * single-pane layout's Back labels; then the counts. Called by
+ * applyTranslations().
  */
 export function applyShellTranslations(): void {
   viewNav.setAttribute('aria-label', t('viewNavLabel'));
   const apLabel = navAccessPointsBtn.querySelector('.nav-label');
   if (apLabel) apLabel.textContent = t('accessPoints');
+  navAccessPointsBtn.title = t('accessPoints');
   const networksLabel = navNetworksBtn.querySelector('.nav-label');
   if (networksLabel) networksLabel.textContent = t('wifiNetworks');
+  navNetworksBtn.title = t('wifiNetworks');
   settingsBtnLabel.textContent = t('settings');
   applyShellVocabulary();
   networksPanelTitle.textContent = t('wifiNetworks');
+  setDrillBackLabel(networkDetailBackBtn, t('wifiNetworks'));
+  setDrillBackLabel(apDetailsBackBtn, t('accessPoints'));
+  setDrillBackLabel(destinationBackBtn, t('accessPoints'));
   renderNavCounts();
 } // End of function applyShellTranslations()

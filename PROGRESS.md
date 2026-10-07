@@ -21,7 +21,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 13a | 4.6 (first half) App shell (sidebar, counts, Updated hh:mm) + Access points list with checkbox multi-select surviving filters — risk: high; worker: opus | **done** — `docs/progress-archive/phase-13a.md` |
 | 13b | 4.6 (second half) Destination pane, review dialog, sequential bulk move with per-AP results + Retry failed — risk: high; worker: opus | **done** — `docs/progress-archive/phase-13b.md` |
 | 14a | 4.7 (first half) Read-only AP groups & Wi-Fi networks views from internal data, cross-navigation with "Back to …", AP details pane — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-14a.md` |
-| 14b | 4.7 (second half) §4.6 states, read-only banner with reason, §4.7 responsive breakpoints, Cmd/Ctrl+F and Escape — risk: routine | pending |
+| 14b | 4.7 (second half) §4.6 states, read-only banner with reason, §4.7 responsive breakpoints, Cmd/Ctrl+F and Escape — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-14b.md` |
 | 15 | 4.8 Open API credentials, `OpenApiClient`, `ControllerSession`, capability detection — risk: high | pending |
 | 16 | 4.9 AP group management (create/rename/delete-if-empty, move APs here) — risk: high | pending |
 | 17 | 4.10 Wi-Fi network read model via Open API (secrets stripped) — risk: routine | pending |
@@ -252,7 +252,14 @@ validation, connect-without-config, console/main-process errors).
 - Acceptance met: build exit 0; `npm test` 438/438; smoke 109/109 (groups and networks list + detail, cross-navigation round trip with Back, AP details by row click with checkbox-only toggling, the overrides statement, all 13a/13b checks); `npm run tls-probe` 21/21; no `innerHTML`/inline styles; preload requires only `electron`.
 - Review: Codex, `docs/reviews/phase14a.md`, ship-with-fixes, 0 blockers. Should-fixes (network scope showed a lower bound as exact; Back kept targets a refresh removed) fixed by an opus worker; orchestrator re-ran build, tests, smoke and probe, all green.
 
-## Plan status: ACTIVE — phases 8–14a done, phases 14b–20 pending
+### Phase 14b — view states, read-only banner, responsive layout, keys (2026-10-07)
+
+- Risk: routine. Workers: opus (phase), opus (review fixes). Full narrative: `docs/progress-archive/phase-14b.md`.
+- New: pure `view-state.ts` (`contentState()` first run / disconnected / loading / initial-load error / ready; `readOnlyReason()`; `escapeAction()`), `content-state.ts` (one action per state; skeletons; persistent Retry + Settings error), `notices.ts` (refresh-error notice with the data's time + amber stale dot; read-only banner on the AP groups and Wi-Fi networks views only), `layout.ts` (≥1000 full sidebar with icons, 800–999 icon sidebar, <800 top view switcher + single-pane drill-in with Back; focus relocated on drill-in, Back and breakpoint crossings), `keyboard.ts` (Cmd/Ctrl+F; Escape: clear search → edit-mode stub → close top dialog). Header Connect disabled until configured. 7 i18n keys (es/en).
+- Acceptance met: build exit 0; `npm test` 452/452; smoke 122/122 (states, banners 6.3/legacy es/en, keys, 1200/900/720 px and 700×500 with no horizontal overflow); `npm run tls-probe` 21/21; no `innerHTML`/inline styles. 8 existing smoke checks adapted where the spec changed what they assert (narrative lists them).
+- Review: Codex, `docs/reviews/phase14b.md`, ship-with-fixes, 0 blockers. Two should-fixes (focus stranded in hidden UI after a successful move below 800 px; leaving single-pane mode hid a focused Back button) fixed by an opus worker with two new smoke checks; orchestrator re-ran build, tests, smoke and probe, all green.
+
+## Plan status: ACTIVE — phases 8–14b done, phases 15–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -296,20 +303,24 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
   "does not report" overrides although `eaps/{mac}` returns `ssidOverrides[]` (element shape undocumented;
   smoke asserts the text); per-band capacity (`remainingBinding` in `setting/wlans`) is not kept yet —
   phase 16; an AP with no group makes every network's count "at least M APs".
+- Phase 14b leftovers (none blocking): the default window (900×650) lands on the icon sidebar — ask the
+  user whether to raise the default width to ~1100 px (the window-size smoke pins 900×650); the read-only
+  banner points at "Settings → Management access", which phase 15 creates; a connect / first-load failure
+  now reads "Error loading data from the controller" rather than "Connection error".
 
 ## Next action
 
-**Phase 14b — todo 4.7, second half: §4.6 states, read-only banner, §4.7 responsive layout and keys (risk: routine).** First read `todo.md` item 4.7 (its **Split** and **Done (14a)** bullets), then `docs/management-design.md` §4.6 and §4.7 only, and `docs/progress-archive/phase-14a.md` for the three views as they stand.
+**Phase 15 — todo 4.8: Open API credentials, `OpenApiClient`, `ControllerSession`, capability detection (risk: high).** First read `todo.md` item 4.8, then `docs/management-design.md` §2 (2.1–2.3), §3 and §5 only, and the parts of `docs/omada-openapi-ops.md` the client needs (token acquisition, one site-scoped read used for capability checks). Consider splitting before starting (e.g. 15a = config + Settings "Management access (optional)" + `OpenApiClient` + redactor, unit-tested with fixtures; 15b = `ControllerSession`, capability checks with §2.2 reason codes, "Test management access", wiring the read-only banner); record any split in `todo.md` 4.8.
 
-- Every §4.6 state across Access points, AP groups and Wi-Fi networks: first run (one **Configure connection** action), disconnected (navigation stays; content shows **Connect to controller**), initial loading (progress/skeletons in the layout), refreshing (keep data, mark refreshing — 13a already does this for the AP list), "no data" vs "no search results" with **Clear filters**, initial-load error (inline, persistent, Retry + Settings), refresh error (stale data + last-updated time).
-- Read-only banner with the precise reason and fix: on 6.3+ "Open API credentials are not configured — viewing is available. Add them in Settings → Management access.", below 6.3 the legacy-controller reason (spec §4.6 wording; es + en). Phase 15 will switch it on capabilities, so drive it from one function.
-- §4.7 breakpoints: ≥1000 px full sidebar + list/detail split; 800–999 px compact (icon) sidebar + split; 700–799 px top view switcher + single-pane drill-in (destination picker and AP details as full panes with Back). Content panes scroll independently; action bars and modal buttons stay visible at short heights; minimum window 700×500.
-- Keys: Cmd/Ctrl+F focuses the current view's search; Escape clears search → exits edit mode → closes the top dialog.
-- Acceptance: smoke at 1200, 900 and 720 px widths (each view usable, no horizontal overflow); Cmd/Ctrl+F and Escape order; the read-only banner with its reason (6.3 and legacy); first-run / disconnected / initial-load-error states; all existing checks keep passing. `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
+- Client ID + Client Secret in Settings: `safeStorage` only, refuse plaintext persistence (session-only fallback), `hasClientSecret` only over IPC. `config-model.ts` already drops `encryptedClientSecret` on a URL change (phase 11); keep that path.
+- `OpenApiClient`: token lifecycle with one shared re-acquire, `AccessToken=` header, pagination, explicit v1/v2 paths, DELETE support, validators, central redactor (no secret or token in logs, errors or IPC). It must use the same `ControllerTlsSessions` session (pinned certificate) and be invalidated by `ConnectionManager.invalidateControllerState()` (phase 11 leftover).
+- `ControllerSession` facade over the internal client + Open API client; return the site name to the renderer there (phase 13a leftover).
+- Capability detection per spec §2.2: each failing check turns management off with its reason code; a site/group id-set mismatch disables management. The renderer's `readOnlyReason()` in `src/renderer/view-state.ts` is the single switch for the banner — extend its inputs, do not add a second source.
+- Acceptance (todo 4.8): unit tests for token acquire / expiry / re-acquire-once, redaction, the capability matrix, the id-set mismatch; Client Secret never returned over IPC. New IPC handlers start with `assertTrustedIpcSender()` and shape-guard payloads; the preload stays `electron`-only. No live controller (D4): fixtures and stubs only. `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
 
 ## Key paths
 
-- `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `shell` (header + sidebar), `connection`, `ap-list` + `ap-filters` + pure `ap-selection`, `destination-pane`, pure `move-plan` + `move-text`, `move-dialog`, `move-flow` (bulk move), `groups-view` + `networks-view` + `ap-details` over pure `inventory-model`, `navigation` + pure `nav-history` (Back), `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
+- `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `shell` (header + sidebar), `connection`, `ap-list` + `ap-filters` + pure `ap-selection`, `destination-pane`, pure `move-plan` + `move-text`, `move-dialog`, `move-flow` (bulk move), `groups-view` + `networks-view` + `ap-details` over pure `inventory-model`, `navigation` + pure `nav-history` (Back), pure `view-state` (§4.6 states, `readOnlyReason()`, `escapeAction()`) + `content-state` + `notices`, `layout` (breakpoints, single-pane drill-in), `keyboard` (Cmd/Ctrl+F, Escape), `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
 - `scripts/tsc.mjs` + `scripts/resolve-tsc.mjs` — run TypeScript 7 through Node (no `.bin` shim)
 - `tests/unit/` + `tests/fixtures/` — `npm test` (runner `scripts/run-unit-tests.mjs`); `tests/smoke/` — `npm run smoke` (`stub-main.cjs`, `run-smoke.mjs`)
 - `src/main/omada-transport.ts` (transport interface + hardened request logic), `net-transport.ts` (Electron `net`), `omada-validators.ts`, `cookie-jar.ts`, `url.ts`

@@ -37,12 +37,13 @@ import {
   siteModalTitle,
   statusText,
 } from './elements';
-import { renderApFilterOptions, renderApList, renderApSelectionControls } from './ap-list';
-import { renderDestinationList, renderMovePreview } from './destination-pane';
+import { renderApFilterOptions, renderApList } from './ap-list';
+import { renderDestinationList } from './destination-pane';
 import { t } from './i18n';
 import { moveActionLabel } from './move-text';
 import { applyInventoryTranslations } from './navigation';
-import { applyGroupVocabulary, showEmptyStates } from './panels';
+import { renderNotices } from './notices';
+import { applyGroupVocabulary } from './panels';
 import { applyShellTranslations } from './shell';
 import { state } from './state';
 import { renderHeaderMeta } from './status';
@@ -51,10 +52,10 @@ import { renderHeaderMeta } from './status';
  * Writes every user-facing string of the static UI (titles, labels, button
  * texts, placeholders, accessible names) in the active language, then
  * re-renders the shell (sidebar, header details), the filter options, the
- * lists (or the empty states), the move preview, the AP groups and Wi-Fi
- * networks views, the AP details pane and the Back bar so the dynamic
- * content follows the language too. Called at startup and after a settings
- * save that may have changed the language.
+ * lists (or the views' §4.6 states), the move preview, the notices, the AP
+ * groups and Wi-Fi networks views, the AP details pane and the Back bar so
+ * the dynamic content follows the language too. Called at startup and after
+ * a settings save that may have changed the language.
  */
 export function applyTranslations() {
   // App shell: sidebar entries and counts, Settings entry, view titles
@@ -129,16 +130,12 @@ export function applyTranslations() {
   statusText.title = statusText.textContent;
   renderHeaderMeta();
 
-  // Re-render dynamic content (the move preview also writes the move
-  // button's label)
-  if (state.accessPoints.length > 0 || state.wlanGroups.length > 0) {
-    renderApList();
-    renderDestinationList();
-  } else {
-    showEmptyStates();
-    renderApSelectionControls();
-  }
-  renderMovePreview();
+  // Re-render dynamic content: the lists or their §4.6 states (the AP list
+  // also renders the move preview, which writes the move button's label)
+  // and the notices above the views
+  renderApList();
+  renderDestinationList();
+  renderNotices();
 
   // AP groups and Wi-Fi networks views, AP details pane, Back bar
   applyInventoryTranslations();

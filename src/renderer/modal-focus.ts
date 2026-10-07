@@ -57,6 +57,20 @@ export function createFocusTrap(modal: HTMLElement): (e: KeyboardEvent) => void 
 } // End of function createFocusTrap()
 
 /**
+ * Tells whether any modal (settings, move, site selection, certificate) is
+ * open. Modals never stack: each opens only while the others are closed.
+ * @returns {boolean} True while a modal is open.
+ */
+export function isAnyModalOpen(): boolean {
+  return (
+    settingsModal.classList.contains('visible') ||
+    moveModal.classList.contains('visible') ||
+    siteModal.classList.contains('visible') ||
+    certModal.classList.contains('visible')
+  );
+}
+
+/**
  * Syncs the inert state of the background app container with modal
  * visibility: while any modal is open, the background is inert — its
  * controls can be neither Tab-focused nor clicked (Chromium has supported
@@ -66,12 +80,7 @@ export function createFocusTrap(modal: HTMLElement): (e: KeyboardEvent) => void 
  * enter an inert subtree).
  */
 export function updateBackgroundInert(): void {
-  const anyModalOpen =
-    settingsModal.classList.contains('visible') ||
-    moveModal.classList.contains('visible') ||
-    siteModal.classList.contains('visible') ||
-    certModal.classList.contains('visible');
-  if (anyModalOpen) {
+  if (isAnyModalOpen()) {
     appContainer.setAttribute('inert', '');
   } else {
     appContainer.removeAttribute('inert');

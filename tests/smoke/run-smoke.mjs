@@ -107,6 +107,13 @@ const TEXT = {
     apNetworksUnknown: 'Sus redes Wi-Fi son desconocidas: la aplicación no puede identificar su grupo.',
     apOverrides: 'Estas son las redes de su grupo. Las redes personalizadas de este AP no se muestran (la aplicación aún no las lee): si tiene alguna en Omada, lo que emite realmente puede ser distinto.',
     backTo: 'Volver a {target}',
+    // View states, read-only banner, single-pane layout (phase 14b)
+    configureConnection: 'Configurar la conexión', connectToController: 'Conectar al controlador', retry: 'Reintentar', settings: 'Ajustes',
+    connectToSeeNetworks: 'Conecta al controlador para ver las redes Wi-Fi', loading: 'Cargando...',
+    refreshFailed: 'No se pudieron actualizar los datos. Se muestran los de las {time}.',
+    readOnly63: 'No hay credenciales de Open API configuradas — puedes consultar los datos. Añádelas en Ajustes → Acceso de gestión.',
+    readOnlyLegacy: 'Controlador heredado — puedes mover AP; editar grupos y redes requiere Omada Controller 6.3 o posterior.',
+    chooseDestination: 'Elegir destino', backToAps: 'Volver a Puntos de acceso',
   },
   en: {
     disconnected: 'Disconnected', connecting: 'Connecting...', connect: 'Connect', disconnect: 'Disconnect', connected: 'Connected',
@@ -145,9 +152,15 @@ const TEXT = {
     apNetworksUnknown: 'Its Wi-Fi networks are unknown: the app cannot identify its group.',
     apOverrides: 'These are its group\'s networks. Per-AP Wi-Fi network overrides are not shown (the app does not read them yet): if this AP has any in Omada, what it actually broadcasts may differ.',
     backTo: 'Back to {target}',
+    // View states, read-only banner (phase 14b)
+    connectToController: 'Connect to controller', loading: 'Loading...',
+    readOnly63: 'Open API credentials are not configured — viewing is available. Add them in Settings → Management access.',
+    readOnlyLegacy: 'Legacy controller — moving APs is available; editing groups and networks requires Omada Controller 6.3 or later.',
   },
 };
 const STATUS_CLASSES = ['offline', 'online', 'pending', 'warning', 'isolated'];
+// Cmd+F on macOS, Ctrl+F elsewhere (keyboard.ts: focuses the view's search)
+const FIND_KEY = process.platform === 'darwin' ? 'Meta+f' : 'Control+f';
 const CONTROLLER_URL = 'https://controller.invalid:8043';
 const CONTROLLER_HOST = 'controller.invalid:8043';
 const MOVE_AP = data.accessPoints.find((ap) => ap.name === 'EAP Carpio');
@@ -641,6 +654,8 @@ function readShell(page) {
     moveStatus: document.getElementById('moveStatus')?.textContent ?? '',
     apEmpty: document.querySelector('#apList .empty-state p')?.textContent ?? null,
     destinationEmpty: document.querySelector('#destinationList .empty-state p')?.textContent ?? null,
+    apSkeleton: document.querySelector('#apList .skeleton-list') !== null,
+    destinationSkeleton: document.querySelector('#destinationList .skeleton-list') !== null,
     destinationTitle: document.getElementById('destinationPanelTitle')?.textContent ?? null,
     destinationListLabel: document.getElementById('destinationList')?.getAttribute('aria-label') ?? null,
     inert: document.querySelector('.app-container')?.hasAttribute('inert'),
@@ -1024,6 +1039,187 @@ function readInventory(page) {
     };
   }); // End of the in-page cross-navigation probe
 } // End of function readInventory()
+
+/**
+ * Reads the §4.6 state of each list (AP list, destination list, AP groups
+ * list, Wi-Fi networks list): the state block's state (data-state, or
+ * 'loading' for the skeleton), its message (first paragraph), its actions
+ * (data-state-action and text), whether it is an alert, and the skeleton's
+ * role and accessible name.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<Record<string, { state: string | null; text: string | null; actions: string[][]; alert: boolean; skeletonRole: string | null; skeletonLabel: string | null; skeletonRows: number }>>}
+ */
+function readStateBlocks(page) {
+  return page.evaluate(() => Object.fromEntries(['apList', 'destinationList', 'groupList', 'networkList'].map((id) => {
+    const list = document.getElementById(id);
+    const block = list?.querySelector('.state-block') ?? null;
+    const skeleton = list?.querySelector('.skeleton-list') ?? null;
+    return [id, {
+      state: block?.dataset.state ?? (skeleton ? 'loading' : null),
+      text: block?.querySelector('p')?.textContent ?? null,
+      actions: Array.from(block?.querySelectorAll('[data-state-action]') ?? []).map((button) => [button.dataset.stateAction, button.textContent]),
+      alert: block?.getAttribute('role') === 'alert',
+      skeletonRole: skeleton?.getAttribute('role') ?? null,
+      skeletonLabel: skeleton?.getAttribute('aria-label') ?? null,
+      skeletonRows: skeleton?.querySelectorAll('.skeleton-row').length ?? 0,
+    }];
+  }))); // End of the in-page state-block probe
+} // End of function readStateBlocks()
+
+/**
+ * Reads the notices above the views — the read-only banner (shown, reason
+ * code, text, role) and the refresh notice (shown, text, Retry) — and the
+ * header's stale mark on "Updated hh:mm" (class and tooltip).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The notices.
+ */
+function readNotices(page) {
+  return page.evaluate(() => {
+    const banner = document.getElementById('readOnlyBanner');
+    const notice = document.getElementById('refreshNotice');
+    const updated = document.getElementById('lastUpdated');
+    return {
+      bannerShown: Boolean(banner && !banner.hidden),
+      bannerReason: banner?.dataset.reason ?? null,
+      bannerText: document.getElementById('readOnlyBannerText')?.textContent ?? '',
+      bannerRole: banner?.getAttribute('role') ?? null,
+      noticeShown: Boolean(notice && !notice.hidden),
+      noticeText: document.getElementById('refreshNoticeText')?.textContent ?? '',
+      noticeRetry: document.getElementById('refreshNoticeRetryBtn')?.textContent ?? '',
+      stale: Boolean(updated?.classList.contains('is-stale')),
+      staleTitle: updated?.title ?? '',
+    };
+  }); // End of the in-page notices probe
+} // End of function readNotices()
+
+/**
+ * Reads the responsive layout: the window size, horizontal overflow (the
+ * document, and every shown header, sidebar, view area, panel, notice or
+ * Back bar whose content is wider than its box), the sidebar's and the view
+ * area's boxes, the first sidebar entry's label (box, text), tooltip, icon
+ * and count, the boxes of the panes actually shown (visible, not off stage),
+ * the single-pane controls ("Choose destination", the drill-in Backs, Close
+ * details) and the focused element.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The layout.
+ */
+function readLayout(page) {
+  return page.evaluate(() => {
+    /**
+     * Tells whether an element is rendered and visible (not hidden, not
+     * display:none, not visibility:hidden, with a size).
+     * @param {Element | null} element - The element.
+     * @returns {boolean} True when visible.
+     */
+    const visible = (element) => Boolean(element && element.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true }) &&
+      element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0);
+    /**
+     * Returns an element's rounded box.
+     * @param {Element} element - The element.
+     * @returns {{ left: number; top: number; right: number; bottom: number; width: number; height: number }} Its box.
+     */
+    const box = (element) => {
+      const rect = element.getBoundingClientRect();
+      return { left: Math.round(rect.left), top: Math.round(rect.top), right: Math.round(rect.right), bottom: Math.round(rect.bottom), width: Math.round(rect.width), height: Math.round(rect.height) };
+    };
+    const panes = {};
+    for (const id of ['apPanel', 'destinationPanel', 'apDetailsPanel', 'groupMasterPanel', 'groupDetailPanel', 'networkMasterPanel', 'networkDetailPanel']) {
+      const element = document.getElementById(id);
+      panes[id] = visible(element) ? box(element) : null;
+    }
+    const overflowing = Array.from(document.querySelectorAll('.title-bar, .sidebar, .view-area, .panel, .view-notice, .back-bar'))
+      .filter((element) => visible(element) && element.scrollWidth > element.clientWidth + 1)
+      .map((element) => `${element.id || element.className} (${element.scrollWidth} > ${element.clientWidth})`);
+    const nav = document.getElementById('navAccessPoints');
+    const label = nav.querySelector('.nav-label');
+    const active = document.activeElement;
+    return {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      docScrollWidth: document.documentElement.scrollWidth,
+      docClientWidth: document.documentElement.clientWidth,
+      docScrollHeight: document.documentElement.scrollHeight,
+      docClientHeight: document.documentElement.clientHeight,
+      overflowing,
+      sidebar: box(document.getElementById('viewNav')),
+      viewArea: box(document.getElementById('viewArea')),
+      label: box(label),
+      labelText: label.textContent,
+      navTitle: nav.title,
+      icon: visible(nav.querySelector('.nav-icon')),
+      count: visible(nav.querySelector('.nav-count')),
+      settings: visible(document.getElementById('settingsBtn')) ? box(document.getElementById('settingsBtn')) : null,
+      panes,
+      openDestination: visible(document.getElementById('openDestinationBtn')),
+      backs: Object.fromEntries(['destinationBackBtn', 'apDetailsBackBtn', 'groupDetailBackBtn', 'networkDetailBackBtn'].map((id) => [id, visible(document.getElementById(id))])),
+      closeDetails: visible(document.getElementById('closeApDetailsBtn')),
+      activeId: active?.id || '',
+      activePanel: active?.closest('.panel')?.id ?? null,
+      activeGroupId: active?.dataset?.groupId ?? null,
+      activeMac: active?.dataset?.mac ?? null,
+    };
+  }); // End of the in-page layout probe
+} // End of function readLayout()
+
+/**
+ * Resizes the window's content area and waits until the page lays out at
+ * the new width.
+ * @param {object} session - The launch.
+ * @param {number} width - Content width in px.
+ * @param {number} height - Content height in px.
+ * @returns {Promise<void>}
+ */
+async function resizeContent(session, width, height) {
+  await session.app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(size.width, size.height), { width, height });
+  await session.page.waitForFunction((expected) => window.innerWidth === expected.width && window.innerHeight === expected.height, { width, height }, { timeout: WAIT_MS });
+}
+
+/**
+ * Resizes the window's content area, then waits two more animation frames
+ * so the layout's media-query listener (which relocates focus a resize
+ * hides) has run.
+ * @param {object} session - The launch.
+ * @param {number} width - Content width in px.
+ * @param {number} height - Content height in px.
+ * @returns {Promise<void>}
+ */
+async function resizeAndSettle(session, width, height) {
+  await resizeContent(session, width, height);
+  await session.page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+/**
+ * Reads where keyboard focus is and whether the user can see it: the
+ * focused element (null when focus fell back to <body>), its panel and data
+ * attributes, and whether it is visible — rendered with boxes, not
+ * display:none or visibility:hidden, and outside any inert or hidden
+ * subtree and (below 800 px) any off-stage pane.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The focus probe.
+ */
+function readFocus(page) {
+  return page.evaluate(() => {
+    const active = document.activeElement;
+    const element = active instanceof HTMLElement && active !== document.body ? active : null;
+    const singlePane = window.matchMedia('(max-width: 799px)').matches;
+    const rects = element ? element.getClientRects().length : 0;
+    const cssVisible = Boolean(element?.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true }));
+    const hiddenSubtree = Boolean(element && (element.closest('[inert], [hidden]') !== null || (singlePane && element.closest('.is-offstage') !== null)));
+    return {
+      width: window.innerWidth,
+      id: element?.id || '',
+      checkbox: Boolean(element?.classList.contains('ap-checkbox')),
+      panel: element?.closest('.panel')?.id ?? null,
+      groupId: element?.dataset.groupId ?? null,
+      networkName: element?.dataset.networkName ?? null,
+      current: element?.getAttribute('aria-current') === 'true',
+      rects,
+      cssVisible,
+      hiddenSubtree,
+      visible: element !== null && rects > 0 && cssVisible && !hiddenSubtree,
+    };
+  }); // End of the in-page focus probe
+} // End of function readFocus()
 
 // ============================================================================
 // Expected values derived from the fixtures
@@ -1476,12 +1672,13 @@ async function runInventoryChecks(session) {
   const statusOf = (name) => es.status[AP[name].statusCategory] ?? es.statusUnknown;
   /**
    * Lists the buttons and fields of a view other than its master items,
-   * cross-links and search (rename / new / delete / edit controls must not exist).
+   * cross-links, search and single-pane Back (rename / new / delete / edit
+   * controls must not exist).
    * @param {string} viewId - The view's id.
    * @returns {Promise<string[]>} Their ids or classes.
    */
   const otherControls = (viewId) => page.evaluate((id) => Array.from(document.querySelectorAll(`#${id} button, #${id} input, #${id} select`))
-    .filter((element) => !element.classList.contains('master-item') && !element.classList.contains('cross-link') && element.type !== 'text')
+    .filter((element) => !element.classList.contains('master-item') && !element.classList.contains('cross-link') && !element.classList.contains('drill-back') && element.type !== 'text')
     .map((element) => element.id || element.className), viewId);
   // The APs of the Default group, in list order (sorted by name)
   const defaultAps = ['EAP Carpio', 'Garaje', 'Porche', 'Salón'];
@@ -2500,11 +2697,17 @@ async function runBulkMoveChecks(session) {
 // ============================================================================
 
 /**
- * Spanish first-run launch: settings modal, save, connect, lists and the
- * destination pane, a single move through the review dialog (cancel, Escape,
- * confirm, results) and into the Silence section, the selection and bulk-move
- * checks, refresh, the 700×500 layout, disconnect, connect failure and
- * recovery, save rejected by main.
+ * Spanish first-run launch: settings modal, the first-run state of the
+ * views (one "Configure connection" action each), save, connect, lists and
+ * the destination pane, the read-only banner on 6.3, Cmd/Ctrl+F and the
+ * Escape order, a single move through the review dialog (cancel, Escape,
+ * confirm, results) and into the Silence section, the selection and
+ * bulk-move checks, refresh, a failed refresh with its notice and Retry, the
+ * 700×500 single-pane layout, the 1200 / 900 / 720 px layouts (focus after a
+ * keyboard move at 720 px and across the 800 px breakpoint), disconnect
+ * and the disconnected state, connect failure (inline error) and recovery,
+ * an initial-load error recovered by Retry (with the loading skeletons), the
+ * legacy wording and banner, save rejected by main.
  * @param {{ binary: string }} electronInfo - Resolved Electron binary.
  * @returns {Promise<void>}
  */
@@ -2540,6 +2743,34 @@ async function runSpanishFirstRun(electronInfo) {
         shell
       );
     });
+
+    await check('[es] first run: Escape closes the settings modal (the top dialog); each view offers exactly one "Configurar la conexión" action under the hint (the destination list states the hint without one), the header\'s Connect is disabled, navigation works without a connection; the action opens Settings with focus in the URL field', async () => {
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.getElementById('settingsModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+      const shell = await readShell(page);
+      const blocks = await readStateBlocks(page);
+      const perView = await page.evaluate(() => ['viewAccessPoints', 'viewGroups', 'viewNetworks'].map((id) => document.querySelectorAll(`#${id} [data-state-action]`).length));
+      await page.click('#navGroups');
+      const groupsNav = await readNav(page);
+      await page.click('#navNetworks');
+      const networksNav = await readNav(page);
+      await page.click('#navAccessPoints');
+      const notices = await readNotices(page);
+      await page.click('#apList [data-state-action="configure"]');
+      await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+      await page.waitForFunction(() => document.activeElement?.id === 'urlInput', null, { timeout: WAIT_MS });
+      const configure = [['configure', es.configureConnection]];
+      return verdict(
+        shell.settingsOpen === false && shell.connectDisabled === true &&
+        blocks.apList.state === 'firstRun' && blocks.apList.text === es.configureHint && isDeepStrictEqual(blocks.apList.actions, configure) &&
+        blocks.groupList.state === 'firstRun' && blocks.groupList.text === es.configureHint && isDeepStrictEqual(blocks.groupList.actions, configure) &&
+        blocks.networkList.state === 'firstRun' && blocks.networkList.text === es.configureHint && isDeepStrictEqual(blocks.networkList.actions, configure) &&
+        blocks.destinationList.state === 'firstRun' && blocks.destinationList.text === es.configureHint && blocks.destinationList.actions.length === 0 &&
+        isDeepStrictEqual(perView, [1, 1, 1]) && isDeepStrictEqual(groupsNav.shown, ['viewGroups']) && isDeepStrictEqual(networksNav.shown, ['viewNetworks']) &&
+        notices.bannerShown === false && notices.noticeShown === false,
+        { shell, blocks, perView, groupsNav: groupsNav.shown, networksNav: networksNav.shown, notices }
+      );
+    }); // End of check "[es] first run: Escape closes the settings modal..."
 
     await check('[es] first run: the trusted-certificate section shows "Ninguno" and its reset button is disabled', async () => {
       const section = await readCertPinSection(page);
@@ -2651,6 +2882,60 @@ async function runSpanishFirstRun(electronInfo) {
         { groups, networks, back, rows, groupItems, networkItems }
       );
     }); // End of check "[es] navigation..."
+
+    await check('[es] read-only banner on Omada 6.3: the AP groups and Wi-Fi networks views state the reason and the fix ("No hay credenciales de Open API configuradas — … Añádelas en Ajustes → Acceso de gestión."); the Access points view (moves work) shows none', async () => {
+      await page.click('#navGroups');
+      const groups = await readNotices(page);
+      await page.click('#navNetworks');
+      const networks = await readNotices(page);
+      await page.click('#navAccessPoints');
+      const aps = await readNotices(page);
+      return verdict(
+        groups.bannerShown === true && groups.bannerReason === 'managementNotConfigured' && groups.bannerText === es.readOnly63 && groups.bannerRole === 'note' &&
+        networks.bannerShown === true && networks.bannerReason === 'managementNotConfigured' && networks.bannerText === es.readOnly63 &&
+        aps.bannerShown === false && aps.noticeShown === false,
+        { groups, networks, aps }
+      );
+    }); // End of check "[es] read-only banner on Omada 6.3..."
+
+    await check('[es] keys: Cmd/Ctrl+F focuses the current view\'s search (from an AP checkbox; on AP groups); Escape clears the search first — also with focus outside the field — and then does nothing more; with the settings dialog open, Cmd/Ctrl+F leaves the dialog alone and Escape closes the dialog but keeps the view\'s search, which the next Escape clears', async () => {
+      await page.focus(`#apList .ap-checkbox[data-mac="${AP.Garaje.mac}"]`);
+      await page.keyboard.press(FIND_KEY);
+      const apFocus = await page.evaluate(() => document.activeElement?.id || '');
+      await page.keyboard.type('carpio');
+      const filtered = (await readApItems(page)).map((item) => item.name);
+      await page.focus(`#apList .ap-checkbox[data-mac="${MOVE_AP.mac}"]`);
+      await page.keyboard.press('Escape');
+      const cleared = await page.evaluate(() => ({ value: document.getElementById('apFilter').value, focus: document.activeElement?.id || '' }));
+      const rowsAfter = (await readApItems(page)).length;
+      await page.keyboard.press('Escape');
+      const second = await readShell(page);
+      await page.click('#navGroups');
+      await page.keyboard.press(FIND_KEY);
+      const groupFocus = await page.evaluate(() => document.activeElement?.id || '');
+      await page.keyboard.type('def');
+      await page.click('#settingsBtn');
+      await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+      await page.waitForFunction(() => document.activeElement?.id === 'urlInput', null, { timeout: WAIT_MS });
+      await page.keyboard.press(FIND_KEY);
+      const findInDialog = await page.evaluate(() => ({ focus: document.activeElement?.id || '', open: document.getElementById('settingsModal').classList.contains('visible') }));
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.getElementById('settingsModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+      const afterDialog = await page.evaluate(() => ({ search: document.getElementById('groupSearch').value, focus: document.activeElement?.id || '' }));
+      await page.keyboard.press('Escape');
+      const afterSearch = await page.evaluate(() => ({ search: document.getElementById('groupSearch').value, focus: document.activeElement?.id || '' }));
+      const groupCount = (await readGroupItems(page)).length;
+      await page.click('#navAccessPoints');
+      return verdict(
+        apFocus === 'apFilter' && isDeepStrictEqual(filtered, [MOVE_AP.name]) &&
+        cleared.value === '' && cleared.focus === 'apFilter' && rowsAfter === expectedAps.length &&
+        second.settingsOpen === false && second.moveOpen === false && second.activeId === 'apFilter' &&
+        groupFocus === 'groupSearch' && findInDialog.focus === 'urlInput' && findInDialog.open === true &&
+        afterDialog.search === 'def' && afterDialog.focus !== 'groupSearch' &&
+        afterSearch.search === '' && afterSearch.focus === 'groupSearch' && groupCount === 4,
+        { apFocus, filtered, cleared, rowsAfter, second: second.activeId, groupFocus, findInDialog, afterDialog, afterSearch, groupCount }
+      );
+    }); // End of check "[es] keys: Cmd/Ctrl+F focuses the current view's search..."
 
     await runInventoryChecks(session);
 
@@ -2857,26 +3142,55 @@ async function runSpanishFirstRun(electronInfo) {
       );
     }); // End of check "[es] failed refresh..."
 
-    await check('[es] 700×500 minimum window: no overflow; the sidebar (Settings included), AP rows, the selection summary, a destination radio, the move preview and the move button stay inside the window; the review dialog keeps Cancel and the move button visible', async () => {
+    await check('[es] refresh error: the data stays with a notice naming its time ("No se pudieron actualizar los datos. Se muestran los de las hh:mm.") and "Reintentar", on every view; the header\'s "Actualizado hh:mm" is marked stale with the same text; Reintentar refreshes and clears both', async () => {
+      const header = await readHeader(page);
+      const aps = await readNotices(page);
+      await page.click('#navGroups');
+      const groups = await readNotices(page);
+      await page.click('#navAccessPoints');
+      const before = await stubState(session);
+      await page.click('#refreshNoticeRetryBtn');
+      await page.waitForFunction(() => document.getElementById('refreshNotice').hidden && !document.getElementById('refreshBtn').classList.contains('spinning'), null, { timeout: WAIT_MS });
+      const after = await readNotices(page);
+      const headerAfter = await readHeader(page);
+      const snapshot = await stubState(session);
+      const expected = fmt(es.refreshFailed, { time: header.time });
+      return verdict(
+        aps.noticeShown === true && aps.noticeText === expected && aps.noticeRetry === es.retry && aps.stale === true && aps.staleTitle === expected &&
+        groups.noticeShown === true && groups.noticeText === expected &&
+        after.noticeShown === false && after.stale === false && after.staleTitle === '' && headerAfter.updatedAt > header.updatedAt &&
+        headerAfter.status === es.connected && callsTo(snapshot, 'omada:get-aps').length === callsTo(before, 'omada:get-aps').length + 1,
+        { header, aps, groups, after, headerAfter }
+      );
+    }); // End of check "[es] refresh error..."
+
+    await check('[es] 700×500 minimum window (single-pane layout): no overflow; the top view switcher (Settings included), AP rows, the selection summary and "Elegir destino" stay inside the window; "Elegir destino" opens the destination picker in the list\'s place with a radio, the move preview and the move button inside the window; the review dialog keeps Cancel and the move button visible; its Back returns to the list', async () => {
       // A selection and a destination, so the preview is at its fullest
       await page.click(`#apList .ap-checkbox[data-mac="${AP.Altillo.mac}"]`);
       await pickDestination(page, GROUP.Default.wlanId);
       await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(700, 500));
       try {
         await page.waitForFunction(() => window.innerWidth <= 700 && window.innerHeight <= 500, null, { timeout: WAIT_MS });
-        const layout = await page.evaluate(() => {
+        /**
+         * Probes the Access points view at 700×500: which of its panes are
+         * shown and whether its controls are visible inside the window.
+         * @returns {Promise<object>} The probe.
+         */
+        const probe = () => page.evaluate(() => {
           /**
-           * Tells whether an element is rendered entirely inside the window.
+           * Tells whether an element is visible (not off stage) and rendered
+           * entirely inside the window.
            * @param {string} selector - CSS selector of the element.
-           * @returns {boolean} True when it has a size and fits the viewport.
+           * @returns {boolean} True when it is shown and fits the viewport.
            */
           const inside = (selector) => {
-            const rect = document.querySelector(selector)?.getBoundingClientRect();
-            return Boolean(rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 &&
-              rect.right <= window.innerWidth && rect.bottom <= window.innerHeight);
+            const element = document.querySelector(selector);
+            const rect = element?.getBoundingClientRect();
+            return Boolean(rect && element.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true }) && rect.width > 0 && rect.height > 0 &&
+              rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight);
           };
           /**
-           * Tells whether at least one of the elements is fully visible inside
+           * Tells whether at least one of the elements is shown entirely inside
            * its scrolling container and the window.
            * @param {string} itemSelector - CSS selector of the items.
            * @param {DOMRect} box - The container's rectangle.
@@ -2884,19 +3198,24 @@ async function runSpanishFirstRun(electronInfo) {
            */
           const oneInView = (itemSelector, box) => Array.from(document.querySelectorAll(itemSelector)).some((item) => {
             const rect = item.getBoundingClientRect();
-            return rect.top >= box.top && rect.bottom <= box.bottom && rect.left >= box.left && rect.right <= box.right && rect.bottom <= window.innerHeight;
+            return item.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true }) &&
+              rect.top >= box.top && rect.bottom <= box.bottom && rect.left >= box.left && rect.right <= box.right && rect.bottom <= window.innerHeight;
           });
           const list = document.getElementById('apList').getBoundingClientRect();
           const destinations = document.getElementById('destinationList').getBoundingClientRect();
           return {
             scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight,
             width: window.innerWidth, height: window.innerHeight,
-            settings: inside('#settingsBtn'), move: inside('#moveBtn'), preview: inside('.move-summary'), summary: inside('#apSelectionSummary'),
-            nav: inside('#navNetworks'), refresh: inside('#refreshBtn'), connect: inside('#connectBtn'),
+            settings: inside('#settingsBtn'), nav: inside('#navNetworks'), refresh: inside('#refreshBtn'), connect: inside('#connectBtn'),
+            listShown: inside('#apPanel .panel-title'), summary: inside('#apSelectionSummary'), choose: inside('#openDestinationBtn'),
+            pickerShown: inside('#destinationPanelTitle'), back: inside('#destinationBackBtn'), move: inside('#moveBtn'), preview: inside('.move-summary'),
             rowInView: oneInView('#apList .ap-row', list), radioInView: oneInView('#destinationList .destination-option', destinations),
-            listHeight: list.height, destinationHeight: destinations.height,
+            listHeight: list.height, destinationHeight: destinations.height, activeId: document.activeElement?.id || '',
           };
-        }); // End of the in-page layout probe
+        }); // End of the 700×500 layout probe
+        const atList = await probe();
+        await page.click('#openDestinationBtn');
+        const atPicker = await probe();
         await openReview(page);
         const dialog = await page.evaluate(() => {
           /**
@@ -2912,20 +3231,276 @@ async function runSpanishFirstRun(electronInfo) {
         });
         await page.keyboard.press('Escape');
         await waitForMoveDialogClosed(page);
+        await page.click('#destinationBackBtn');
+        const back = await probe();
         return verdict(
-          layout.scrollWidth <= layout.width && layout.scrollHeight <= layout.height && layout.settings && layout.move && layout.preview &&
-          layout.summary && layout.nav && layout.refresh && layout.connect && layout.rowInView && layout.radioInView &&
-          layout.listHeight >= 100 && layout.destinationHeight >= 90 && dialog.cancel && dialog.confirm,
-          { layout, dialog }
+          atList.scrollWidth <= atList.width && atList.scrollHeight <= atList.height && atList.settings && atList.nav && atList.refresh && atList.connect &&
+          atList.listShown && atList.summary && atList.choose && atList.rowInView && atList.listHeight >= 100 && !atList.pickerShown && !atList.move &&
+          atPicker.scrollWidth <= atPicker.width && atPicker.scrollHeight <= atPicker.height && atPicker.pickerShown && atPicker.back &&
+          atPicker.move && atPicker.preview && atPicker.radioInView && atPicker.destinationHeight >= 90 && !atPicker.listShown && !atPicker.choose &&
+          dialog.cancel && dialog.confirm && back.listShown && !back.pickerShown && back.activeId === 'openDestinationBtn',
+          { atList, atPicker, dialog, back }
         );
       } finally {
         if (await page.evaluate(() => document.getElementById('moveModal').classList.contains('visible'))) {
           await page.keyboard.press('Escape');
         }
+        if (await page.isVisible('#destinationBackBtn')) {
+          await page.click('#destinationBackBtn');
+        }
         await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
         await page.click('#clearApSelectionBtn');
       }
     }); // End of check "[es] 700×500 minimum window..."
+
+    await check('[es] 1200 px: the full sidebar (labels, icons and counts), each view with its list and detail side by side, no single-pane control, no horizontal overflow', async () => {
+      await resizeContent(session, 1200, 650);
+      try {
+        const views = {};
+        for (const [view, nav] of [['groups', '#navGroups'], ['networks', '#navNetworks'], ['accessPoints', '#navAccessPoints']]) {
+          await page.click(nav);
+          views[view] = await readLayout(page);
+        }
+        const { accessPoints: aps, groups, networks } = views;
+        return verdict(
+          Object.values(views).every((layout) => layout.docScrollWidth <= layout.docClientWidth && layout.overflowing.length === 0 &&
+            layout.sidebar.width >= 150 && layout.sidebar.right <= layout.viewArea.left + 1 && layout.label.width > 40 && layout.icon && layout.count &&
+            !layout.openDestination && Object.values(layout.backs).every((shown) => !shown)) &&
+          aps.panes.apPanel !== null && aps.panes.destinationPanel !== null && aps.panes.apPanel.right <= aps.panes.destinationPanel.left &&
+          groups.panes.groupMasterPanel !== null && groups.panes.groupDetailPanel !== null && groups.panes.groupMasterPanel.right <= groups.panes.groupDetailPanel.left &&
+          networks.panes.networkMasterPanel !== null && networks.panes.networkDetailPanel !== null &&
+          networks.panes.networkMasterPanel.right <= networks.panes.networkDetailPanel.left,
+          views
+        );
+      } finally {
+        await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
+      }
+    }); // End of check "[es] 1200 px..."
+
+    await check('[es] 900 px: the compact sidebar (icons and counts; each label visually hidden but still the button\'s text and its tooltip), each view with its list and detail side by side, no single-pane control, no horizontal overflow', async () => {
+      await resizeContent(session, 900, 650);
+      const views = {};
+      for (const [view, nav] of [['groups', '#navGroups'], ['networks', '#navNetworks'], ['accessPoints', '#navAccessPoints']]) {
+        await page.click(nav);
+        views[view] = await readLayout(page);
+      }
+      const { accessPoints: aps, groups, networks } = views;
+      return verdict(
+        Object.values(views).every((layout) => layout.docScrollWidth <= layout.docClientWidth && layout.overflowing.length === 0 &&
+          layout.sidebar.width < 100 && layout.sidebar.right <= layout.viewArea.left + 1 && layout.label.width <= 1 &&
+          layout.labelText === es.accessPoints && layout.navTitle === es.accessPoints && layout.icon && layout.count &&
+          !layout.openDestination && Object.values(layout.backs).every((shown) => !shown)) &&
+        aps.panes.apPanel !== null && aps.panes.destinationPanel !== null && aps.panes.apPanel.right <= aps.panes.destinationPanel.left &&
+        groups.panes.groupMasterPanel !== null && groups.panes.groupDetailPanel !== null && groups.panes.groupMasterPanel.right <= groups.panes.groupDetailPanel.left &&
+        networks.panes.networkMasterPanel !== null && networks.panes.networkDetailPanel !== null &&
+        networks.panes.networkMasterPanel.right <= networks.panes.networkDetailPanel.left,
+        views
+      );
+    }); // End of check "[es] 900 px..."
+
+    await check('[es] 720 px: a top view switcher and one pane at a time — "Elegir destino" opens the destination picker in the list\'s place and its Back returns (focus on the button); an AP row opens its details as a full pane whose Back returns to the list (focus on its checkbox); a group and a network open their details in place of their lists (the read-only banner stays), each Back returning to the list with focus on the item; Cmd/Ctrl+F in a detail returns to the list\'s search; no horizontal overflow at any step', async () => {
+      await resizeContent(session, 720, 650);
+      try {
+        await page.click('#navAccessPoints');
+        const list = await readLayout(page);
+        await page.click('#openDestinationBtn');
+        const picker = await readLayout(page);
+        await page.click('#destinationBackBtn');
+        const pickerBack = await readLayout(page);
+        await page.click(`#apList .ap-row[data-mac="${AP.Garaje.mac}"] .ap-row-group`);
+        await page.waitForFunction(() => document.activeElement?.id === 'apDetailsName', null, { timeout: WAIT_MS });
+        const details = await readLayout(page);
+        await page.click('#apDetailsBackBtn');
+        const detailsBack = await readLayout(page);
+        await page.click('#navGroups');
+        // A group picked at a wider width stays open: start from the list
+        if (await page.isVisible('#groupDetailBackBtn')) {
+          await page.click('#groupDetailBackBtn');
+        }
+        const groups = await readLayout(page);
+        await page.click(`#groupList .master-item[data-group-id="${GROUP.Default.wlanId}"]`);
+        await page.waitForFunction(() => document.activeElement?.id === 'groupDetailName', null, { timeout: WAIT_MS });
+        const group = { ...(await readLayout(page)), notices: await readNotices(page) };
+        await page.keyboard.press(FIND_KEY);
+        const found = await readLayout(page);
+        await page.click(`#groupList .master-item[data-group-id="${GROUP.Default.wlanId}"]`);
+        await page.waitForFunction(() => document.activeElement?.id === 'groupDetailName', null, { timeout: WAIT_MS });
+        await page.click('#groupDetailBackBtn');
+        const groupBack = await readLayout(page);
+        await page.click('#navNetworks');
+        if (await page.isVisible('#networkDetailBackBtn')) {
+          await page.click('#networkDetailBackBtn');
+        }
+        await page.click('#networkList .master-item[data-network-name="Casa"]');
+        await page.waitForFunction(() => document.activeElement?.id === 'networkDetailName', null, { timeout: WAIT_MS });
+        const network = await readLayout(page);
+        await page.click('#networkDetailBackBtn');
+        const networkBack = await readLayout(page);
+        const steps = { list, picker, pickerBack, details, detailsBack, groups, group, found, groupBack, network, networkBack };
+        return verdict(
+          Object.values(steps).every((step) => step.docScrollWidth <= step.docClientWidth && step.overflowing.length === 0) &&
+          list.sidebar.bottom <= list.viewArea.top + 1 && list.sidebar.width >= 719 && list.label.width > 20 && list.icon &&
+          list.settings !== null && list.settings.right <= 720 &&
+          list.panes.apPanel !== null && list.panes.destinationPanel === null && list.openDestination === true && list.backs.destinationBackBtn === false &&
+          picker.panes.apPanel === null && picker.panes.destinationPanel !== null && picker.backs.destinationBackBtn === true && picker.activePanel === 'destinationPanel' &&
+          pickerBack.panes.apPanel !== null && pickerBack.panes.destinationPanel === null && pickerBack.activeId === 'openDestinationBtn' &&
+          details.panes.apPanel === null && details.panes.apDetailsPanel !== null && details.backs.apDetailsBackBtn === true && details.closeDetails === false &&
+          detailsBack.panes.apPanel !== null && detailsBack.panes.apDetailsPanel === null && detailsBack.panes.destinationPanel === null &&
+          detailsBack.activeMac === AP.Garaje.mac &&
+          groups.panes.groupMasterPanel !== null && groups.panes.groupDetailPanel === null &&
+          group.panes.groupMasterPanel === null && group.panes.groupDetailPanel !== null && group.backs.groupDetailBackBtn === true &&
+          group.notices.bannerShown === true &&
+          found.panes.groupMasterPanel !== null && found.panes.groupDetailPanel === null && found.activeId === 'groupSearch' &&
+          groupBack.panes.groupMasterPanel !== null && groupBack.panes.groupDetailPanel === null && groupBack.activeGroupId === GROUP.Default.wlanId &&
+          network.panes.networkMasterPanel === null && network.panes.networkDetailPanel !== null && network.backs.networkDetailBackBtn === true &&
+          networkBack.panes.networkMasterPanel !== null && networkBack.panes.networkDetailPanel === null,
+          steps
+        );
+      } finally {
+        for (const back of ['#destinationBackBtn', '#apDetailsBackBtn']) {
+          if (await page.isVisible(back)) {
+            await page.click(back);
+          }
+        }
+        await page.click('#navAccessPoints');
+        await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
+      }
+    }); // End of check "[es] 720 px..."
+
+    await check('[es] 720 px, keyboard move: with the destination picker in the list\'s place, Enter on "Mover AP", confirm, then Enter on Close after a fully successful move brings the AP list back (the picker closes, the AP in its new group) with focus on a visible control in it, never inside a hidden pane; moving the AP back the same way ends the same', async () => {
+      await resizeAndSettle(session, 720, 650);
+      try {
+        await page.click('#navAccessPoints');
+        const scenario = (await stubState(session)).scenario;
+        const currentName = scenario.accessPoints.find((ap) => ap.mac === MOVE_AP.mac)?.wlanGroup;
+        const original = scenario.wlanGroups.find((group) => group.wlanName === currentName);
+        const target = original?.wlanId === MOVE_GROUP.wlanId ? GROUP.Default : MOVE_GROUP;
+        /**
+         * Moves MOVE_AP from the destination picker into a group — the move
+         * started with Enter on the move button and the results closed with
+         * Enter on Close — and reads the focus and the panes afterwards.
+         * @param {string} wlanId - The destination group id.
+         * @returns {Promise<{ focus: object; layout: object; row: object | undefined }>} The probes.
+         */
+        const keyboardMove = async (wlanId) => {
+          await page.check(`#apList .ap-checkbox[data-mac="${MOVE_AP.mac}"]`);
+          await page.click('#openDestinationBtn');
+          await pickDestination(page, wlanId);
+          await page.focus('#moveBtn');
+          await page.keyboard.press('Enter');
+          await waitForReview(page);
+          await page.click('#confirmMoveBtn');
+          await waitForResults(page);
+          await page.keyboard.press('Enter');
+          await waitForMoveDialogClosed(page);
+          await waitForLoadIdle(page);
+          const focus = await readFocus(page);
+          const layout = await readLayout(page);
+          const row = (await readApItems(page)).find((item) => item.mac === MOVE_AP.mac);
+          return { focus, layout, row };
+        }; // End of function keyboardMove()
+        const there = await keyboardMove(target.wlanId);
+        const back = original === undefined ? null : await keyboardMove(original.wlanId);
+        const sets = callsTo(await stubState(session), 'omada:set-wlan').slice(-2).map((call) => call.args);
+        /**
+         * Tells whether a move ended on the AP list with focus visible in it.
+         * @param {{ focus: object; layout: object }} step - The probes after one move.
+         * @param {string} groupName - The group the AP must now report.
+         * @returns {boolean} True when focus is on a visible control of the shown AP list.
+         */
+        const endedInList = (step, groupName) => step !== null && step.focus.width === 720 && step.focus.visible &&
+          step.focus.panel === 'apPanel' && step.layout.panes.apPanel !== null && step.layout.panes.destinationPanel === null &&
+          step.row?.group === `${es.groupLabel.apGroup}: ${groupName}` && step.row?.checked === false;
+        return verdict(
+          original !== undefined && endedInList(there, target.wlanName) && endedInList(back, original.wlanName) &&
+          isDeepStrictEqual(sets, [[MOVE_AP.mac, target.wlanId], [MOVE_AP.mac, original.wlanId]]),
+          { original: original?.wlanName, target: target.wlanName, there, back, sets }
+        );
+      } finally {
+        if (await page.evaluate(() => document.getElementById('moveModal').classList.contains('visible'))) {
+          await page.keyboard.press('Escape');
+          await waitForMoveDialogClosed(page);
+        }
+        if (await page.isVisible('#destinationBackBtn')) {
+          await page.click('#destinationBackBtn');
+        }
+        if (await page.isVisible('#clearApSelectionBtn')) {
+          await page.click('#clearApSelectionBtn');
+        }
+        await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
+      }
+    }); // End of check "[es] 720 px, keyboard move..."
+
+    await check('[es] crossing 800 px never strands focus on a hidden control: focused at 720 px, the destination picker\'s Back → its search, "Elegir destino" → the AP list, the AP details\' Back → "Cerrar detalles", a group\'s and a network\'s Back → the selected item of their list once the window is 900 px wide; "Cerrar detalles" focused at 900 px → the details\' Back at 720 px', async () => {
+      const steps = {};
+      /**
+       * Focuses a control at the current width, resizes the window and
+       * reads the focus before and after.
+       * @param {string} selector - CSS selector of the control to focus.
+       * @param {number} width - The content width to resize to.
+       * @returns {Promise<{ before: object; after: object }>} The focus probes.
+       */
+      const cross = async (selector, width) => {
+        await page.focus(selector);
+        const before = await readFocus(page);
+        await resizeAndSettle(session, width, 650);
+        return { before, after: await readFocus(page) };
+      };
+      try {
+        await resizeAndSettle(session, 720, 650);
+        await page.click('#navAccessPoints');
+        await page.click('#openDestinationBtn');
+        steps.picker = await cross('#destinationBackBtn', 900);
+        await resizeAndSettle(session, 720, 650);
+        await page.click('#destinationBackBtn');
+        steps.choose = await cross('#openDestinationBtn', 900);
+        await resizeAndSettle(session, 720, 650);
+        await page.click(`#apList .ap-row[data-mac="${AP.Garaje.mac}"] .ap-row-group`);
+        await page.waitForFunction(() => document.activeElement?.id === 'apDetailsName', null, { timeout: WAIT_MS });
+        steps.details = await cross('#apDetailsBackBtn', 900);
+        steps.closeDetails = await cross('#closeApDetailsBtn', 720);
+        await page.click('#apDetailsBackBtn');
+        await page.click('#navGroups');
+        if (!(await page.isVisible('#groupDetailBackBtn'))) {
+          await page.click(`#groupList .master-item[data-group-id="${GROUP.Default.wlanId}"]`);
+          await page.waitForFunction(() => document.activeElement?.id === 'groupDetailName', null, { timeout: WAIT_MS });
+        }
+        steps.group = await cross('#groupDetailBackBtn', 900);
+        await resizeAndSettle(session, 720, 650);
+        await page.click('#navNetworks');
+        if (!(await page.isVisible('#networkDetailBackBtn'))) {
+          await page.click('#networkList .master-item[data-network-name="Casa"]');
+          await page.waitForFunction(() => document.activeElement?.id === 'networkDetailName', null, { timeout: WAIT_MS });
+        }
+        steps.network = await cross('#networkDetailBackBtn', 900);
+        return verdict(
+          Object.values(steps).every((step) => step.before.visible && step.after.visible) &&
+          steps.picker.before.id === 'destinationBackBtn' && steps.picker.after.id === 'destinationSearch' &&
+          steps.choose.before.id === 'openDestinationBtn' && steps.choose.after.panel === 'apPanel' && steps.choose.after.checkbox &&
+          steps.details.before.id === 'apDetailsBackBtn' && steps.details.after.id === 'closeApDetailsBtn' &&
+          steps.closeDetails.before.id === 'closeApDetailsBtn' && steps.closeDetails.after.id === 'apDetailsBackBtn' &&
+          steps.group.before.id === 'groupDetailBackBtn' && steps.group.after.panel === 'groupMasterPanel' &&
+          steps.group.after.groupId !== null && steps.group.after.current &&
+          steps.network.before.id === 'networkDetailBackBtn' && steps.network.after.panel === 'networkMasterPanel' &&
+          steps.network.after.networkName !== null && steps.network.after.current,
+          // One short line per step: "id@panel" before → after
+          Object.fromEntries(Object.entries(steps).map(([name, step]) => [name, [step.before, step.after].map((focus) =>
+            `${focus.id || focus.groupId || focus.networkName || (focus.checkbox ? 'ap-checkbox' : 'body')}@${focus.panel}/${focus.width}` +
+            `${focus.visible ? '' : ' HIDDEN'}${focus.current ? ' current' : ''}`).join(' → ')]))
+        );
+      } finally {
+        if (!(await page.evaluate(() => window.matchMedia('(max-width: 799px)').matches))) {
+          await resizeAndSettle(session, 720, 650);
+        }
+        await page.click('#navAccessPoints');
+        for (const back of ['#destinationBackBtn', '#apDetailsBackBtn']) {
+          if (await page.isVisible(back)) {
+            await page.click(back);
+          }
+        }
+        await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
+      }
+    }); // End of check "[es] crossing 800 px..."
 
     await check('[es] Disconnect: OMADA_DISCONNECT called, lists and destination cleared, the move button disabled, status back to disconnected', async () => {
       await page.click('#connectBtn');
@@ -2943,7 +3518,25 @@ async function runSpanishFirstRun(electronInfo) {
       );
     }); // End of check "[es] Disconnect: OMADA_DISCONNECT called, lists cleared, status bac..."
 
-    await check('[es] connect failure: error shown in the status bar, controller released, no crash', async () => {
+    await check('[es] disconnected: navigation stays and each view offers one "Conectar al controlador" action under its hint (the destination list states its hint without one); no read-only banner, no refresh notice', async () => {
+      const blocks = await readStateBlocks(page);
+      await page.click('#navGroups');
+      const nav = await readNav(page);
+      const notices = await readNotices(page);
+      await page.click('#navAccessPoints');
+      const connectAction = [['connect', es.connectToController]];
+      return verdict(
+        blocks.apList.state === 'disconnected' && blocks.apList.text === es.connectToSeeAPs && isDeepStrictEqual(blocks.apList.actions, connectAction) &&
+        blocks.groupList.state === 'disconnected' && blocks.groupList.text === es.connectToSeeGroups && isDeepStrictEqual(blocks.groupList.actions, connectAction) &&
+        blocks.networkList.state === 'disconnected' && blocks.networkList.text === es.connectToSeeNetworks && isDeepStrictEqual(blocks.networkList.actions, connectAction) &&
+        blocks.destinationList.state === 'disconnected' && blocks.destinationList.text === es.connectToSeeGroups && blocks.destinationList.actions.length === 0 &&
+        isDeepStrictEqual(nav.shown, ['viewGroups']) && nav.groups.current === 'page' && nav.groups.count === null &&
+        notices.bannerShown === false && notices.noticeShown === false,
+        { blocks, nav, notices }
+      );
+    }); // End of check "[es] disconnected: navigation stays..."
+
+    await check('[es] connect failure: error shown in the status bar and inline in each view (a persistent alert with "Reintentar" and "Ajustes"; the destination list states it without actions), controller released, no crash', async () => {
       await configureStub(session, { connect: { success: false, error: 'connectError', detail: 'HTTP 503: Service Unavailable' } });
       await page.click('#connectBtn');
       await page.waitForSelector('#statusIndicator.error', { timeout: WAIT_MS });
@@ -2951,11 +3544,17 @@ async function runSpanishFirstRun(electronInfo) {
       const snapshot = await stubState(session);
       const disconnects = callsTo(snapshot, 'omada:disconnect');
       const shell = await readShell(page);
+      const blocks = await readStateBlocks(page);
+      const message = 'Error de conexión (HTTP 503: Service Unavailable)';
+      const errorActions = [['retry', es.retry], ['settings', es.settings]];
       return verdict(
-        shell.status === 'Error de conexión (HTTP 503: Service Unavailable)' && shell.connect === es.connect &&
-        shell.settingsDisabled === false && shell.apEmpty === es.connectToSeeAPs &&
+        shell.status === message && shell.connect === es.connect &&
+        shell.settingsDisabled === false && shell.apEmpty === message &&
+        ['apList', 'groupList', 'networkList'].every((id) => blocks[id].state === 'loadError' && blocks[id].text === message &&
+          blocks[id].alert === true && isDeepStrictEqual(blocks[id].actions, errorActions)) &&
+        blocks.destinationList.state === 'loadError' && blocks.destinationList.text === message && blocks.destinationList.actions.length === 0 &&
         disconnects.length === 2 && disconnects[1].args[0] == null,
-        { shell, disconnects }
+        { shell, blocks, disconnects }
       );
     }); // End of check "[es] connect failure: error shown in the status bar, controller rel..."
 
@@ -2968,6 +3567,57 @@ async function runSpanishFirstRun(electronInfo) {
       await waitForApCount(page, expected.length);
       return compareApRows(await readApItems(page), expected);
     });
+
+    await check('[es] initial-load error: "Conectar al controlador" connects but the first data load fails — the status bar and each view say "Error al cargar los datos del controlador" inline (a persistent alert) with "Reintentar" and "Ajustes" (which opens Settings); "Reintentar" shows the loading skeletons in the layout, then recovers the data', async () => {
+      await page.click('#connectBtn');
+      await waitForStatus(page, es.disconnected);
+      await configureStub(session, { failChannels: ['omada:get-wlans'] });
+      let blocks;
+      let shell;
+      let settings;
+      try {
+        await page.click('#apList [data-state-action="connect"]');
+        await page.waitForFunction(() => document.querySelector('#apList .state-block')?.dataset.state === 'loadError', null, { timeout: WAIT_MS });
+        blocks = await readStateBlocks(page);
+        shell = await readShell(page);
+        await page.click('#navGroups');
+        await page.click('#groupList [data-state-action="settings"]');
+        await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+        settings = await readShell(page);
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(() => !document.getElementById('settingsModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+        await page.click('#navAccessPoints');
+      } finally {
+        await configureStub(session, { failChannels: [], delays: { 'omada:get-aps': 800 } });
+      }
+      let loading;
+      try {
+        await page.click('#apList [data-state-action="retry"]');
+        await page.waitForSelector('#apList .skeleton-list', { timeout: WAIT_MS });
+        loading = await readStateBlocks(page);
+        await waitForConnected(page);
+        // The AP list the stub serves by now (a refresh check added one AP)
+        const scenario = (await stubState(session)).scenario;
+        await waitForApCount(page, expectedApRows(scenario.accessPoints, 'es', 'apGroup', scenario.wlanGroups).length);
+        await waitForLoadIdle(page);
+      } finally {
+        await configureStub(session, { delays: {} });
+      }
+      const recovered = await readShell(page);
+      const after = await readStateBlocks(page);
+      const message = es.loadError;
+      const errorActions = [['retry', es.retry], ['settings', es.settings]];
+      return verdict(
+        shell.status === message && shell.indicator.split(' ').includes('error') && shell.connect === es.connect &&
+        ['apList', 'groupList', 'networkList'].every((id) => blocks[id].state === 'loadError' && blocks[id].text === message &&
+          blocks[id].alert === true && isDeepStrictEqual(blocks[id].actions, errorActions)) &&
+        blocks.destinationList.text === message && blocks.destinationList.actions.length === 0 && settings.settingsOpen === true &&
+        ['apList', 'destinationList', 'groupList', 'networkList'].every((id) => loading[id].state === 'loading' && loading[id].skeletonRows > 0) &&
+        loading.apList.skeletonRole === 'status' && loading.apList.skeletonLabel === es.loading &&
+        recovered.status === es.connected && Object.values(after).every((block) => block.state === null),
+        { blocks, shell, settings: settings?.settingsOpen, loading, recovered, after }
+      );
+    }); // End of check "[es] initial-load error..."
 
     await check('[es] legacy controller (5.x) after a refresh: the destination list says "Grupos WLAN (heredado)", AP rows say "WLAN:", the preview asks for a "grupo WLAN"', async () => {
       await page.waitForFunction(() => document.getElementById('refreshBtn').disabled === false, null, { timeout: WAIT_MS });
@@ -3009,6 +3659,21 @@ async function runSpanishFirstRun(electronInfo) {
         { groupsTitle: nav.groupsTitle, items, networkGroups: network.sections.groups, group: details.facts.group }
       );
     }); // End of check "[es] legacy controller (5.x): the AP groups view keeps the legacy wording..."
+
+    await check('[es] read-only banner on a legacy controller: the AP groups and Wi-Fi networks views say "Controlador heredado — puedes mover AP; editar grupos y redes requiere Omada Controller 6.3 o posterior."; none on Access points', async () => {
+      await page.click('#navGroups');
+      const groups = await readNotices(page);
+      await page.click('#navNetworks');
+      const networks = await readNotices(page);
+      await page.click('#navAccessPoints');
+      const aps = await readNotices(page);
+      return verdict(
+        groups.bannerShown === true && groups.bannerReason === 'legacyController' && groups.bannerText === es.readOnlyLegacy &&
+        networks.bannerShown === true && networks.bannerReason === 'legacyController' && networks.bannerText === es.readOnlyLegacy &&
+        aps.bannerShown === false,
+        { groups, networks, aps }
+      );
+    }); // End of check "[es] read-only banner on a legacy controller"
 
     await check('[es] settings opened from the gear button: focus moves into the URL field, background inert', async () => {
       await page.click('#settingsBtn');
@@ -3065,7 +3730,8 @@ async function runSpanishFirstRun(electronInfo) {
 
 /**
  * English launch on a legacy controller, the read-only views and the AP
- * details pane in English (phase 14a): the "WLAN groups (legacy)" list with
+ * details pane in English (phase 14a; the legacy read-only banner, phase
+ * 14b): the "WLAN groups (legacy)" list with
  * English counts and no Default badge (the legacy list carries no default
  * flag), the network scopes and a network's detail, the AP details of an AP
  * whose group the legacy list does not have and of one whose group it has,
@@ -3084,6 +3750,20 @@ async function runEnglishInventoryChecks(session) {
    * @returns {string} The CSS selector.
    */
   const rowGroup = (name) => `#apList .ap-row[data-mac="${AP[name].mac}"] .ap-row-group`;
+
+  await check('[en] read-only banner on a legacy controller in English: "Legacy controller — moving APs is available; editing groups and networks requires Omada Controller 6.3 or later." on the AP groups and Wi-Fi networks views; none on Access points', async () => {
+    await page.click('#navGroups');
+    const groups = await readNotices(page);
+    await page.click('#navNetworks');
+    const networks = await readNotices(page);
+    await page.click('#navAccessPoints');
+    const aps = await readNotices(page);
+    return verdict(
+      groups.bannerShown === true && groups.bannerReason === 'legacyController' && groups.bannerText === en.readOnlyLegacy &&
+      networks.bannerShown === true && networks.bannerText === en.readOnlyLegacy && aps.bannerShown === false,
+      { groups, networks, aps }
+    );
+  }); // End of check "[en] read-only banner on a legacy controller in English"
 
   await check('[en] AP groups view on a legacy controller: "WLAN groups (legacy)" listing "4 APs · 2 networks" and "No APs · 1 network", with no Default badge (the legacy list carries no default flag)', async () => {
     await page.click('#navGroups');
@@ -3323,7 +4003,7 @@ async function runEnglishMultiSite(electronInfo) {
       return verdict(header.site === fmt(en.site, { site: secondSite.name }) && header.status === en.connected && header.host === CONTROLLER_HOST, header);
     });
 
-    await check('[en] Save with a different controller URL while connected: CONFIG_SAVE reports connectionReset, the old controller\'s lists are dropped at once (no stale rows while the auto-connect runs), the remembered site is forgotten', async () => {
+    await check('[en] Save with a different controller URL while connected: CONFIG_SAVE reports connectionReset, the old controller\'s lists are dropped at once (no stale rows: the loading skeletons while the auto-connect runs), the remembered site is forgotten', async () => {
       // Slow connect, so the state between the save and the reconnect is observable
       await configureStub(session, { delays: { 'omada:connect': 1500 } });
       try {
@@ -3341,8 +4021,8 @@ async function runEnglishMultiSite(electronInfo) {
         await page.click('#cancelSiteBtn');
         await waitForStatus(page, en.disconnected);
         return verdict(
-          rowsDuring === 0 && during.apEmpty === en.connectToSeeAPs && during.status === en.connecting &&
-          during.destinationListLabel === en.groupsTitle.apGroup && during.destinationEmpty === en.connectToSeeGroups && during.moveDisabled === true &&
+          rowsDuring === 0 && during.apEmpty === null && during.apSkeleton === true && during.status === en.connecting &&
+          during.destinationListLabel === en.groupsTitle.apGroup && during.destinationSkeleton === true && during.moveDisabled === true &&
           afterSave.connected === false && afterSave.storedSiteId === '' &&
           afterSave.scenario.config.url === 'https://other-controller.invalid:8043',
           { rowsDuring, during, connected: afterSave.connected, storedSiteId: afterSave.storedSiteId }

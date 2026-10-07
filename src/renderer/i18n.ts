@@ -168,6 +168,18 @@ export interface Translations {
   // Cross-navigation (navigation.ts): "Back to <previous item>"
   backTo: string;
   back: string;
+  // View states (docs/management-design.md §4.6; content-state.ts,
+  // notices.ts): the first-run and disconnected actions, the initial-load
+  // error's Retry, the refresh-error notice, and the read-only banner's
+  // reasons (one per ReadOnlyReason of view-state.ts)
+  configureConnection: string;
+  connectToController: string;
+  retry: string;
+  refreshFailedNotice: string;
+  readOnlyManagementNotConfigured: string;
+  readOnlyLegacyController: string;
+  // Single-pane layout (700–799 px): opens the destination picker as a pane
+  chooseDestination: string;
   // Destination pane (destination-pane.ts, move-text.ts): the group search,
   // the pinned "Silence" section, the move preview (mixed selections, the
   // networks gained / lost / unchanged) and the "Move AP" / "Move N APs"
@@ -396,6 +408,13 @@ const translations: Record<Language, Translations> = {
     apOverridesUnavailable: 'Estas son las redes de su grupo. Las redes personalizadas de este AP no se muestran (la aplicación aún no las lee): si tiene alguna en Omada, lo que emite realmente puede ser distinto.',
     backTo: 'Volver a {target}',
     back: 'Volver',
+    configureConnection: 'Configurar la conexión',
+    connectToController: 'Conectar al controlador',
+    retry: 'Reintentar',
+    refreshFailedNotice: 'No se pudieron actualizar los datos. Se muestran los de las {time}.',
+    readOnlyManagementNotConfigured: 'No hay credenciales de Open API configuradas — puedes consultar los datos. Añádelas en Ajustes → Acceso de gestión.',
+    readOnlyLegacyController: 'Controlador heredado — puedes mover AP; editar grupos y redes requiere Omada Controller 6.3 o posterior.',
+    chooseDestination: 'Elegir destino',
     destinationTitle: 'Mover los AP seleccionados',
     destinationSearch: 'Buscar grupos o redes…',
     destinationSearchLabel: 'Buscar grupos de destino o redes Wi-Fi',
@@ -609,6 +628,13 @@ const translations: Record<Language, Translations> = {
     apOverridesUnavailable: 'These are its group\'s networks. Per-AP Wi-Fi network overrides are not shown (the app does not read them yet): if this AP has any in Omada, what it actually broadcasts may differ.',
     backTo: 'Back to {target}',
     back: 'Back',
+    configureConnection: 'Configure connection',
+    connectToController: 'Connect to controller',
+    retry: 'Retry',
+    refreshFailedNotice: 'Couldn\'t refresh the data. Showing the data from {time}.',
+    readOnlyManagementNotConfigured: 'Open API credentials are not configured — viewing is available. Add them in Settings → Management access.',
+    readOnlyLegacyController: 'Legacy controller — moving APs is available; editing groups and networks requires Omada Controller 6.3 or later.',
+    chooseDestination: 'Choose destination',
     destinationTitle: 'Move selected APs',
     destinationSearch: 'Search groups or networks…',
     destinationSearchLabel: 'Search destination groups or Wi-Fi networks',

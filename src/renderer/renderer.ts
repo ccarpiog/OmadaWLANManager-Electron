@@ -9,11 +9,20 @@
 //   status.ts             header: connection status, site, controller host,
 //                         "Updated hh:mm", controller version
 //   shell.ts              sidebar navigation, view switching, total counts
+//   view-state.ts         pure §4.6/§4.7 logic: content state, read-only
+//                         reason, Escape priority, Cmd/Ctrl+F, single-pane
+//                         pane choice
+//   content-state.ts      the views' first-run / disconnected / loading /
+//                         initial-load-error blocks
+//   notices.ts            read-only banner, refresh-error notice
+//   layout.ts             single-pane layout (700–799 px): panes on stage,
+//                         drill-in Back labels, focus on resize
+//   keyboard.ts           Cmd/Ctrl+F and the Escape order
 //   toast.ts              toast notifications
 //   validation.ts         format guards (MAC, WLAN/site id, fingerprint),
 //                         controller-URL mirror of src/main/url.ts
-//   dom-helpers.ts        empty/loading blocks
-//   panels.ts             list empty/loading states, group vocabulary
+//   dom-helpers.ts        empty-state block
+//   panels.ts             re-renders every view's content, group vocabulary
 //   ap-selection.ts       pure AP filtering, range selection and counts
 //   ap-filters.ts         the AP list's current filters (from the state)
 //   ap-status.ts          AP status colour + label
@@ -55,15 +64,18 @@ import {
   selectAllFilteredAps,
 } from './ap-list';
 import { applyTranslations } from './apply-translations';
-import { connect, refreshData, toggleConnection } from './connection';
+import { connect, refreshData, retryLoad, toggleConnection } from './connection';
 import {
+  closeDestinationPane,
   handleDestinationChange,
   handleDestinationSearchInput,
   handleDestinationSearchKeydown,
   isDestinationRadio,
+  openDestinationPane,
   selectDestinationForMove,
 } from './destination-pane';
 import {
+  apDetailsBackBtn,
   apFilterInput,
   apGroupFilterSelect,
   apList,
@@ -76,13 +88,17 @@ import {
   closeSettingsBtn,
   confirmCertResetBtn,
   connectBtn,
+  destinationBackBtn,
   destinationList,
   destinationSearchInput,
+  groupDetailBackBtn,
   groupList,
   groupSearchInput,
   moveBtn,
+  networkDetailBackBtn,
   networkList,
   networkSearchInput,
+  openDestinationBtn,
   passwordInput,
   refreshBtn,
   resetCertBtn,
@@ -96,15 +112,19 @@ import {
   viewNav,
 } from './elements';
 import {
+  closeGroupDetailPane,
   handleGroupListClick,
   handleGroupListKeydown,
   handleGroupSearchInput,
   handleGroupSearchKeydown,
 } from './groups-view';
 import { setLanguage, t } from './i18n';
+import { handleGlobalKeydown } from './keyboard';
+import { installResponsiveLayout } from './layout';
 import { startMove } from './move-flow';
 import { goBack, handleCrossLinkClick, navigateToView } from './navigation';
 import {
+  closeNetworkDetailPane,
   handleNetworkListClick,
   handleNetworkListKeydown,
   handleNetworkSearchInput,
@@ -150,6 +170,36 @@ backBtn.addEventListener('click', goBack);
 // AP details pane (opened by a row click, see ap-list.ts): Close brings the
 // destination pane back, focus returns to the AP's checkbox
 closeApDetailsBtn.addEventListener('click', () => closeApDetails(true));
+
+// §4.6 state actions inside the views (content-state.ts, notices.ts):
+// "Configure connection" and Settings open the settings modal, "Connect to
+// controller" connects, Retry reloads (or reconnects)
+viewArea.addEventListener('click', (e) => {
+  const button = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('[data-state-action]') : null;
+  switch (button?.dataset.stateAction) {
+    case 'configure':
+    case 'settings':
+      openSettings();
+      break;
+    case 'connect':
+      connect();
+      break;
+    case 'retry':
+      retryLoad();
+      break;
+    default:
+      break;
+  }
+}); // End of the state-action click handler
+
+// Single-pane layout (700–799 px, layout.ts): "Choose destination" opens the
+// destination picker in the AP list's place; each drill-in pane's Back
+// returns to its list
+openDestinationBtn.addEventListener('click', openDestinationPane);
+destinationBackBtn.addEventListener('click', closeDestinationPane);
+apDetailsBackBtn.addEventListener('click', () => closeApDetails(true));
+groupDetailBackBtn.addEventListener('click', closeGroupDetailPane);
+networkDetailBackBtn.addEventListener('click', closeNetworkDetailPane);
 
 // AP groups and Wi-Fi networks views: their searches (Escape clears) and
 // master lists (click selects; arrows, Home and End move focus)
@@ -217,15 +267,12 @@ settingsModal.addEventListener('click', (e) => {
   if (e.target === settingsModal) closeSettings();
 });
 
-// Close the settings modal on Escape key. The move, site-selection and
-// certificate modals are NOT handled here: each installs its own Escape
-// listener that routes through its cancel path, so its pending promise is
-// always resolved (and they never open on top of the settings modal).
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    closeSettings();
-  }
-});
+// App-wide keys (keyboard.ts): Cmd/Ctrl+F focuses the current view's
+// search; Escape clears the search, else exits edit mode, else closes the
+// top dialog (the settings modal here; the move, site-selection and
+// certificate modals install their own Escape listeners that route through
+// their cancel paths, so their pending promises always resolve)
+document.addEventListener('keydown', handleGlobalKeydown);
 
 // Enter submits the settings form from any of its text fields (not only the
 // password one)
@@ -267,9 +314,11 @@ async function init(): Promise<void> {
     console.error('Error loading configuration during init:', error);
   }
 
-  // Before any config exists, the empty states show a "configure the
-  // connection" hint (see showEmptyStates())
+  // Before any config exists, the views show the first-run state with its
+  // one "Configure connection" action (content-state.ts), and the header's
+  // Connect stays disabled until a controller is configured
   state.hasStoredConfig = Boolean(config?.url);
+  connectBtn.disabled = !state.hasStoredConfig;
 
   // Set language from config (default when the config could not be loaded)
   setLanguage(config?.language || 'es');
@@ -297,6 +346,7 @@ async function init(): Promise<void> {
 
 // Start the app
 applyPlatformClass();
+installResponsiveLayout();
 init().catch((error) => {
   // Last-resort guard: whatever happens, never leave the UI hidden behind
   // the pre-init class

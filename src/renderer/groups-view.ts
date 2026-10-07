@@ -8,12 +8,16 @@
 // bound to it (cross-links to the network). No rename / new / delete
 // controls (phase 16) and no per-band capacity (not loaded). Legacy
 // controllers keep the "WLAN groups (legacy)" wording through tGroup().
-// Pure logic: inventory-model.ts.
+// Until data is loaded the list shows the §4.6 state (content-state.ts). In
+// the single-pane layout (700–799 px) picking a group drills into its
+// detail, whose Back returns to the list (layout.ts). Pure logic:
+// inventory-model.ts.
 // ============================================================================
 
 import type { WlanGroup } from '../shared/types';
 import { createStatusElement } from './ap-status';
-import { createEmptyState, createLoadingState } from './dom-helpers';
+import { createStateBlock, currentContentState } from './content-state';
+import { createEmptyState } from './dom-helpers';
 import { groupDetail, groupList, groupListSummary, groupSearchInput } from './elements';
 import { t, tFormat, tGroup } from './i18n';
 import {
@@ -42,6 +46,7 @@ import {
   handleMasterListKeydown,
   setLiveText,
 } from './inventory-ui';
+import { applyPaneLayout, isSinglePane } from './layout';
 import { networkCountText } from './move-text';
 import { state } from './state';
 
@@ -113,17 +118,18 @@ function createGroupItem(row: GroupRow): HTMLLIElement {
 /**
  * Renders the master list for the current data and search, and the aria-live
  * results summary ("Showing N of M" while a search narrows the list). Before
- * any data is loaded it shows the loading spinner (first load) or the
- * connect / configure hint. Keyboard focus on an item survives the re-render.
+ * any data is loaded it shows the view's §4.6 state (first run,
+ * disconnected, loading skeleton or initial-load error, with its action).
+ * Keyboard focus on an item survives the re-render.
  */
 export function renderGroupList(): void {
   const active = document.activeElement;
   const focusedId = active instanceof HTMLButtonElement && groupList.contains(active) ? active.dataset.groupId ?? null : null;
   groupList.setAttribute('aria-label', tGroup('groupsTitle'));
 
-  if (state.lastUpdatedAt === null) {
-    const hint = state.hasStoredConfig ? t('connectToSeeGroups') : t('configureHint');
-    groupList.replaceChildren(state.isLoadingData ? createLoadingState() : createEmptyState(hint));
+  const contentState = currentContentState();
+  if (contentState !== 'ready') {
+    groupList.replaceChildren(createStateBlock('groups', contentState));
     setLiveText(groupListSummary, '');
     return;
   }
@@ -192,14 +198,15 @@ function createNetworksSection(row: GroupRow): HTMLElement {
 /**
  * Renders the selected group's detail (a prompt while none is selected;
  * nothing before data is loaded). A selection whose group is gone is
- * cleared. Keyboard focus on a cross-link or the heading survives the
- * re-render.
+ * cleared (the single-pane layout then shows the list again). Keyboard
+ * focus on a cross-link or the heading survives the re-render.
  */
 export function renderGroupDetail(): void {
   const group = selectedGroup();
   if (group === null) {
     state.selectedGroupId = null;
   }
+  applyPaneLayout();
   const focusLink = focusedCrossLink(groupDetail);
   const headingFocused = document.activeElement?.id === HEADING_ID;
 
@@ -256,16 +263,41 @@ export function selectGroup(groupId: string | null): void {
 } // End of function selectGroup()
 
 /**
- * Delegated click handler of the master list: a click on an item selects
- * its group (it stays the list's Tab stop).
+ * Delegated click handler of the master list (Enter and Space too: the
+ * items are buttons): a click on an item selects its group, and it stays
+ * the list's Tab stop. In the single-pane layout the group's detail
+ * replaces the list, with focus on its heading.
  * @param {MouseEvent} e - The click event.
  */
 export function handleGroupListClick(e: MouseEvent): void {
   const item = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('.master-item') : null;
   if (!item || !groupList.contains(item) || item.dataset.groupId === undefined) return;
+  state.groupDetailOpen = true;
   selectGroup(item.dataset.groupId);
-  focusMasterItem(groupList, item);
-}
+  if (isSinglePane()) {
+    for (const other of groupList.querySelectorAll<HTMLButtonElement>('.master-item')) {
+      other.tabIndex = other === item ? 0 : -1;
+    }
+    focusGroupDetailHeading();
+  } else {
+    focusMasterItem(groupList, item);
+  }
+} // End of function handleGroupListClick()
+
+/**
+ * Single-pane layout: the detail's Back — the list comes back with focus on
+ * the selected group (still selected), else on the search field.
+ */
+export function closeGroupDetailPane(): void {
+  state.groupDetailOpen = false;
+  applyPaneLayout();
+  const item = groupList.querySelector<HTMLButtonElement>('.master-item[aria-current="true"]');
+  if (item) {
+    focusMasterItem(groupList, item);
+  } else {
+    groupSearchInput.focus();
+  }
+} // End of function closeGroupDetailPane()
 
 /**
  * Keydown handler of the master list (arrow keys, Home, End).

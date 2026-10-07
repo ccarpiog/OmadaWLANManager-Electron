@@ -12,6 +12,7 @@ import {
   certResetConfirm,
   certResetMessage,
   confirmCertResetBtn,
+  connectBtn,
   languageSelect,
   passwordInput,
   resetCertBtn,
@@ -277,9 +278,10 @@ export async function saveSettings(): Promise<void> {
     const result = await window.omadaAPI.saveConfig(payload);
 
     if (result.success) {
-      // A usable configuration now exists: the empty states can suggest
-      // connecting instead of configuring
+      // A usable configuration now exists: the views can offer connecting
+      // instead of configuring, and the header's Connect works
       state.hasStoredConfig = true;
+      connectBtn.disabled = false;
 
       // Auto-connect only when the save's session is still current: a save
       // that completes after a disconnect (or after a newer operation

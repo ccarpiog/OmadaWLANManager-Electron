@@ -5,7 +5,7 @@
 
 import type { AccessPoint, GroupModel, Language, WlanGroup } from '../shared/types';
 import { GROUP_FILTER_ALL, STATUS_FILTER_ALL } from './ap-selection';
-import { apList, destinationList, groupList, networkList, refreshBtn } from './elements';
+import { apDetailsContent, apList, destinationList, groupDetail, groupList, networkDetail, networkList, refreshBtn } from './elements';
 import type { AppView, NavLocation } from './nav-history';
 
 // The three views of the app shell (docs/management-design.md §4.2), defined
@@ -65,6 +65,14 @@ export interface RendererState {
   // view's own search text (network and group names)
   selectedNetworkName: string | null;
   networkSearchText: string;
+  // Single-pane layout (700–799 px windows, layout.ts): whether the
+  // destination picker of the Access points view, the AP groups view's
+  // detail and the Wi-Fi networks view's detail were drilled into (each
+  // replaces its list until its "Back" is pressed). Ignored by the wider
+  // layouts, which show list and detail side by side
+  destinationPaneOpen: boolean;
+  groupDetailOpen: boolean;
+  networkDetailOpen: boolean;
   // Cross-navigation "Back" history, oldest first (navigation.ts): pushed by
   // following a link to an AP, a group or a network, popped by "Back to …",
   // emptied by the sidebar navigation and by a disconnect
@@ -79,9 +87,18 @@ export interface RendererState {
   siteName: string | null;
   // True while loadData() is fetching (drives the Refresh button/spinners)
   isLoadingData: boolean;
-  // True when a controller URL is stored; before first configuration the empty
-  // states show a "configure the connection" hint instead of "connect to see"
+  // True when a controller URL is stored; before first configuration the
+  // views show the first-run state ("Configure connection") instead of the
+  // disconnected one ("Connect to controller") — see view-state.ts
   hasStoredConfig: boolean;
+  // Localized message of the last failed connection or first data load, shown
+  // by every view as a persistent inline error with Retry and Settings; null
+  // otherwise. Cleared by a new attempt, a successful load or a disconnect
+  loadError: string | null;
+  // True after a refresh (or the reload after a move) failed: the data on
+  // screen is stale, which the refresh notice and the header state with the
+  // last-updated time. Cleared by the next successful load or a disconnect
+  refreshError: boolean;
 
   // Monotonic token identifying the current connection session. It is bumped by
   // invalidateSession() on every connect and disconnect; async operations
@@ -138,12 +155,17 @@ export const state: RendererState = {
   groupSearchText: '',
   selectedNetworkName: null,
   networkSearchText: '',
+  destinationPaneOpen: false,
+  groupDetailOpen: false,
+  networkDetailOpen: false,
   navHistory: [],
   lastUpdatedAt: null,
   controllerHost: null,
   siteName: null,
   isLoadingData: false,
   hasStoredConfig: false,
+  loadError: null,
+  refreshError: false,
   sessionGeneration: 0,
   isConnecting: false,
   isDisconnecting: false,
@@ -175,13 +197,14 @@ export function isOperationInProgress(): boolean {
 }
 
 /**
- * Marks the AP list, the destination list and the AP groups and Wi-Fi
- * networks lists as refreshing (or not): the loaded rows stay on screen,
- * dimmed and flagged aria-busy, while a refresh is in flight.
+ * Marks the content of the three views as refreshing (or not): the AP list,
+ * the destination list, the AP groups and Wi-Fi networks lists and the
+ * detail panes (AP details, group, network). The loaded data stays on
+ * screen, dimmed and flagged aria-busy, while a refresh is in flight.
  * @param {boolean} refreshing - True while a refresh is in flight.
  */
 export function setListsRefreshing(refreshing: boolean): void {
-  for (const list of [apList, destinationList, groupList, networkList]) {
+  for (const list of [apList, destinationList, groupList, networkList, apDetailsContent, groupDetail, networkDetail]) {
     list.classList.toggle('is-refreshing', refreshing);
     if (refreshing) {
       list.setAttribute('aria-busy', 'true');

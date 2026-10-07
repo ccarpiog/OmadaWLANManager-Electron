@@ -20,7 +20,7 @@ import { visibleApMacs } from './ap-filters';
 import { renderApList } from './ap-list';
 import { selectedAccessPoints } from './ap-selection';
 import { loadData } from './connection';
-import { currentMovePlan, focusDestinationRadio, renderDestinationPane, renderMovePreview } from './destination-pane';
+import { currentMovePlan, focusDestinationRadio, hideDestinationPane, renderDestinationPane, renderMovePreview } from './destination-pane';
 import { apFilterInput, apList } from './elements';
 import { t } from './i18n';
 import { openMoveDialog, type MoveDialog } from './move-dialog';
@@ -139,11 +139,14 @@ function prepareRetry(retryMacs: readonly string[], destination: WlanGroup): Mov
 
 /**
  * Returns keyboard focus to the page after the dialog closed: to the element
- * that started the flow when it is still usable (the move button stays
- * enabled after a partial failure), else to the same group's radio when a
- * radio started it (the reload re-rendered it), else to the AP list's Tab
- * stop (after a full success the move button is disabled), else to the AP
- * search field.
+ * that started the flow when it is still usable and shown (the move button
+ * stays enabled after a partial failure), else to the same group's radio
+ * when a radio started it (the reload re-rendered it), else to the AP list's
+ * Tab stop (after a full success the move button is disabled), else to the
+ * AP search field. In the single-pane layout the destination picker hides
+ * the AP list, so before focus goes to the list the picker is closed the
+ * way its Back closes it: the list comes back (showing the moved APs in
+ * their new group) and focus never lands in a hidden pane.
  * @param {HTMLElement | null} opener - The element focused when the flow started.
  */
 function restoreFocus(opener: HTMLElement | null): void {
@@ -153,6 +156,9 @@ function restoreFocus(opener: HTMLElement | null): void {
   }
   if (opener instanceof HTMLInputElement && opener.classList.contains('destination-radio') && focusDestinationRadio(opener.value)) {
     return;
+  }
+  if (state.destinationPaneOpen) {
+    hideDestinationPane();
   }
   const tabStop = apList.querySelector<HTMLInputElement>('.ap-checkbox[tabindex="0"]');
   (tabStop ?? apFilterInput).focus();

@@ -9,6 +9,9 @@
 // destination pane's move preview (destination-pane.ts). Only the native
 // checkbox toggles the selection: a click anywhere else on a row (or Enter
 // on its checkbox) opens the AP details pane (ap-details.ts, spec §4.3).
+// Until data is loaded the list shows the view's §4.6 state instead
+// (content-state.ts); the single-pane layout's "Choose destination" button
+// sits next to the selection summary.
 // ============================================================================
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
@@ -29,6 +32,7 @@ import {
 import { openApDetails } from './ap-details';
 import { focusApCheckbox } from './ap-focus';
 import { createStatusElement, getApStatus } from './ap-status';
+import { createStateBlock, currentContentState } from './content-state';
 import { renderMovePreview } from './destination-pane';
 import { createEmptyState } from './dom-helpers';
 import {
@@ -39,6 +43,7 @@ import {
   apSelectionToolbar,
   apStatusFilterSelect,
   clearApSelectionBtn,
+  openDestinationBtn,
   selectAllApsBtn,
 } from './elements';
 import { t, tFormat, tGroup } from './i18n';
@@ -113,6 +118,18 @@ export function clearApFilters(): void {
   renderApList();
   apFilterInput.focus();
 } // End of function clearApFilters()
+
+/**
+ * Empties the search text only (the status and group filters stay), then
+ * re-renders the list and returns focus to the search field (Escape,
+ * keyboard.ts).
+ */
+export function clearApSearch(): void {
+  state.apFilterText = '';
+  apFilterInput.value = '';
+  renderApList();
+  apFilterInput.focus();
+}
 
 // ============================================================================
 // Rows
@@ -263,16 +280,22 @@ function applyApRovingTabindex(): void {
 /**
  * Renders the access-point list for the current filters using DOM APIs,
  * plus the selection controls and summary, and refreshes the move preview
- * (which states how many moving APs the filters hide). When a row's checkbox
- * had focus, focus returns to the same AP's checkbox if it is still visible
- * (re-rendering replaces every node).
+ * (which states how many moving APs the filters hide). Until data is
+ * loaded, the list shows the view's §4.6 state (first run, disconnected,
+ * loading skeleton or initial-load error, with its action). With data, "no
+ * access points" and "no results" (with Clear filters) are distinct. When a
+ * row's checkbox had focus, focus returns to the same AP's checkbox if it is
+ * still visible (re-rendering replaces every node).
  */
 export function renderApList(): void {
   const active = document.activeElement;
   const focusedMac = active instanceof HTMLInputElement && apList.contains(active) ? active.dataset.mac ?? null : null;
 
+  const contentState = currentContentState();
   const visible = filterAccessPoints(state.accessPoints, currentApFilters());
-  if (state.accessPoints.length === 0) {
+  if (contentState !== 'ready') {
+    apList.replaceChildren(createStateBlock('accessPoints', contentState));
+  } else if (state.accessPoints.length === 0) {
     apList.replaceChildren(createEmptyState(t('noAccessPoints')));
   } else if (visible.length === 0) {
     apList.replaceChildren(createNoResultsState());
@@ -302,7 +325,8 @@ export function renderApList(): void {
  * [filtered] APs" (hidden when no row is visible), "Clear selection", and the
  * selection summary, e.g. "3 selected (1 hidden by filters)". The summary is
  * an aria-live region, so its text is written only when it changes. Without
- * loaded APs the toolbar is hidden and the summary empty.
+ * loaded APs the toolbar is hidden and the summary empty. The single-pane
+ * layout's "Choose destination" is offered once data is loaded.
  */
 export function renderApSelectionControls(): void {
   const filters = currentApFilters();
@@ -317,6 +341,9 @@ export function renderApSelectionControls(): void {
   }
   selectAllApsBtn.hidden = visible.length === 0;
   clearApSelectionBtn.textContent = t('clearSelection');
+  // Single-pane layout only (styles.css): opens the destination picker
+  openDestinationBtn.textContent = t('chooseDestination');
+  openDestinationBtn.hidden = state.lastUpdatedAt === null;
 
   if (state.accessPoints.length === 0) {
     apSelectionToolbar.hidden = true;

@@ -54,7 +54,7 @@ npm run dev
 ## Usage
 
 1. Launch the application
-2. Click **Settings** (gear icon, at the bottom of the sidebar) to configure your Omada Controller connection:
+2. Click **Settings** (gear icon, at the bottom of the sidebar), or **Configure connection** on first launch, to configure your Omada Controller connection:
    - **URL**: Your controller URL (e.g., `https://192.168.1.1:8043`)
    - **Username**: Your Omada Controller username
    - **Password**: Your Omada Controller password
@@ -66,7 +66,9 @@ npm run dev
    Shift+arrow keys select a range). Access points stay selected while a search or
    filter hides them; the count under the list says how many are hidden
 5. Pick the destination in the **Move selected APs** pane next to the list (one
-   option per AP group on Omada 6.3+, per WLAN group on older controllers). Its
+   option per AP group on Omada 6.3+, per WLAN group on older controllers; in a
+   window narrower than 800 px, **Choose destination** opens it in the list's
+   place, and its **←** returns to the list). Its
    search matches group names and Wi-Fi network names; groups without networks
    are listed under **Silence**. The pane previews the networks the selected
    access points gain, lose and keep, says how many are already in that group
@@ -92,7 +94,19 @@ npm run dev
    M APs" when some access points' groups cannot be identified). Clicking a
    group, network or access point name opens it in its view; **Back to …** returns
    to where you were. Security, bands and whether a network is enabled are not
-   shown: they need management access, which the app does not use yet
+   shown: they need management access, which the app does not use yet. A banner
+   on both views says why they are read-only: Open API credentials are not
+   configured (Omada 6.3+), or the controller is older than 6.3
+9. **Cmd+F** (macOS) / **Ctrl+F** focuses the current view's search; **Escape**
+   clears the search, and otherwise closes the open dialog. If the connection or
+   its first data load fails, each view shows the error with **Retry** and
+   **Settings**; if a refresh fails, the data stays on screen with a notice
+   giving the time it is from, and **Retry**
+10. The window adapts to its width (minimum 700×500): from 1000 px the sidebar
+    shows labels, from 800 px only icons and counts (labels as tooltips), and
+    below 800 px the views switch from a bar at the top and show one pane at a
+    time (the move pane, AP details and a group's or network's details open in
+    the list's place, each with **←** back to the list)
 
 ## Controller versions
 

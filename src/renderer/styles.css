@@ -164,8 +164,21 @@ body.platform-darwin .title-bar {
   color: var(--accent-color);
 }
 
-/* The 700-799 px window widths drop the version first (it stays in the
-   tooltip-free header of wider windows; phase 14b adds the full breakpoints) */
+/* After a failed refresh the time is stale: an amber dot (the refresh notice
+   and the tooltip say it in words) */
+.last-updated.is-stale::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--warning-color);
+  vertical-align: middle;
+}
+
+/* The 700-799 px window widths drop the version first (the responsive
+   layout itself is at the end of this file) */
 @media (max-width: 799px) {
   .controller-version {
     display: none;
@@ -307,7 +320,7 @@ body.platform-darwin .title-bar {
   display: flex;
   flex-direction: column;
   flex: none;
-  width: 188px;
+  width: 212px;
   padding: 12px 8px;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
@@ -323,6 +336,7 @@ body.platform-darwin .title-bar {
 
 /* Sidebar entries: native buttons with a 40 px target */
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -387,7 +401,7 @@ body.platform-darwin .title-bar {
   color: var(--text-secondary);
 }
 
-.nav-settings svg {
+.nav-icon {
   flex: none;
 }
 
@@ -1002,6 +1016,67 @@ body.platform-darwin .title-bar {
 
 .empty-state:has(.btn) {
   flex-direction: column;
+}
+
+/* §4.6 state blocks (content-state.ts): first run, disconnected and the
+   initial-load error, with their action(s) */
+.state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.state-actions .btn {
+  margin-top: 0;
+  min-height: 36px;
+}
+
+/* The initial-load error: the message in the primary colour with a red bar */
+.empty-state.is-error p {
+  max-width: 44ch;
+  padding-left: 8px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: left;
+  border-left: 3px solid var(--error-color);
+  overflow-wrap: anywhere;
+}
+
+/* Initial loading: skeleton rows in the list's place */
+.skeleton-list {
+  display: block;
+  padding: 4px;
+}
+
+.skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+.skeleton-bar {
+  display: block;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--bg-tertiary);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.skeleton-bar.is-title {
+  width: 55%;
+}
+
+.skeleton-bar.is-detail {
+  width: 80%;
+  height: 8px;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
 
 .item-status {
@@ -1748,9 +1823,263 @@ body.platform-darwin .title-bar {
   background: var(--text-muted);
 }
 
+/* Notices above the views (notices.ts): the read-only banner of the AP
+   groups and Wi-Fi networks views, and the refresh-error notice */
+.view-notice {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 16px 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+}
+
+.read-only-banner {
+  background: var(--accent-soft);
+}
+
+.notice-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--accent-color);
+}
+
+.refresh-notice {
+  align-items: center;
+  background: rgba(255, 149, 0, 0.14);
+  border-left: 3px solid var(--warning-color);
+}
+
+.notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Retry right after the text (not under the toasts of the top-right corner) */
+.refresh-notice .notice-text {
+  flex: 0 1 auto;
+}
+
+.notice-action {
+  flex: none;
+  min-height: 32px;
+}
+
+/* Access points panel footer: the selection summary and, in the single-pane
+   layout, "Choose destination" */
+.ap-panel-footer {
+  flex: none;
+}
+
+/* Back of a drill-in pane (single-pane layout only) */
+.drill-back-bar {
+  flex: none;
+  padding: 6px 12px 0;
+}
+
+.drill-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 32px;
+  font-size: 13px;
+}
+
+.drill-back-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============================================================================
+   Responsive layout (docs/management-design.md §4.7; layout.ts keeps the
+   single-pane form in step with the state):
+   - 1000 px and wider: the full sidebar, list and detail side by side (the
+     rules above);
+   - 800-999 px: the compact sidebar (icons and counts; the labels stay for
+     assistive technology and as tooltips), still side by side;
+   - 700-799 px (700 is the minimum window): a top view switcher and one
+     pane at a time; the panes that are not shown are "off stage" (hidden
+     with visibility, so their scroll offsets survive), and the drill-in
+     panes show their Back.
+   ============================================================================ */
+
+/* The single-pane controls ("Choose destination", the drill-in Backs) exist
+   only below 800 px */
+@media (min-width: 800px) {
+  .drill-only {
+    display: none !important;
+  }
+}
+
+@media (max-width: 999px) {
+  .sidebar {
+    width: 76px;
+    padding: 12px 6px;
+  }
+
+  .nav-item {
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    min-height: 52px;
+    padding: 6px 4px;
+    text-align: center;
+  }
+
+  /* Visually hidden, still the button's accessible name */
+  .nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .nav-count {
+    min-width: 0;
+    padding: 0 5px;
+    font-size: 11px;
+    line-height: 16px;
+  }
+}
+
+@media (max-width: 799px) {
+  /* Top view switcher: the sidebar becomes a row above the views */
+  .app-body {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    width: auto;
+    padding: 4px 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    overflow: visible;
+  }
+
+  .nav-list {
+    flex-direction: row;
+    flex: 1;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .nav-list > li {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .nav-item {
+    flex-direction: row;
+    gap: 6px;
+    min-height: 40px;
+    padding: 6px 8px;
+  }
+
+  .nav-list .nav-label {
+    position: static;
+    flex: 0 1 auto;
+    width: auto;
+    height: auto;
+    margin: 0;
+    clip-path: none;
+    text-overflow: ellipsis;
+  }
+
+  .sidebar-footer {
+    flex: none;
+    margin-top: 0;
+    padding-top: 0;
+  }
+
+  /* Settings: the gear alone (its label stays visually hidden) */
+  .nav-settings {
+    width: 44px;
+  }
+
+  .view-notice {
+    margin: 6px 8px 0;
+  }
+
+  .back-bar {
+    padding: 6px 8px 0;
+  }
+
+  /* One pane at a time: every pane in the same grid cell, the ones not
+     shown off stage */
+  .main-content,
+  .inventory-content {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    padding: 8px;
+  }
+
+  .main-content > .panel {
+    grid-area: 1 / 1;
+  }
+
+  .main-content > .panel.is-offstage {
+    visibility: hidden;
+  }
+
+  /* Short heights: tighter titles and move bar keep the lists usable */
+  .panel-title {
+    padding: 8px 12px;
+  }
+
+  .drill-back-bar {
+    padding: 4px 8px 0;
+  }
+
+  .move-summary {
+    max-height: 24vh;
+  }
+
+  .move-actions {
+    padding: 8px 12px;
+  }
+
+  /* The AP details' Back replaces its "Close details" */
+  .ap-details-panel .panel-header-action {
+    display: none;
+  }
+
+  .ap-panel-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-right: 12px;
+    border-top: 1px solid var(--border-color);
+  }
+
+  .ap-panel-footer .selection-summary {
+    flex: 1;
+    min-width: 0;
+    border-top: none;
+  }
+
+  .drill-open {
+    flex: none;
+    min-height: 40px;
+    margin: 8px 0 8px auto;
+  }
+} /* End of the single-pane layout (700-799 px) */
+
 /* Reduced motion: the shell's own transitions (sidebar entries, AP rows,
    master-list items, destination options, the refreshing dim) apply
-   instantly */
+   instantly, and the loading skeleton does not pulse */
 @media (prefers-reduced-motion: reduce) {
   .nav-item,
   .ap-row,
@@ -1758,5 +2087,9 @@ body.platform-darwin .title-bar {
   .destination-option,
   .panel-content.is-refreshing {
     transition: none;
+  }
+
+  .skeleton-bar {
+    animation: none;
   }
 }

@@ -11,14 +11,25 @@
 // the checked radio, the arrow keys move and check. A group whose name
 // another group shares (ambiguous: APs name their group, so its members
 // cannot be identified) stays listed with its radio disabled and the reason
-// shown. Pure logic: move-plan.ts.
+// shown. Until data is loaded, the list shows the §4.6 state as text
+// (content-state.ts). In the single-pane layout (700–799 px) the pane is a
+// drill-in pane: "Choose destination" opens it in the AP list's place, its
+// Back returns to the list (layout.ts). Pure logic: move-plan.ts.
 // ============================================================================
 
 import type { WlanGroup } from '../shared/types';
 import { visibleApMacs } from './ap-filters';
 import { selectedAccessPoints } from './ap-selection';
+import { createStateBlock, currentContentState } from './content-state';
 import { createEmptyState } from './dom-helpers';
-import { destinationList, destinationSearchInput, moveBtn, movePreview, moveStatus } from './elements';
+import {
+  destinationList,
+  destinationSearchInput,
+  moveBtn,
+  movePreview,
+  moveStatus,
+  openDestinationBtn,
+} from './elements';
 import { t, tFormat, tGroup } from './i18n';
 import {
   countHiddenAps,
@@ -30,6 +41,7 @@ import {
   type MovePlan,
 } from './move-plan';
 import { destinationDetailText, hiddenApsNote, moveActionLabel, moveStatusText, networkDiffRows, unknownSourcesNote } from './move-text';
+import { applyPaneLayout } from './layout';
 import { isOperationInProgress, state } from './state';
 
 // The name every destination radio shares: one native radio group
@@ -157,13 +169,19 @@ function createNoResultsState(): HTMLElement {
  * networks first, then the empty ones under the "Silence" heading (a
  * labelled group of its own; every radio still belongs to the one native
  * radio group). A destination the search hides stays checked in the state
- * (the preview keeps naming it). When a radio had focus, focus returns to the
- * same group's radio if it is still rendered.
+ * (the preview keeps naming it). Until data is loaded, the §4.6 state as
+ * text (the AP list next to it carries the action). When a radio had focus,
+ * focus returns to the same group's radio if it is still rendered.
  */
 export function renderDestinationList(): void {
   const active = document.activeElement;
   const focusedWlanId = isDestinationRadio(active) ? active.value : null;
 
+  const contentState = currentContentState();
+  if (contentState !== 'ready') {
+    destinationList.replaceChildren(createStateBlock('destination', contentState));
+    return;
+  }
   if (state.wlanGroups.length === 0) {
     destinationList.replaceChildren(createEmptyState(tGroup('noGroups')));
     return;
@@ -385,4 +403,40 @@ export function handleDestinationSearchKeydown(e: KeyboardEvent): void {
     e.preventDefault();
     clearDestinationSearch();
   }
+}
+
+/**
+ * Single-pane layout: opens the destination picker in the AP list's place
+ * ("Choose destination") and moves focus into it — onto the checked radio,
+ * else the first enabled one, else the search field.
+ */
+export function openDestinationPane(): void {
+  state.destinationPaneOpen = true;
+  applyPaneLayout();
+  const radios = Array.from(destinationList.querySelectorAll<HTMLInputElement>('.destination-radio'));
+  const target = radios.find(radio => radio.checked) ?? radios.find(radio => !radio.disabled);
+  if (target) {
+    target.focus();
+  } else {
+    destinationSearchInput.focus();
+  }
+} // End of function openDestinationPane()
+
+/**
+ * Single-pane layout: takes the destination picker off stage and brings the
+ * AP list back, leaving keyboard focus to the caller (which must move it
+ * into the list: the picker is hidden now).
+ */
+export function hideDestinationPane(): void {
+  state.destinationPaneOpen = false;
+  applyPaneLayout();
+}
+
+/**
+ * Single-pane layout: closes the destination picker (its Back) — the AP
+ * list comes back with focus on "Choose destination".
+ */
+export function closeDestinationPane(): void {
+  hideDestinationPane();
+  openDestinationBtn.focus();
 }

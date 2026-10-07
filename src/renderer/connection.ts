@@ -1,12 +1,15 @@
 // ============================================================================
 // Connection: connect/disconnect (including the multi-site selection step and
-// the certificate trust-on-first-use step), data loading, and refresh. Every
-// async path is serialized through the operation flags and generation-checked
-// after each await (see state.ts).
+// the certificate trust-on-first-use step), data loading, refresh, and the
+// Retry of the §4.6 error states. A failed connection or first data load
+// leaves its message in state.loadError (the views' persistent inline error);
+// a failed reload marks the data on screen as stale (state.refreshError).
+// Every async path is serialized through the operation flags and
+// generation-checked after each await (see state.ts).
 // ============================================================================
 
 import type { CertificateActionResult, ConnectionResult, SiteInfo } from '../shared/types';
-import { renderApFilterOptions, renderApList, renderApSelectionControls } from './ap-list';
+import { renderApFilterOptions, renderApList } from './ap-list';
 import { GROUP_FILTER_ALL, pruneSelection, sanitizeClientCount, STATUS_FILTER_ALL } from './ap-selection';
 import { showCertificateChanged, showCertificateTrust } from './cert-modal';
 import { renderDestinationList, renderMovePreview } from './destination-pane';
@@ -14,7 +17,8 @@ import { apFilterInput, connectBtn, destinationSearchInput, refreshBtn, settings
 import { t } from './i18n';
 import { isAmbiguousGroup } from './move-plan';
 import { renderInventoryViews, resetInventoryViews } from './navigation';
-import { applyGroupVocabulary, showEmptyStates, showLoadingStates } from './panels';
+import { renderNotices } from './notices';
+import { applyGroupVocabulary, renderContentViews } from './panels';
 import { renderNavCounts } from './shell';
 import { showSiteSelection } from './site-modal';
 import { invalidateSession, isOperationInProgress, setListsRefreshing, state } from './state';
@@ -80,12 +84,16 @@ export async function connect(): Promise<void> {
   // in-flight serialization)
   const generation = state.sessionGeneration;
   state.isConnecting = true;
+  // A new attempt replaces the previous error with the loading skeletons
+  state.loadError = null;
+  state.refreshError = false;
   setStatus('connecting');
   connectBtn.disabled = true;
   // Settings must stay closed while a connection is in flight: a settings
   // save mid-connect could start a competing attempt (see openSettings())
   settingsBtn.disabled = true;
   connectBtn.textContent = t('connecting');
+  renderContentViews();
 
   try {
     const result = await window.omadaAPI.connect();
@@ -108,6 +116,11 @@ export async function connect(): Promise<void> {
     if (generation === state.sessionGeneration) {
       connectBtn.disabled = false;
       settingsBtn.disabled = false;
+      // Without data the views still show the loading state of the attempt:
+      // bring them to its outcome (disconnected or the inline error)
+      if (state.lastUpdatedAt === null) {
+        renderContentViews();
+      }
     }
   }
 } // End of function connect()
@@ -214,9 +227,11 @@ async function runCertificateChanged(rawCertificate: unknown, generation: number
 
 /**
  * Commits the connected UI (status text, button label) and loads the
- * controller data. Part of connect(): errors thrown here — including by
- * loadData() — are handled by connect()'s catch so the whole UI state stays
- * consistent. Every post-await commit is generation-checked.
+ * controller data. Part of connect(): a failed first load aborts the
+ * connection with the load-error message (the views show it inline with
+ * Retry and Settings); other errors thrown here are handled by connect()'s
+ * catch so the whole UI state stays consistent. Every post-await commit is
+ * generation-checked.
  * @param {number} generation - The session generation captured by connect().
  * @returns {Promise<void>}
  */
@@ -226,19 +241,29 @@ async function commitConnectedUi(generation: number): Promise<void> {
   if (generation !== state.sessionGeneration) return;
   setStatus('connected', config.url);
   connectBtn.textContent = t('disconnect');
-  await loadData();
+  try {
+    await loadData();
+  } catch (error) {
+    if (generation !== state.sessionGeneration) return;
+    // An unreachable or failing controller is an expected outcome, shown
+    // inline (console.warn, not console.error)
+    console.warn('Error loading the controller data after connecting:', error);
+    await abortConnection(generation, t('loadError'));
+  }
 } // End of function commitConnectedUi()
 
 /**
  * Resets the local connection UI to a non-connected state: error status (or
  * plain disconnected when no message is given), Connect button label, and
- * cleared data. Purely local — it performs no IPC, so it is the right
+ * cleared data; the views show the error inline (state.loadError) or the
+ * disconnected state. Purely local — it performs no IPC, so it is the right
  * cleanup for results the main process reported as superseded, where
  * releasing anything could hit a controller a newer flow owns.
  * @param {string | null} errorMessage - Localized error to show in the status
- *   bar, or null for a plain return to the disconnected state.
+ *   bar and the views, or null for a plain return to the disconnected state.
  */
 function resetConnectionUi(errorMessage: string | null): void {
+  state.loadError = errorMessage;
   if (errorMessage !== null) {
     setStatus('error', errorMessage);
   } else {
@@ -340,13 +365,15 @@ async function runSiteSelection(rawSites: unknown, rawNonce: unknown, generation
 
 /**
  * Clears all loaded AP/WLAN data (including the controller's group model and
- * version, so the group vocabulary returns to its default, and the time of
- * the last load), the AP selection, the destination, the filters and the
- * destination search, then re-renders the empty states, the filter options,
- * the sidebar counts, the header details and the move preview (which
- * disables the move button). The AP groups and Wi-Fi networks views lose
- * their selections and searches, the AP details pane closes and the Back
- * history is emptied (the current view stays: navigation works disconnected).
+ * version, so the group vocabulary returns to its default, the time of the
+ * last load and the stale-data mark), the AP selection, the destination, the
+ * filters and the destination search, then re-renders the views' §4.6 state
+ * (disconnected, or the inline error of state.loadError), the filter
+ * options, the sidebar counts, the header details, the notices and the move
+ * preview (which disables the move button). The AP groups and Wi-Fi
+ * networks views lose their selections and searches, the AP details pane
+ * and the single-pane drill-ins close and the Back history is emptied (the
+ * current view stays: navigation works disconnected).
  */
 function clearData(): void {
   state.accessPoints = [];
@@ -354,6 +381,7 @@ function clearData(): void {
   state.groupModel = null;
   state.controllerVersion = null;
   state.lastUpdatedAt = null;
+  state.refreshError = false;
   state.selectedApMacs = new Set<string>();
   state.selectionAnchorMac = null;
   state.apFocusMac = null;
@@ -366,13 +394,11 @@ function clearData(): void {
   destinationSearchInput.value = '';
 
   applyGroupVocabulary();
-  showEmptyStates();
+  resetInventoryViews();
   renderApFilterOptions();
-  renderApSelectionControls();
+  renderContentViews();
   renderNavCounts();
   renderHeaderMeta();
-  renderMovePreview();
-  resetInventoryViews();
 } // End of function clearData()
 
 /**
@@ -405,6 +431,8 @@ export async function disconnect(): Promise<void> {
     // session; when superseded, the newer operation owns the UI
     if (generation === state.sessionGeneration) {
       state.isConnected = false;
+      // A disconnect by the user is not an error
+      state.loadError = null;
       setStatus('disconnected');
       connectBtn.textContent = t('connect');
       connectBtn.disabled = false;
@@ -445,14 +473,30 @@ export function toggleConnection() {
 }
 
 /**
+ * Retry of the §4.6 error states (the initial-load error's Retry and the
+ * refresh notice's): reloads the data while connected, otherwise runs the
+ * whole connection again. Both are no-ops while another exclusive operation
+ * is in flight.
+ */
+export function retryLoad(): void {
+  if (state.isConnected) {
+    refreshData();
+  } else {
+    connect();
+  }
+}
+
+/**
  * Loads access points and the group listing (groups plus the controller's
  * group model and version, validated by parseGroupListing()) from the
  * controller, applies the group vocabulary and renders the AP list, the
  * destination pane, the sidebar counts and the header ("Updated hh:mm" with
- * the new load time). The first load shows a spinner in both lists; a reload
+ * the new load time). The first load shows loading skeletons in the lists; a reload
  * (refresh, or after a move) keeps the loaded rows on screen, marked as
  * refreshing, with "Refreshing…" in the header. The Refresh button spins
- * either way. The AP groups and Wi-Fi networks views and the AP details pane
+ * either way. A successful load clears the error states (state.loadError,
+ * state.refreshError); a failed reload marks the data on screen as stale
+ * (the refresh notice and the header state the last-updated time). The AP groups and Wi-Fi networks views and the AP details pane
  * are re-rendered from the new data too (selections whose item is gone are
  * dropped). The AP selection survives a reload, pruned to the APs that
  * still exist; the destination is kept when its group still exists under a
@@ -475,8 +519,9 @@ export async function loadData(): Promise<void> {
   refreshBtn.classList.add('spinning');
   if (isReload) {
     setListsRefreshing(true);
+    renderNotices();
   } else {
-    showLoadingStates();
+    renderContentViews();
   }
   renderHeaderMeta();
 
@@ -539,6 +584,8 @@ export async function loadData(): Promise<void> {
     const destination = state.wlanGroups.find(wlan => wlan.wlanId === destinationId);
     state.destinationGroup = destination !== undefined && !isAmbiguousGroup(destination, state.wlanGroups) ? destination : null;
     state.lastUpdatedAt = Date.now();
+    state.loadError = null;
+    state.refreshError = false;
 
     applyGroupVocabulary();
     renderApFilterOptions();
@@ -553,6 +600,10 @@ export async function loadData(): Promise<void> {
       console.warn('Discarding data-load error from a stale session:', error);
       return;
     }
+    // A failed reload keeps the data on screen, now stale
+    if (isReload) {
+      state.refreshError = true;
+    }
     throw error;
   } finally {
     // Only the operation that owns the current session may clear the loading
@@ -563,16 +614,18 @@ export async function loadData(): Promise<void> {
       refreshBtn.disabled = !state.isConnected;
       setListsRefreshing(false);
       renderHeaderMeta();
+      renderNotices();
     }
   }
 } // End of function loadData()
 
 /**
- * Reloads APs and WLAN groups on demand (Refresh button). A no-op while any
- * exclusive operation (connect/save/move/load) is pending. The loaded data
- * stays on screen while refreshing; on failure it stays (re-rendered, in case
- * the first load's spinners were showing), the header keeps the previous
- * "Updated hh:mm" time, and an error toast is shown.
+ * Reloads APs and WLAN groups on demand (Refresh button, the refresh
+ * notice's Retry). A no-op while any exclusive operation
+ * (connect/save/move/load) is pending. The loaded data stays on screen while
+ * refreshing; on failure it stays (re-rendered), the header keeps the
+ * previous "Updated hh:mm" time marked as stale, the refresh notice states
+ * it (loadData()), and an error toast is shown.
  * @returns {Promise<void>}
  */
 export async function refreshData(): Promise<void> {
