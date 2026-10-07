@@ -23,6 +23,7 @@ import { loadManagedNetworks, resetManagedNetworks } from './managed-networks';
 import { beginCapabilityCheck, loadManagementCapabilities } from './management';
 import { isAmbiguousGroup } from './move-plan';
 import { renderInventoryViews, resetInventoryViews } from './navigation';
+import { renderNetworksView } from './networks-view';
 import { renderNotices } from './notices';
 import { applyGroupVocabulary, renderContentViews } from './panels';
 import { renderNavCounts } from './shell';
@@ -548,7 +549,9 @@ export function retryLoad(): void {
  * refreshing, with "Refreshing…" in the header. The Refresh button spins
  * either way. A successful load clears the error states (state.loadError,
  * state.refreshError); a failed reload marks the data on screen as stale
- * (the refresh notice and the header state the last-updated time). The AP groups and Wi-Fi networks views and the AP details pane
+ * (the refresh notice and the header state the last-updated time, and the
+ * Wi-Fi networks view is re-rendered: its write actions are held back while
+ * the data is stale). The AP groups and Wi-Fi networks views and the AP details pane
  * are re-rendered from the new data too (selections whose item is gone are
  * dropped). The AP selection survives a reload, pruned to the APs that
  * still exist; the destination is kept when its group still exists under a
@@ -576,6 +579,8 @@ export async function loadData(): Promise<void> {
     renderContentViews();
   }
   renderHeaderMeta();
+  // Set when this reload fails for the session on screen (the data is stale now)
+  let failedReload = false;
 
   try {
     const [aps, rawListing] = await Promise.all([
@@ -655,6 +660,7 @@ export async function loadData(): Promise<void> {
     // A failed reload keeps the data on screen, now stale
     if (isReload) {
       state.refreshError = true;
+      failedReload = true;
     }
     throw error;
   } finally {
@@ -667,6 +673,10 @@ export async function loadData(): Promise<void> {
       setListsRefreshing(false);
       renderHeaderMeta();
       renderNotices();
+      if (failedReload) {
+        // The Wi-Fi network write actions follow the stale data at once
+        renderNetworksView();
+      }
     }
   }
 } // End of function loadData()

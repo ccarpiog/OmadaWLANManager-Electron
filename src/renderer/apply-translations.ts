@@ -7,10 +7,12 @@ import {
   apFilterInput,
   apList,
   apPanelTitle,
+  backNetworkBtn,
   cancelCertBtn,
   cancelCertResetBtn,
   cancelMoveBtn,
   cancelGroupBtn,
+  cancelNetworkBtn,
   cancelSettingsBtn,
   cancelManagementRemoveBtn,
   cancelSiteBtn,
@@ -22,6 +24,7 @@ import {
   confirmGroupBtn,
   confirmManagementRemoveBtn,
   confirmMoveBtn,
+  confirmNetworkBtn,
   connectBtn,
   destinationPanelTitle,
   destinationSearchInput,
@@ -41,6 +44,7 @@ import {
   managementRemoveMessage,
   managementSessionNote,
   moveModalTitle,
+  networkModalTitle,
   refreshBtn,
   removeManagementBtn,
   resetCertBtn,
@@ -152,6 +156,13 @@ export function applyTranslations() {
   groupNameHint.textContent = t('groupNameHint');
   cancelGroupBtn.textContent = t('cancel');
   confirmGroupBtn.textContent = t('createGroupAction');
+
+  // Wi-Fi network dialog: the New network defaults (network-dialog.ts
+  // rewrites every text, and builds the form, for the write it opens for)
+  networkModalTitle.textContent = t('networkCreateTitle');
+  cancelNetworkBtn.textContent = t('cancel');
+  backNetworkBtn.textContent = t('networkBackAction');
+  confirmNetworkBtn.textContent = t('networkCreateAction');
 
   // Site selection modal (its option buttons are built per-open from the
   // controller's site names, see showSiteSelection())

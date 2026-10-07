@@ -1,6 +1,6 @@
 // ============================================================================
-// Wi-Fi networks view (docs/management-design.md §4.5), read-only, from one
-// of two sources:
+// Wi-Fi networks view (docs/management-design.md §4.5), from one of two
+// sources:
 // - the internal data (phase 14a; management off, or its capabilities still
 //   unknown / being checked): a master list of the distinct network names
 //   (the sidebar's count) with each network's scope "N groups · M APs" (a
@@ -21,8 +21,14 @@
 //   partial one); a failed re-read keeps the last good list, stale, with
 //   the §4.6 refresh-error notice above the views while this view is on
 //   screen (its time, the reason, Retry). Networks are told apart by id
-//   there.
-// There are no edit controls (phases 18–19). Until data is loaded the list
+//   there. While Wi-Fi network management is on (and only then: not while
+//   a capability check runs, on a legacy controller or with a read-only
+//   reason), "New network" sits above the list and the detail carries the
+//   write actions (managed-networks-view.ts; run by network-flow.ts) —
+//   disabled, the detail saying why, while the data on screen is not known
+//   to be fresh (currentNetworkWriteBlock(): the internal data stale after a
+//   failed refresh, the managed list stale or being read).
+// The 14a view has no write action. Until data is loaded the list
 // shows the §4.6 state (content-state.ts). In the single-pane layout
 // (700–799 px) picking a network drills into its detail, whose Back returns
 // to the list (layout.ts). Pure logic: inventory-model.ts (internal),
@@ -33,7 +39,7 @@
 import { countDistinctSsids } from './ap-selection';
 import { createSkeletonState, createStateBlock, currentContentState } from './content-state';
 import { createEmptyState } from './dom-helpers';
-import { networkDetail, networkList, networkListSummary, networkSearchInput } from './elements';
+import { networkDetail, networkList, networkListActions, networkListSummary, networkSearchInput } from './elements';
 import { t, tFormat, tGroup } from './i18n';
 import {
   buildNetworkRows,
@@ -71,8 +77,11 @@ import {
   createBroadcastingApsSection,
   createManagedNetworkItem,
   createManagedNetworksFailure,
+  createNetworkActionButton,
+  NEW_NETWORK_BUTTON_ID,
   renderManagedNetworksStaleNotice,
 } from './managed-networks-view';
+import { networkWriteBlock, type NetworkWriteBlock } from './network-editing';
 import {
   buildManagedNetworkRows,
   filterManagedNetworkRows,
@@ -151,6 +160,18 @@ export function isNetworkManagementOn(): boolean {
 }
 
 /**
+ * Why every Wi-Fi network write is held back now (networkWriteBlock(): the
+ * internal data stale after a failed refresh, the managed list stale after a
+ * failed read or being read), or null when the data on screen may be
+ * written from. The actions render disabled with the reason, and a flow
+ * checks it again at its start and right before every write.
+ * @returns {NetworkWriteBlock | null} The reason, or null.
+ */
+export function currentNetworkWriteBlock(): NetworkWriteBlock | null {
+  return networkWriteBlock({ refreshError: state.refreshError, listStatus: state.managedNetworksStatus, hasList: state.managedNetworks !== null });
+}
+
+/**
  * What the view shows once data is loaded (networksViewMode()): the 14a
  * view, or the managed list, its loading skeleton or its error state.
  * @returns {NetworksViewMode} The mode now.
@@ -191,6 +212,38 @@ function syncNetworkSelection(mode: NetworksViewMode): void {
   state.selectedManagedNetworkId = network === null ? null : network.id;
   state.selectedNetworkName = network === null ? null : network.name;
 } // End of function syncNetworkSelection()
+
+/**
+ * Returns the id of the focused element inside a container (to give focus
+ * back to the same control after a re-render).
+ * @param {HTMLElement} container - The container.
+ * @returns {string | null} The id, or null.
+ */
+function focusedIdInside(container: HTMLElement): string | null {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && active.id !== '' && container.contains(active) ? active.id : null;
+}
+
+/**
+ * Renders the master list's action slot: "New network" while Wi-Fi network
+ * management is on and data is loaded (nothing otherwise — also while a
+ * capability check runs), disabled while the data on screen is not known to
+ * be fresh (the refresh notice, the list's stale notice or its state says
+ * why). Keyboard focus on it survives the re-render (on the search field
+ * when it became disabled).
+ */
+function renderNetworkListActions(): void {
+  const focusedId = focusedIdInside(networkListActions);
+  if (currentContentState() !== 'ready' || !isNetworkManagementOn()) {
+    networkListActions.replaceChildren();
+    return;
+  }
+  const blocked = currentNetworkWriteBlock() !== null;
+  networkListActions.replaceChildren(createNetworkActionButton(NEW_NETWORK_BUTTON_ID, 'create', t('newNetwork'), 'btn-primary', blocked));
+  if (focusedId !== null && !focusById(focusedId)) {
+    networkSearchInput.focus();
+  }
+} // End of function renderNetworkListActions()
 
 /**
  * Renders the 14a master list from the internal data and the search, and
@@ -286,8 +339,9 @@ export function renderNetworksStaleNotice(): void {
  * disconnected, loading skeleton or initial-load error, with its action).
  * The list carries the mode as data-networks-mode ('internal',
  * 'managedLoading', 'managedReady' or 'managedFailed'), and the
- * refresh-error notice above the view follows (renderNetworksStaleNotice()).
- * Keyboard focus on an item survives the re-render.
+ * refresh-error notice above the view and the "New network" slot follow
+ * (renderNetworksStaleNotice(), renderNetworkListActions()). Keyboard focus
+ * on an item survives the re-render.
  */
 export function renderNetworkList(): void {
   const active = document.activeElement;
@@ -295,6 +349,7 @@ export function renderNetworkList(): void {
   networkList.setAttribute('aria-label', t('wifiNetworks'));
 
   renderNetworksStaleNotice();
+  renderNetworkListActions();
   const contentState = currentContentState();
   if (contentState !== 'ready') {
     delete networkList.dataset.networksMode;
@@ -360,16 +415,20 @@ function renderInternalNetworkDetail(focusLink: LinkTarget | null, headingFocuse
 /**
  * Renders the selected network's detail from the managed list (a prompt
  * while none is selected): its name, scope, facts (enabled state,
- * security, bands, whether a password is set), and by scope the bound
- * groups and their APs as cross-links or the scope's note. While the
- * managed list is loading or failed the detail is empty and the
- * single-pane layout shows the list's state (the drill-in is closed; the
- * selection waits for the list).
+ * security, bands, whether a password is set), the write actions while
+ * Wi-Fi network management is on (disabled, with the reason, while the data
+ * on screen is not known to be fresh), and by scope the bound groups and their
+ * APs as cross-links or the scope's note. While the managed list is loading
+ * or failed the detail is empty and the single-pane layout shows the list's
+ * state (the drill-in is closed; the selection waits for the list).
+ * Keyboard focus on an action survives the re-render (an action that is
+ * gone hands it to the heading).
  * @param {NetworksViewMode} mode - The view's managed mode.
  * @param {LinkTarget | null} focusLink - The cross-link that had keyboard focus, or null.
  * @param {boolean} headingFocused - The heading had keyboard focus.
  */
 function renderManagedNetworkDetail(mode: NetworksViewMode, focusLink: LinkTarget | null, headingFocused: boolean): void {
+  const focusedAction = focusedIdInside(networkDetail);
   if (mode !== 'managedReady' || state.managedNetworks === null) {
     state.networkDetailOpen = false;
     applyPaneLayout();
@@ -383,7 +442,11 @@ function renderManagedNetworkDetail(mode: NetworksViewMode, focusLink: LinkTarge
     return;
   }
   const row = { network, scope: managedNetworkScope(network, state.wlanGroups, state.accessPoints) };
-  networkDetail.replaceChildren(createDetailHeading(HEADING_ID, network.name), ...buildManagedNetworkDetail(row));
+  networkDetail.replaceChildren(createDetailHeading(HEADING_ID, network.name), ...buildManagedNetworkDetail(row, isNetworkManagementOn(), currentNetworkWriteBlock()));
+  if (focusedAction !== null && focusedAction !== HEADING_ID) {
+    if (!focusById(focusedAction)) focusById(HEADING_ID);
+    return;
+  }
   restoreDetailFocus(focusLink, headingFocused);
 } // End of function renderManagedNetworkDetail()
 
@@ -458,7 +521,7 @@ export function selectNetwork(name: string | null): void {
  * the layout and a later switch to the 14a view).
  * @param {string} id - The network's id.
  */
-function selectManagedNetwork(id: string): void {
+export function selectManagedNetwork(id: string): void {
   const network = state.managedNetworks?.find(candidate => candidate.id === id) ?? null;
   state.selectedManagedNetworkId = network === null ? null : network.id;
   state.selectedNetworkName = network === null ? null : network.name;
@@ -552,6 +615,39 @@ export function handleNetworkSearchKeydown(e: KeyboardEvent): void {
 export function focusNetworkDetailHeading(): boolean {
   return focusById(HEADING_ID);
 }
+
+/**
+ * Moves keyboard focus to a managed network's master item (made the list's
+ * Tab stop and scrolled into view), when it is rendered.
+ * @param {string} networkId - The network's id.
+ * @returns {boolean} True when the item received focus.
+ */
+export function focusManagedNetworkItem(networkId: string): boolean {
+  const item = Array.from(networkList.querySelectorAll<HTMLButtonElement>('.master-item')).find(candidate => candidate.dataset.networkId === networkId);
+  if (!item) {
+    return false;
+  }
+  item.scrollIntoView({ block: 'nearest' });
+  focusMasterItem(networkList, item);
+  return document.activeElement === item;
+} // End of function focusManagedNetworkItem()
+
+/**
+ * Moves keyboard focus into the Wi-Fi networks list when the control that
+ * had it is gone (e.g. a deleted network's detail): the list's Tab stop,
+ * else "New network", else the search field. In the single-pane layout the
+ * list is brought back first.
+ */
+export function focusNetworkListFallback(): void {
+  state.networkDetailOpen = false;
+  applyPaneLayout();
+  const tabStop = networkList.querySelector<HTMLButtonElement>('.master-item[tabindex="0"]');
+  if (tabStop) {
+    focusMasterItem(networkList, tabStop);
+  } else if (!focusById(NEW_NETWORK_BUTTON_ID)) {
+    networkSearchInput.focus();
+  }
+} // End of function focusNetworkListFallback()
 
 /**
  * Scrolls the selected network's master item into view, when rendered.

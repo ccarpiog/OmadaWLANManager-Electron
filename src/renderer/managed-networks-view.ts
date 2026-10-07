@@ -7,20 +7,27 @@
 // points" / unknown scope), the scope text, the error state of a failed
 // first managed read with Retry and Settings, and the refresh-error notice
 // of a stale list (a failed re-read kept the last good one: its time, the
-// reason and Retry). Also the APs section both sources share. Read-only: no edit controls (phases 18–19). A value the controller
-// did not report clearly is stated as unknown, never invented; the
-// passphrase is only stated as set / none — the DTO carries no key.
+// reason and Retry). Also the APs section both sources share. While Wi-Fi
+// network management is on, the detail adds the write actions of
+// network-editing.ts networkActions() (Edit, Change password, Enable /
+// Disable, Delete; data-network-action, run by network-flow.ts) and why an
+// Enterprise / PPSK / unknown network is not editable, or why Enable /
+// Disable is not offered; while the data on screen is not known to be fresh
+// (a failed refresh, the managed list stale or being read) every action is
+// disabled and a note says why. A value the controller did not report clearly is
+// stated as unknown, never invented; the passphrase is only stated as set /
+// none — the DTO carries no key.
 // Everything is built with DOM APIs, never HTML strings. Pure logic:
 // network-management.ts; the view itself (source, selection, search):
 // networks-view.ts.
 // ============================================================================
 
-import type { AccessPoint, NetworkBand } from '../shared/types';
+import type { AccessPoint, ManagedNetwork, NetworkBand } from '../shared/types';
 import { createStatusElement } from './ap-status';
 import { createStateAction } from './content-state';
 import { createEmptyState } from './dom-helpers';
 import { networksStaleNotice, networksStaleNoticeText, networksStaleRetryBtn } from './elements';
-import { t, tFormat, tGroup } from './i18n';
+import { t, tFormat, tGroup, translate } from './i18n';
 import { apLink, groupLink, groupMembers } from './inventory-model';
 import {
   apCountOrUnknown,
@@ -31,8 +38,8 @@ import {
   createMeta,
   createNote,
   displayName,
-  groupCountText,
 } from './inventory-ui';
+import { networkActions, networkErrorKey, notEditableText, scopeSummaryText, type NetworkWriteBlock } from './network-editing';
 import {
   bandKeys,
   enabledKey,
@@ -46,6 +53,14 @@ import {
 } from './network-management';
 import { state } from './state';
 import { formatTime } from './status';
+
+// Ids of the write actions (stable, so focus can return to them after a
+// re-render or the reload after a write)
+export const NEW_NETWORK_BUTTON_ID = 'newNetworkBtn';
+export const EDIT_NETWORK_BUTTON_ID = 'networkEditBtn';
+export const PASSWORD_NETWORK_BUTTON_ID = 'networkPasswordBtn';
+export const TOGGLE_NETWORK_BUTTON_ID = 'networkToggleBtn';
+export const DELETE_NETWORK_BUTTON_ID = 'networkDeleteBtn';
 
 /**
  * Builds the APs section of a network's detail (both sources): the APs that
@@ -78,38 +93,17 @@ export function createBroadcastingApsSection(aps: readonly AccessPoint[], unknow
 } // End of function createBroadcastingApsSection()
 
 /**
- * A managed network's scope as text: "All access points", "Unknown scope",
- * or "N groups · M APs" — while M is a lower bound, "at least M APs" (or
- * "AP count unknown" when none is placed) followed by the reasons: how many
- * APs' groups cannot be identified and how many bound groups the list does
- * not have. A lower bound is never presented as exact.
+ * A managed network's scope as text (scopeSummaryText() of
+ * network-editing.ts, in the active language): "All access points",
+ * "Unknown scope", or "N groups · M APs" — while M is a lower bound, "at
+ * least M APs" (or "AP count unknown" when none is placed) followed by the
+ * reasons. A lower bound is never presented as exact.
  * @param {ManagedScope} scope - The resolved scope.
  * @returns {string} The localized scope.
  */
 export function managedScopeText(scope: ManagedScope): string {
-  const summary = summarizeScope(scope);
-  if (summary.kind === 'allAccessPoints') return t('scopeAllAccessPoints');
-  if (summary.kind === 'unknown') return t('scopeUnknown');
-
-  const groups = groupCountText(summary.groupCount);
-  if (summary.countKind === 'exact') {
-    return `${groups} · ${apCountOrUnknown(summary.apCount)}`;
-  }
-  let aps = t('apCountUnknown');
-  if (summary.countKind === 'atLeast') {
-    aps = summary.apCount === 1 ? t('apCountAtLeastOne') : tFormat('apCountAtLeastMany', { count: String(summary.apCount) });
-  }
-  const reasons: string[] = [];
-  if (summary.unknownApCount > 0) {
-    reasons.push(summary.unknownApCount === 1 ? t('scopeUnknownApsOne') : tFormat('scopeUnknownApsMany', { count: String(summary.unknownApCount) }));
-  }
-  if (summary.unresolvedGroupCount > 0) {
-    reasons.push(
-      summary.unresolvedGroupCount === 1 ? t('scopeUnresolvedGroupsOne') : tFormat('scopeUnresolvedGroupsMany', { count: String(summary.unresolvedGroupCount) })
-    );
-  }
-  return [`${groups} · ${aps}`, ...reasons].join('; ');
-} // End of function managedScopeText()
+  return scopeSummaryText(summarizeScope(scope), translate);
+}
 
 /**
  * A band list as text ("2.4 GHz and 5 GHz"), or null when unknown.
@@ -221,19 +215,99 @@ function createBoundGroupsSection(scope: Extract<ManagedScope, { kind: 'apGroups
 } // End of function createBoundGroupsSection()
 
 /**
+ * Builds one write action of a network (its click is delegated: renderer.ts
+ * hands data-network-action to network-flow.ts), disabled while a network
+ * write runs (its dialog is open) and while writes are held back (the data
+ * on screen is not known to be fresh).
+ * @param {string} id - The button id.
+ * @param {string} action - Its data-network-action value.
+ * @param {string} label - Its text.
+ * @param {string} variant - Its extra classes.
+ * @param {boolean} [blocked] - Writes are held back now (networkWriteBlock()).
+ * @returns {HTMLButtonElement} The button.
+ */
+export function createNetworkActionButton(id: string, action: string, label: string, variant: string, blocked = false): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.id = id;
+  button.className = `btn btn-compact ${variant}`;
+  button.dataset.networkAction = action;
+  button.textContent = label;
+  button.disabled = state.isManagingNetwork || blocked;
+  return button;
+} // End of function createNetworkActionButton()
+
+/**
+ * Builds the write actions of a managed network's detail (network-editing.ts
+ * networkActions(); nothing while Wi-Fi network management is off): Edit and
+ * Change password (Open / WPA-Personal, WPA-Personal only), Enable or
+ * Disable (while the enabled state is known; otherwise a note says why it is
+ * not offered), Delete; for an Enterprise, PPSK or unknown network a note
+ * explains that the app edits only Open and WPA-Personal networks. While
+ * writes are held back (the data on screen is not known to be fresh) every
+ * action is disabled and a first note says why (data-note "writesBlocked",
+ * data-reason the NetworkWriteBlock).
+ * @param {ManagedNetwork} network - The network.
+ * @param {boolean} managing - Wi-Fi network management is on.
+ * @param {NetworkWriteBlock | null} blocked - Why writes are held back now, or null.
+ * @returns {HTMLElement[]} The action bar and its notes (empty when none).
+ */
+function createNetworkWriteActions(network: ManagedNetwork, managing: boolean, blocked: NetworkWriteBlock | null): HTMLElement[] {
+  const actions = networkActions(network, managing);
+  if (actions === null) return [];
+  const bar = document.createElement('div');
+  bar.className = 'detail-actions';
+  bar.setAttribute('role', 'group');
+  bar.setAttribute('aria-label', t('networkActionsLabel'));
+  const held = blocked !== null;
+  if (actions.edit) {
+    bar.appendChild(createNetworkActionButton(EDIT_NETWORK_BUTTON_ID, 'edit', t('editNetwork'), 'btn-secondary', held));
+  }
+  if (actions.changePassword) {
+    bar.appendChild(createNetworkActionButton(PASSWORD_NETWORK_BUTTON_ID, 'password', t('changeNetworkPassword'), 'btn-secondary', held));
+  }
+  if (actions.toggle !== null) {
+    const enabling = actions.toggle === 'enable';
+    bar.appendChild(createNetworkActionButton(TOGGLE_NETWORK_BUTTON_ID, actions.toggle, t(enabling ? 'enableNetwork' : 'disableNetwork'), 'btn-secondary', held));
+  }
+  if (actions.delete) {
+    bar.appendChild(createNetworkActionButton(DELETE_NETWORK_BUTTON_ID, 'delete', t('deleteNetwork'), 'btn-danger-outline', held));
+  }
+  const notes: HTMLElement[] = [];
+  if (blocked !== null) {
+    const note = createNote(t(networkErrorKey(blocked)), 'writesBlocked');
+    note.dataset.reason = blocked;
+    notes.push(note);
+  }
+  if (actions.notEditable !== null) {
+    const note = createNote(notEditableText(network, { tr: translate, language: state.currentLanguage }), 'notEditable');
+    note.dataset.reason = actions.notEditable;
+    notes.push(note);
+  }
+  if (actions.toggle === null) {
+    notes.push(createNote(t('networkToggleUnavailable'), 'toggleUnavailable'));
+  }
+  return [bar, ...notes];
+} // End of function createNetworkWriteActions()
+
+/**
  * Builds a managed network's detail below its heading: the scope line, the
- * facts, then by scope — bound AP groups: the groups and the APs that
- * broadcast it (cross-links); "All access points": a note saying so; an
- * unknown scope: a note that its groups and APs are not shown.
+ * facts, the write actions while Wi-Fi network management is on (disabled,
+ * with the reason, while writes are held back), then by scope — bound AP
+ * groups: the groups and the APs that broadcast it (cross-links); "All
+ * access points": a note saying so; an unknown scope: a note that its
+ * groups and APs are not shown.
  * @param {ManagedNetworkRow} row - The network's row.
+ * @param {boolean} managing - Wi-Fi network management is on (networkManagementOn()).
+ * @param {NetworkWriteBlock | null} blocked - Why writes are held back now (currentNetworkWriteBlock()), or null.
  * @returns {HTMLElement[]} The content, in order.
  */
-export function buildManagedNetworkDetail(row: ManagedNetworkRow): HTMLElement[] {
+export function buildManagedNetworkDetail(row: ManagedNetworkRow, managing: boolean, blocked: NetworkWriteBlock | null): HTMLElement[] {
   const scopeLine = document.createElement('p');
   scopeLine.className = 'detail-summary detail-scope';
   scopeLine.dataset.scope = row.network.scope;
   scopeLine.textContent = managedScopeText(row.scope);
-  const content: HTMLElement[] = [scopeLine, createManagedFacts(row)];
+  const content: HTMLElement[] = [scopeLine, createManagedFacts(row), ...createNetworkWriteActions(row.network, managing, blocked)];
 
   const { scope } = row;
   if (scope.kind === 'allAccessPoints') {

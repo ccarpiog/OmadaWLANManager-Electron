@@ -247,15 +247,21 @@
           </div>
         </section>
 
-        <!-- Wi-Fi networks view (read-only, networks-view.ts): the network
-             list with each scope ("N groups · M APs") and its own search,
-             and the selected network's detail (the groups and APs that
-             broadcast it as cross-links). Below 800 px picking a network
-             drills into its detail, which has its own Back (layout.ts) -->
+        <!-- Wi-Fi networks view (networks-view.ts): the network list with
+             each scope ("N groups · M APs") and its own search, and the
+             selected network's detail (the groups and APs that broadcast it
+             as cross-links). While Wi-Fi network management is on, "New
+             network" (in #networkListActions) and the detail's Edit, Change
+             password, Enable / Disable and Delete are added (network-flow.ts
+             runs them). Below 800 px picking a network drills into its
+             detail, which has its own Back (layout.ts) -->
         <section class="view" id="viewNetworks" aria-labelledby="networksPanelTitle" hidden>
           <div class="main-content inventory-content">
             <section class="panel master-panel" id="networkMasterPanel" aria-labelledby="networksPanelTitle">
-              <h2 class="panel-title" id="networksPanelTitle"></h2>
+              <div class="panel-header">
+                <h2 class="panel-title" id="networksPanelTitle"></h2>
+                <div class="panel-header-action network-list-actions" id="networkListActions"></div>
+              </div>
               <div class="panel-filter">
                 <input type="text" id="networkSearch" class="filter-input">
               </div>
@@ -414,6 +420,34 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" id="cancelGroupBtn"></button>
         <button type="button" class="btn btn-primary" id="confirmGroupBtn"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wi-Fi network dialog, one per network write flow (network-dialog.ts
+       fills it per open): the form of New network, Edit and Change password
+       (built per open with DOM APIs; its password fields exist only while
+       the dialog is open), the Edit's review of the staged changes, or the
+       Enable / Disable / Delete confirmation with its impact summary (opens
+       on Cancel, never on the confirming button: spec §4.7); the error line
+       (the client-side check or main's answer) and the progress of the
+       write and the reload after it -->
+  <div class="modal-overlay" id="networkModal" role="dialog" aria-modal="true" aria-labelledby="networkModalHeading" aria-describedby="networkModalMessage">
+    <div class="modal modal-network">
+      <div class="modal-header">
+        <h2 id="networkModalHeading"></h2>
+      </div>
+      <div class="modal-body">
+        <p class="network-modal-message" id="networkModalMessage"></p>
+        <div class="network-form" id="networkModalForm"></div>
+        <div class="network-summary" id="networkModalSummary" hidden></div>
+        <p class="network-modal-error" id="networkModalError" role="alert" hidden></p>
+        <p class="network-modal-status" id="networkModalStatus" role="status" tabindex="-1"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="cancelNetworkBtn"></button>
+        <button type="button" class="btn btn-secondary" id="backNetworkBtn" hidden></button>
+        <button type="button" class="btn btn-primary" id="confirmNetworkBtn"></button>
       </div>
     </div>
   </div>

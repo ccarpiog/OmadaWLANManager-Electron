@@ -36,8 +36,9 @@ export const MAX_GROUP_NAME_LENGTH = 128;
 
 // Characters main refuses in a group name (FORBIDDEN_NAME_CHARACTERS in
 // src/main/ap-group-policy.ts): control characters, unpaired surrogates,
-// U+2028/U+2029 and the bidirectional controls
-const FORBIDDEN_NAME_CHARACTERS = /[\p{Cc}\p{Cs}\u{2028}\u{2029}\u{061c}\u{200e}\u{200f}\u{202a}-\u{202e}\u{2066}-\u{2069}]/u;
+// U+2028/U+2029 and the bidirectional controls. Wi-Fi network names follow
+// the same rule (network-editing.ts)
+export const FORBIDDEN_NAME_CHARACTERS =/[\p{Cc}\p{Cs}\u{2028}\u{2029}\u{061c}\u{200e}\u{200f}\u{202a}-\u{202e}\u{2066}-\u{2069}]/u;
 
 // Every ApGroupOperationError (src/shared/types.ts) with its message key; the
 // Record type makes the compiler require each one. 'failed' is the

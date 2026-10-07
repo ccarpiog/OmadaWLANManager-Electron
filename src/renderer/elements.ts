@@ -57,9 +57,11 @@ export const groupListSummary = document.getElementById('groupListSummary') as H
 export const groupDetailPanelTitle = document.getElementById('groupDetailPanelTitle') as HTMLElement;
 export const groupDetail = document.getElementById('groupDetail') as HTMLElement;
 
-// Wi-Fi networks view: master list and the selected network's detail (with
+// Wi-Fi networks view: master list (title, the "New network" slot, search,
+// list, aria-live results summary) and the selected network's detail (with
 // its single-pane Back)
 export const networkMasterPanel = document.getElementById('networkMasterPanel') as HTMLElement;
+export const networkListActions = document.getElementById('networkListActions') as HTMLElement;
 export const networkDetailPanel = document.getElementById('networkDetailPanel') as HTMLElement;
 export const networkDetailBackBtn = document.getElementById('networkDetailBackBtn') as HTMLButtonElement;
 export const networksPanelTitle = document.getElementById('networksPanelTitle') as HTMLElement;
@@ -178,6 +180,20 @@ export const groupModalError = document.getElementById('groupModalError') as HTM
 export const groupModalStatus = document.getElementById('groupModalStatus') as HTMLElement;
 export const cancelGroupBtn = document.getElementById('cancelGroupBtn') as HTMLButtonElement;
 export const confirmGroupBtn = document.getElementById('confirmGroupBtn') as HTMLButtonElement;
+
+// Wi-Fi network dialog (New network, Edit with its review, Change password,
+// Enable / Disable and Delete confirmations); its form and summary are
+// built per open (network-dialog.ts)
+export const networkModal = document.getElementById('networkModal') as HTMLElement;
+export const networkModalTitle = document.getElementById('networkModalHeading') as HTMLElement;
+export const networkModalMessage = document.getElementById('networkModalMessage') as HTMLElement;
+export const networkModalForm = document.getElementById('networkModalForm') as HTMLElement;
+export const networkModalSummary = document.getElementById('networkModalSummary') as HTMLElement;
+export const networkModalError = document.getElementById('networkModalError') as HTMLElement;
+export const networkModalStatus = document.getElementById('networkModalStatus') as HTMLElement;
+export const cancelNetworkBtn = document.getElementById('cancelNetworkBtn') as HTMLButtonElement;
+export const backNetworkBtn = document.getElementById('backNetworkBtn') as HTMLButtonElement;
+export const confirmNetworkBtn = document.getElementById('confirmNetworkBtn') as HTMLButtonElement;
 
 // Site Selection Modal (multi-site controllers)
 export const siteModal = document.getElementById('siteModal') as HTMLElement;

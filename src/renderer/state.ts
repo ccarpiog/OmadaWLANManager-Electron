@@ -174,6 +174,12 @@ export interface RendererState {
   // (group-flow.ts): from opening its dialog, through the write and the
   // reload after it, until the dialog closes
   isManagingApGroup: boolean;
+  // isManagingNetwork covers a whole Wi-Fi network write flow
+  // (network-flow.ts: New network, Edit, Change password, Enable / Disable,
+  // Delete): from opening its dialog, through the write(s) and the reload
+  // after them, until the dialog closes. No passphrase is ever kept in this
+  // state: it lives only in the dialog's password fields while it is open
+  isManagingNetwork: boolean;
   // True while a trusted-certificate reset (Settings) is in flight
   isResettingCertificate: boolean;
   // True while "Test management access" (Settings) waits for main. Not an
@@ -259,6 +265,7 @@ export const state: RendererState = {
   isSavingSettings: false,
   isApplyingChange: false,
   isManagingApGroup: false,
+  isManagingNetwork: false,
   isResettingCertificate: false,
   isTestingManagement: false,
   settingsStoredUrl: '',
@@ -274,8 +281,8 @@ export const state: RendererState = {
 
 /**
  * Reports whether any exclusive operation (connect, disconnect, settings
- * save, AP move, AP-group create / rename / delete, data load, or
- * certificate reset) is currently in flight. Used to serialize the
+ * save, AP move, AP-group create / rename / delete, Wi-Fi network write,
+ * data load, or certificate reset) is currently in flight. Used to serialize the
  * operations: while one is pending, starting another is a no-op.
  * @returns {boolean} True when an operation is in progress.
  */
@@ -286,6 +293,7 @@ export function isOperationInProgress(): boolean {
     state.isSavingSettings ||
     state.isApplyingChange ||
     state.isManagingApGroup ||
+    state.isManagingNetwork ||
     state.isLoadingData ||
     state.isResettingCertificate
   );

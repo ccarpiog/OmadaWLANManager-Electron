@@ -14,9 +14,12 @@ A modern desktop application for moving TP-Link Omada Controller access points b
   **Wi-Fi networks** (with the groups and access points that broadcast each one);
   names link between the views, with **Back to …** to return
 - With management access (Omada 6.3 and later): create, rename and delete AP groups,
-  see how many more Wi-Fi networks each band of a group can take, and see each Wi-Fi
+  see how many more Wi-Fi networks each band of a group can take, see each Wi-Fi
   network's enabled state, security, bands, whether a password is set and where it is
-  broadcast (the Wi-Fi networks view stays read-only)
+  broadcast, and manage Open and WPA-Personal Wi-Fi networks: create them (disabled,
+  on the AP groups you pick), edit their name, security and bands after reviewing the
+  changes, change their password, enable, disable and delete them (WPA-Enterprise and
+  PPSK networks can only be enabled, disabled and deleted)
 - Move one or more access points into another group, including an empty one to silence them,
   after reviewing which Wi-Fi networks they gain and lose; access points are moved one at a time,
   with a per-access-point result and **Retry failed**
@@ -64,8 +67,8 @@ npm run dev
    - **Password**: Your Omada Controller password
    - **Management access (optional)**: the **Client ID** and **Client Secret** of an
      Open API application created in the controller's settings (client credentials
-     mode). They unlock AP-group management and the Wi-Fi networks' settings in
-     the Wi-Fi networks view (editing Wi-Fi networks is not available yet). While
+     mode). They unlock AP-group management and Wi-Fi network management in
+     the Wi-Fi networks view. While
      connected, the app checks whether they grant it
      (Omada 6.3 or later, an access token, and the connected site and its AP
      groups must match what the controller reports), and **Test management
@@ -116,7 +119,19 @@ npm run dev
    password itself); if the networks cannot be read completely, the view says why,
    with **Retry**, instead of showing a partial list (when a later read fails, the
    last list stays on screen with a notice giving its time and the reason, and
-   **Retry**). With management access, the
+   **Retry**). With management access, the Wi-Fi networks view also adds **New
+   network** (Open or WPA-Personal, its bands and the AP groups that broadcast it;
+   it is created disabled unless **Enable after creating** is ticked — an open
+   network cannot be created with 6 GHz: create it without, then add 6 GHz with
+   **Edit**) and, in a network's details, **Edit** (name, Open ↔ WPA-Personal,
+   bands; nothing is sent until you review the changes and save them, and every
+   save of a WPA-Personal network asks for its password again, because the app
+   never reads the current one back), **Change password**, **Enable** /
+   **Disable** and **Delete**, each confirmed with the scope it affects (the AP
+   groups by name, or "All access points" / "Unknown scope"). WPA-Enterprise and
+   PPSK networks have no **Edit** or **Change password** (the details say why);
+   a password is typed twice, never shown and never kept once the dialog
+   closes. The
    AP groups view adds **New group** (an empty
    group, name only), **Rename** and **Delete**, and each group's remaining
    capacity per band ("Not reported" when the controller does not say); a group
@@ -290,8 +305,8 @@ omada-electron/
 │   │   ├── net-transport.ts   # Production transport (Electron's net module)
 │   │   ├── cert-verify.ts     # Certificate hooks + replaceable controller session
 │   │   ├── connection-manager.ts # Connection state machine (connect, site choice, trust, reset, URL change)
-│   │   ├── controller-session.ts # Controller session facade (internal + Open API clients, management capability checks, AP-group operations, Wi-Fi network reads)
-│   │   ├── openapi-client.ts  # Open API client (token, paths, pagination, AP-group calls, Wi-Fi network reads)
+│   │   ├── controller-session.ts # Controller session facade (internal + Open API clients, management capability checks, AP-group operations, Wi-Fi network reads and writes)
+│   │   ├── openapi-client.ts  # Open API client (token, paths, pagination, AP-group calls, Wi-Fi network reads and writes)
 │   │   ├── omada-validators.ts, cookie-jar.ts, url.ts, # Pure, unit-tested helpers
 │   │   │   cert-pinning.ts, config-model.ts, controller-version.ts, redact.ts,
 │   │   │   ap-group-policy.ts, ipc-guards.ts, wifi-network-model.ts

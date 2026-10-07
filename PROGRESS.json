@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T07:36:24Z",
+ "updated": "2026-10-07T09:08:20Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -219,9 +219,9 @@
   {
    "id": "18",
    "title": "Wi-Fi network editing",
-   "status": "queued",
+   "status": "done",
    "risk": "high",
-   "summary": "Split into 18a (main-side Open API network writes, guarded IPC) and 18b (editing UI, smoke)."
+   "summary": "Split into 18a (main-side Open API network writes, guarded IPC) and 18b (editing UI, smoke); both done."
   },
   {
    "id": "18a",
@@ -236,16 +236,32 @@
   {
    "id": "18b",
    "title": "Wi-Fi network editing UI",
-   "status": "queued",
+   "status": "done",
    "risk": "high",
-   "summary": "Adds create, staged edit, change password, enable or disable and delete with impact summary to the Wi-Fi networks view."
+   "summary": "Adds create, staged edit, change password, enable or disable and delete with impact summary to the Wi-Fi networks view, blocked on stale data.",
+   "review": "docs/reviews/phase18b.md",
+   "narrative": "docs/progress-archive/phase-18b.md"
   },
   {
    "id": "19",
-   "title": "Broadcast-on binding editor",
+   "title": "Broadcast on binding editor",
    "status": "queued",
    "risk": "high",
-   "summary": "Edits which AP groups broadcast each Wi-Fi network, with capacity checks."
+   "summary": "Split into 19a (main-side Open API binding write, capacity checks, guarded IPC) and 19b (editor UI, smoke)."
+  },
+  {
+   "id": "19a",
+   "title": "Network binding write in main",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Adds the Open API write that sets which AP groups broadcast a network, with per-band capacity checks on fresh data, behind guarded IPC."
+  },
+  {
+   "id": "19b",
+   "title": "Broadcast on editor UI",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Adds the editor that chooses which AP groups broadcast a Wi-Fi network, with a reach diff, capacity problems and a confirmation."
   },
   {
    "id": "20",

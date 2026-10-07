@@ -1014,7 +1014,15 @@ body.platform-darwin .title-bar {
   margin-right: 8px;
 }
 
+/* Wi-Fi network management (networks-view.ts): "New network" in the list
+   header; the detail's actions reuse .detail-actions */
+.network-list-actions {
+  display: flex;
+  margin-right: 8px;
+}
+
 .group-list-actions .btn,
+.network-list-actions .btn,
 .detail-actions .btn,
 .detail-section-action {
   min-height: 32px;
@@ -1708,6 +1716,166 @@ body.platform-darwin .title-bar {
 }
 
 .group-modal-status:focus {
+  outline: none;
+}
+
+/* Wi-Fi network dialog (network-dialog.ts): the message, the per-open form
+   (name, security, the two password fields, bands, AP groups, "Enable after
+   creating"), the summary (the review of an edit, or a confirmation's
+   impact), the error line and the progress line (focus is parked on it while
+   a write runs) */
+.modal-network {
+  max-width: 480px;
+}
+
+.network-modal-message {
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 14px;
+  overflow-wrap: anywhere;
+}
+
+.network-field {
+  margin-bottom: 12px;
+}
+
+.network-help {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+
+.network-passphrase {
+  margin-bottom: 16px;
+}
+
+.network-passphrase .network-help + .network-help {
+  margin-top: 8px;
+}
+
+.network-fieldset {
+  border: none;
+  margin: 0 0 16px;
+  padding: 0;
+  min-width: 0;
+}
+
+.network-fieldset legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.network-choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.network-choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.network-choice input {
+  flex: none;
+  margin: 0;
+}
+
+.network-choice-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.network-choice .detail-meta {
+  margin-left: auto;
+  flex: none;
+}
+
+.network-group-list {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.network-enable-after {
+  margin-top: -4px;
+}
+
+.network-summary-rows {
+  margin: 0;
+  font-size: 13px;
+}
+
+.network-summary-row {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.network-summary-row:first-child {
+  border-top: none;
+}
+
+.network-summary-row dt {
+  flex: none;
+  min-width: 7.5em;
+  color: var(--text-secondary);
+}
+
+.network-summary-row dd {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.network-summary-note {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-left: 3px solid var(--warning-color);
+  border-radius: var(--radius-sm);
+}
+
+.network-modal-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border-left: 3px solid var(--error-color);
+  border-radius: var(--radius-sm);
+  user-select: text;
+}
+
+.network-modal-status {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.network-modal-status:empty {
+  margin-top: 0;
+}
+
+.network-modal-status:focus {
   outline: none;
 }
 

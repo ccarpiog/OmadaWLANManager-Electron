@@ -4,7 +4,8 @@
 // UI's event listeners and runs the startup sequence; the logic lives in:
 //   state.ts              mutable state, operation flags, session generation
 //   elements.ts           DOM element references
-//   i18n.ts               es/en string tables, t(), tFormat(), setLanguage()
+//   i18n-strings.ts       es/en string tables (pure), formatMessage()
+//   i18n.ts               t(), tFormat(), translate(), tGroup(), setLanguage()
 //   apply-translations.ts writes the active language into the static UI
 //   status.ts             header: connection status, site, controller host,
 //                         "Updated hh:mm", controller version
@@ -45,9 +46,10 @@
 //   group-dialog.ts       New group / Rename / Delete dialog
 //   group-flow.ts         the AP-group write flows (dialog, write, reload,
 //                         focus) and "Move access points here"
-//   networks-view.ts      Wi-Fi networks view (read-only master list +
-//                         detail; the 14a internal data, or the managed
-//                         list while Wi-Fi network management is on)
+//   networks-view.ts      Wi-Fi networks view (master list + detail; the
+//                         14a internal data, or the managed list while
+//                         Wi-Fi network management is on, then with
+//                         New network and the detail's write actions)
 //   network-management.ts pure managed-networks logic: source and view
 //                         mode, stale-reply check, settling a reply (a
 //                         failed re-read keeps the list, stale), reply
@@ -57,6 +59,14 @@
 //                         error state (Retry, Settings) and stale notice
 //   managed-networks.ts   the managed list of the Wi-Fi networks (read with
 //                         the session nonce, late replies discarded)
+//   network-editing.ts    pure Wi-Fi network write rules mirror (actions,
+//                         name / passphrase checks, create form, staged
+//                         edit and its review), reply validation, error
+//                         texts, impact summary, scope text
+//   network-dialog.ts     New network / Edit (+ review) / Change password /
+//                         Enable / Disable / Delete dialog
+//   network-flow.ts       the Wi-Fi network write flows (dialog, write(s),
+//                         reload, toast, focus)
 //   nav-history.ts        pure Back-history helpers
 //   navigation.ts         cross-links, "Back to …", re-rendering the views
 //   move-plan.ts          pure move planning (gains/losses, mixed
@@ -145,6 +155,7 @@ import {
   viewArea,
   viewGroups,
   viewNav,
+  viewNetworks,
 } from './elements';
 import { handleGroupActionClick } from './group-flow';
 import {
@@ -161,6 +172,7 @@ import { retryManagedNetworks } from './managed-networks';
 import { runManagementTest } from './management';
 import { startMove } from './move-flow';
 import { goBack, handleCrossLinkClick, navigateToView } from './navigation';
+import { handleNetworkActionClick } from './network-flow';
 import {
   closeNetworkDetailPane,
   handleNetworkListClick,
@@ -265,6 +277,11 @@ networkList.addEventListener('keydown', handleNetworkListKeydown);
 // the move destination)
 viewGroups.addEventListener('click', handleGroupActionClick);
 
+// Wi-Fi networks view actions (delegated, data-network-action; Wi-Fi network
+// management on only): New network, and the detail's Edit, Change password,
+// Enable / Disable and Delete (each opens the Wi-Fi network dialog)
+viewNetworks.addEventListener('click', handleNetworkActionClick);
+
 // Access points list: filters, checkbox selection (delegated click and
 // keyboard handlers), "Select all N filtered APs" and "Clear selection"
 apFilterInput.addEventListener('input', () => {
@@ -334,9 +351,10 @@ settingsModal.addEventListener('click', (e) => {
 
 // App-wide keys (keyboard.ts): Cmd/Ctrl+F focuses the current view's
 // search; Escape clears the search, else exits edit mode, else closes the
-// top dialog (the settings modal here; the move, AP group, site-selection
-// and certificate modals install their own Escape listeners that route through
-// their cancel paths, so their pending promises always resolve)
+// top dialog (the settings modal here; the move, AP group, Wi-Fi network,
+// site-selection and certificate modals install their own Escape listeners
+// that route through their cancel paths, so their pending promises always
+// resolve)
 document.addEventListener('keydown', handleGlobalKeydown);
 
 // Enter submits the settings form from any of its text fields (not only the

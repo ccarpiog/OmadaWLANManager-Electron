@@ -16,7 +16,10 @@
 // stale, with the §4.6 refresh-error notice (its time and the reason), until
 // a later read succeeds. While the first read runs the view shows its
 // loading skeleton; a re-read keeps the list on screen until the new reply
-// arrives.
+// arrives. Writes are held back while a read runs or after one failed
+// (network-editing.ts networkWriteBlock()); since a re-read does not
+// re-render the view as it starts, the read's status is mirrored on the
+// list as data-managed-read ('idle', 'loading', 'ready', 'failed').
 // ============================================================================
 
 import { networkList, networkSearchInput, networksStaleNotice } from './elements';
@@ -27,11 +30,23 @@ import {
   parseManagedNetworksResult,
   settleNetworkRead,
   type HeldManagedNetworks,
+  type ManagedNetworksStatus,
   type NetworkReadTicket,
   type ParsedManagedNetworks,
 } from './network-management';
 import { isNetworkManagementOn } from './networks-view';
 import { state } from './state';
+
+/**
+ * Sets where the managed read is (state.managedNetworksStatus) and mirrors
+ * it on the list as data-managed-read: a re-read keeps the view as it is
+ * while it runs, so this tells that the list on screen is being read again.
+ * @param {ManagedNetworksStatus} status - The read's status.
+ */
+function setManagedNetworksStatus(status: ManagedNetworksStatus): void {
+  state.managedNetworksStatus = status;
+  networkList.dataset.managedRead = status;
+}
 
 /**
  * Forgets the managed list (disconnect, a new session, management off or a
@@ -42,7 +57,7 @@ export function resetManagedNetworks(): void {
   state.managedNetworksRequest++;
   state.managedNetworks = null;
   state.managedNetworksStamp = null;
-  state.managedNetworksStatus = 'idle';
+  setManagedNetworksStatus('idle');
   state.managedNetworksFailure = null;
 }
 
@@ -96,7 +111,7 @@ export async function loadManagedNetworks(generation: number): Promise<void> {
     state.managedNetworksStamp = null;
   }
   const wasStale = state.managedNetworksStatus === 'failed' && state.managedNetworks !== null;
-  state.managedNetworksStatus = 'loading';
+  setManagedNetworksStatus('loading');
   state.managedNetworksFailure = null;
   if (state.managedNetworks === null || wasStale) {
     renderNetworksSource();
@@ -115,7 +130,7 @@ export async function loadManagedNetworks(generation: number): Promise<void> {
   const settled = settleNetworkRead(heldNetworks(), ticket, parsed, Date.now());
   state.managedNetworks = settled.held === null ? null : settled.held.networks;
   state.managedNetworksStamp = settled.held === null ? null : { generation: settled.held.generation, nonce: settled.held.nonce, readAt: settled.held.readAt };
-  state.managedNetworksStatus = settled.status;
+  setManagedNetworksStatus(settled.status);
   state.managedNetworksFailure = settled.failure;
   renderNetworksSource();
 } // End of function loadManagedNetworks()

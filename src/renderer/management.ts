@@ -84,23 +84,23 @@ function toneOf(display: ManagementTestDisplay): 'ok' | 'off' | 'busy' | 'info' 
  * Takes new capabilities for the session on screen: the banner follows, the
  * AP groups view's actions follow (renderGroupsView()), the fresh Open API
  * view of the AP groups is read again (or forgotten when management is off
- * now), and so is the managed list of the Wi-Fi networks (in the
- * background: nothing waits for it). With Wi-Fi network management off now,
- * the Wi-Fi networks view's 14a source is settled (no longer a check's
- * fallback): it is re-rendered so its Back history is reconciled with it.
+ * now), and so is the managed list of the Wi-Fi networks (both in parallel;
+ * the connection itself never waits for them). With Wi-Fi network
+ * management off now, the Wi-Fi networks view's 14a source is settled (no
+ * longer a check's fallback): it is re-rendered so its Back history is
+ * reconciled with it.
  * @param {ManagementCapabilities} capabilities - The capabilities.
  * @param {number} generation - The session generation they belong to.
- * @returns {Promise<void>} Settles once the fresh view of the AP groups was read.
+ * @returns {Promise<void>} Settles once the fresh view of the AP groups and the managed network list were read (the reload after a write waits for both).
  */
-function applyCapabilities(capabilities: ManagementCapabilities, generation: number): Promise<void> {
+async function applyCapabilities(capabilities: ManagementCapabilities, generation: number): Promise<void> {
   state.managementCapabilities = capabilities;
   renderNotices();
   renderGroupsView();
   if (!isNetworkManagementOn()) {
     renderNetworksSource();
   }
-  void loadManagedNetworks(generation);
-  return loadManagedGroups(generation);
+  await Promise.all([loadManagedNetworks(generation), loadManagedGroups(generation)]);
 }
 
 /**
@@ -156,13 +156,14 @@ function settleCheck(result: ParsedManagementResult, check: number, generation: 
 /**
  * Fetches the management capabilities main computes for the session on
  * screen, in the background after a connection's first data load (they
- * never delay or fail the connection), and after an AP-group write. While
- * main checks, the capabilities are null — the banner says so
- * (managementChecking) and no write action is offered — unless
+ * never delay or fail the connection), and after an AP-group or Wi-Fi
+ * network write. While main checks, the capabilities are null — the banner
+ * says so (managementChecking) and no write action is offered — unless
  * `keepCurrent` keeps the ones on screen until the answer arrives (a
  * re-read: main answers with its latest result, so no flicker of the banner
  * and the actions); an unusable answer fails closed ('probeFailed'). Then
- * the fresh Open API view of the AP groups is read (awaited). Discarded when
+ * the fresh Open API view of the AP groups and the managed list of the Wi-Fi
+ * networks are read (awaited). Discarded when
  * the session changed or a newer check run started meanwhile.
  * @param {number} generation - The session generation of the connection.
  * @param {boolean} [keepCurrent] - True to keep the capabilities on screen while asking.

@@ -180,7 +180,7 @@ const EXPECTED_BRIDGE = [
 // The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
 const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
 // One launch per run*() function in main()
-const EXPECTED_LAUNCHES = 7;
+const EXPECTED_LAUNCHES = 8;
 // Fingerprints of the fake controller's self-signed certificates (launch 3)
 const FINGERPRINT_A = Array.from({ length: 32 }, (_, index) => (index * 7 + 16).toString(16).toUpperCase().padStart(2, '0')).join(':');
 const FINGERPRINT_B = Array.from({ length: 32 }, (_, index) => (255 - index).toString(16).toUpperCase().padStart(2, '0')).join(':');
@@ -6583,7 +6583,8 @@ function findNetworkSecrets(page) {
 /**
  * Lists the buttons and fields of the Wi-Fi networks view other than its
  * master items, cross-links, search, single-pane Back and the error state's
- * actions (no edit control may exist before phase 18).
+ * actions: the write actions of phase 18b ("New network" and the detail's
+ * actions) — and nothing else.
  * @param {import('playwright-core').Page} page - The renderer page.
  * @returns {Promise<string[]>} Their ids or classes.
  */
@@ -6659,7 +6660,7 @@ async function runManagedNetworks(electronInfo) {
       );
     }); // End of check "[nets] es: management on..."
 
-    await check('[nets] es: the managed details, read-only — Casa: "Estado Activada", "Seguridad WPA-Personal", "Bandas 2,4 GHz y 5 GHz", "Contraseña Configurada" (only whether one is set), Default ("4 AP") and its 4 APs as links; Invitados: "Ninguna" and the "all access points" note, no group or AP list; IoT: "Contraseña Se desconoce", Exterior ("Sin AP") and zNinguna ("1 AP") with Jardín; Rara: every value "Se desconoce" and the unknown-scope note (never guessed); no edit control in the view', async () => {
+    await check('[nets] es: the managed details, read-only — Casa: "Estado Activada", "Seguridad WPA-Personal", "Bandas 2,4 GHz y 5 GHz", "Contraseña Configurada" (only whether one is set), Default ("4 AP") and its 4 APs as links; Invitados: "Ninguna" and the "all access points" note, no group or AP list; IoT: "Contraseña Se desconoce", Exterior ("Sin AP") and zNinguna ("1 AP") with Jardín; Rara: every value "Se desconoce" and the unknown-scope note (never guessed), after the notes that it is not editable (unknown security) and that Enable / Disable is not offered (unknown state); the only controls of the view are "Nueva red" and Rara\'s "Eliminar"', async () => {
       await openNetworkDetail(page, 'Casa');
       const casa = await readDetailPane(page, '#networkDetail');
       const current = (await readManagedList(page)).items.filter((item) => item.current === 'true').map((item) => item.id);
@@ -6690,8 +6691,13 @@ async function runManagedNetworks(electronInfo) {
         isDeepStrictEqual(iot.sections.aps?.rows, [{ link: 'Jardín', status: statusOf('Jardín'), meta: null }]) &&
         rara.summary === nets.unknownScope &&
         isDeepStrictEqual(rara.facts, expectedFacts('es', nets.valueUnknown, nets.valueUnknown, nets.valueUnknown, nets.valueUnknown)) &&
-        Object.keys(rara.sections).length === 0 && isDeepStrictEqual(rara.notes, [{ kind: 'unknownScope', text: nets.unknownNote }]) &&
-        controls.length === 0,
+        Object.keys(rara.sections).length === 0 &&
+        isDeepStrictEqual(rara.notes, [
+          { kind: 'notEditable', text: NETEDIT_TEXT.es.notEditableUnknown },
+          { kind: 'toggleUnavailable', text: NETEDIT_TEXT.es.toggleUnavailable },
+          { kind: 'unknownScope', text: nets.unknownNote },
+        ]) &&
+        isDeepStrictEqual(controls, ['newNetworkBtn', 'networkDeleteBtn']),
         { current, casa, invitados, iot, rara, controls }
       );
     }); // End of check "[nets] es: the managed details..."
@@ -7148,6 +7154,1268 @@ async function runManagedNetworks(electronInfo) {
 } // End of function runManagedNetworks()
 
 // ============================================================================
+// Launch 8: Wi-Fi network editing (phase 18b) — the write actions per
+// security mode, hidden while management is off or being re-checked; New
+// network (client-side refusals, created disabled, with and without "Enable
+// after creating", an answer without an id), a create the controller refuses
+// shown as text; the staged edit with its review, Back and confirm; an edit
+// cancelled (nothing sent); Change password; Disable / Enable and Delete
+// confirmations with their impact summary; a conflict main reports naming
+// its field; no sentinel passphrase anywhere in the DOM after any dialog
+// closes; a double-click or a held Enter never steps through the edit's
+// review; no write on data known to be stale (a failed refresh, a stale
+// managed list) and Enable / Disable / Delete confirmations built from a
+// fresh read only (Spanish, then English)
+// ============================================================================
+
+// The [netedit] network ids (24 characters, like the derived ones)
+const NETEDIT_IDS = { casa: '5f00c0ffee00000000000ed1', invitados: '5f00c0ffee00000000000ed2', empresa: '5f00c0ffee00000000000ed3', clave: '5f00c0ffee00000000000ed4' };
+// The AP-group ids the [netedit] networks are bound to
+const NETEDIT_DEFAULT = GROUP.Default.wlanId;
+const NETEDIT_ZGRUPO = GROUP['zGrupo B'].wlanId;
+// The stored key the fake controller's details report (must never reach the
+// renderer) and the passphrases typed in the dialogs (sent renderer → main
+// only; none may stay in the DOM — markup or input values — once a dialog closed)
+const NETEDIT_STORED_KEY = 'SENTINEL-netedit-stored-key';
+const NETEDIT_TYPED = {
+  es: { create: 'SENTINEL-create-es', edit: 'SENTINEL-edit-es', password: 'SENTINEL-pw-es', other: 'SENTINEL-other-es', refused: 'SENTINEL-refused-es' },
+  en: { create: 'SENTINEL-create-en', edit: 'SENTINEL-edit-en', password: 'SENTINEL-pw-en', other: 'SENTINEL-other-en', refused: 'SENTINEL-refused-en' },
+};
+const NETEDIT_SECRETS = [NETEDIT_STORED_KEY, ...Object.values(NETEDIT_TYPED.es), ...Object.values(NETEDIT_TYPED.en)];
+
+/**
+ * One [netedit] network as RAW Open API payloads, its detail carrying every
+ * setting a basic-config save must carry (so the stub's real read-merge-write
+ * can save it), a WPA-Personal one with the stored sentinel key.
+ * @param {string} id - The SSID id.
+ * @param {string} name - Its name.
+ * @param {{ security: number; band: number; enabled: boolean; chooseDevices: number; groupIds: string[] | null; extra?: object }} settings - Its settings (groupIds null: bindings not reported).
+ * @returns {{ entry: object; detail: object; bindings: object }} The payloads.
+ */
+function neteditNetwork(id, name, settings) {
+  const { security, band, enabled, chooseDevices, groupIds, extra = {} } = settings;
+  const detail = {
+    id, name, ssidEnable: enabled, chooseDevices, band, security,
+    guestNetEnable: false, broadcast: true, vlanEnable: false, mloEnable: false, pmfMode: security === 0 ? 3 : 2, enable11r: false, hidePwd: false, ...extra,
+  };
+  if (groupIds !== null) {
+    detail.apGroupIds = groupIds;
+  }
+  if (security === 3) {
+    detail.pskSetting = { securityKey: NETEDIT_STORED_KEY, versionPsk: 2, encryptionPsk: 3, gikRekeyPskEnable: false };
+  }
+  return {
+    entry: { id, ssidId: id, name, ssidEnable: enabled, chooseDevices, band, security },
+    detail,
+    bindings: groupIds === null ? {} : { apGroups: groupIds.map((groupId) => ({ id: groupId })) },
+  };
+} // End of function neteditNetwork()
+
+// The fake controller's Wi-Fi networks of the [netedit] launch: Casa
+// (WPA-Personal, 2.4 + 5 GHz, enabled, Default), Invitados (open, 2.4 GHz,
+// disabled, "All access points", Enhanced IoT Connectivity on), Empresa
+// (WPA-Enterprise, enabled, zGrupo B + Default) and Clave (PPSK without
+// RADIUS, 5 GHz, enabled, an unknown scope)
+const NETEDIT_NETWORKS = [
+  neteditNetwork(NETEDIT_IDS.casa, 'Casa', { security: 3, band: 3, enabled: true, chooseDevices: 1, groupIds: [NETEDIT_DEFAULT] }),
+  neteditNetwork(NETEDIT_IDS.invitados, 'Invitados', { security: 0, band: 1, enabled: false, chooseDevices: 0, groupIds: [], extra: { enhancedIotConnectivity: true, oweEnable: false } }),
+  neteditNetwork(NETEDIT_IDS.empresa, 'Empresa', { security: 2, band: 3, enabled: true, chooseDevices: 1, groupIds: [NETEDIT_ZGRUPO, NETEDIT_DEFAULT] }),
+  neteditNetwork(NETEDIT_IDS.clave, 'Clave', { security: 4, band: 2, enabled: true, chooseDevices: 7, groupIds: null }),
+];
+// The fake controller's AP groups (the fixture's with a 24-hex id), their
+// internal network lists following NETEDIT_NETWORKS
+const NETEDIT_GROUPS = [
+  { ...GROUP['zGrupo B'], ssidList: [{ ssidName: 'Invitados' }, { ssidName: 'Empresa' }] },
+  { ...GROUP.Default, ssidList: [{ ssidName: 'Casa' }, { ssidName: 'Invitados' }, { ssidName: 'Empresa' }] },
+  { ...GROUP.zNinguna, ssidList: [{ ssidName: 'Invitados' }] },
+  { ...GROUP.Exterior, ssidList: [{ ssidName: 'Invitados' }] },
+];
+
+// Strings of the Wi-Fi network editing UI (src/renderer/i18n-strings.ts)
+const NETEDIT_TEXT = {
+  es: {
+    newNetwork: 'Nueva red',
+    actionsLabel: 'Acciones de la red',
+    edit: 'Editar',
+    password: 'Cambiar contraseña',
+    enable: 'Activar',
+    disable: 'Desactivar',
+    delete: 'Eliminar',
+    notEditable: 'La aplicación solo edita redes abiertas y WPA-Personal, así que aquí no se pueden cambiar los ajustes ni la contraseña de esta red {security}: hazlo en el controlador. Sí se puede activar, desactivar o eliminar.',
+    notEditableUnknown: 'El controlador no indica con claridad la seguridad de esta red y la aplicación solo edita redes abiertas y WPA-Personal, así que aquí no se pueden cambiar sus ajustes ni su contraseña. Sí se puede eliminar.',
+    toggleUnavailable: 'El controlador no indica si esta red está activada, así que no se ofrece activarla ni desactivarla.',
+    nameLabel: 'Nombre de la red (SSID)',
+    nameHint: 'De 1 a 32 bytes (las letras con tilde y los emoji ocupan más de uno), sin caracteres de control.',
+    passphraseLabel: 'Contraseña de la red',
+    confirmationLabel: 'Repite la contraseña',
+    passphraseHint: 'De 8 a 63 caracteres ASCII imprimibles (letras sin tilde, números, espacios y símbolos); se usa tal como la escribes.',
+    groupsHint: 'Elige al menos un grupo.',
+    enableAfter: 'Activar después de crearla',
+    createTitle: 'Nueva red Wi-Fi',
+    createMessage: 'La red se crea desactivada (no se emite hasta que la actives) en los grupos de AP que elijas. Solo se pueden crear redes abiertas o WPA-Personal.',
+    create6Ghz: 'Una red abierta no se puede crear con 6 GHz: esa banda exige OWE (Enhanced Open), que no se puede configurar al crearla. Créala sin 6 GHz y añade 6 GHz después con Editar.',
+    createAction: 'Crear red',
+    editTitle: 'Editar la red Wi-Fi',
+    editMessage: 'Cambia los ajustes básicos de "{name}". No se envía nada hasta que revises los cambios y los guardes.',
+    editPassphraseNote: 'Para guardar una red WPA-Personal hay que escribir su contraseña: la aplicación nunca lee la contraseña actual del controlador, así que cada guardado envía la que escribas aquí (la misma de ahora u otra nueva).',
+    reviewAction: 'Revisar los cambios',
+    reviewTitle: 'Revisar los cambios',
+    reviewMessage: 'Al guardar, "{name}" cambiará así:',
+    saveAction: 'Guardar cambios',
+    backAction: 'Atrás',
+    reviewName: 'Nombre',
+    reviewPassphraseValue: 'La que has escrito (no se muestra)',
+    noteRename: 'Los dispositivos que guardaron la red con su nombre anterior tendrán que conectarse al nuevo nombre.',
+    noteToOpen: 'Cualquiera que esté al alcance podrá conectarse sin contraseña.',
+    notePmf: 'Si la PMF (protección de tramas de gestión) de esta red está en "Obligatoria", al guardar con esta seguridad y estas bandas puede pasar a "Compatible". Compruébalo después en el controlador.',
+    passwordTitle: 'Cambiar la contraseña',
+    passwordMessage: 'Escribe la nueva contraseña de "{name}". Los dispositivos tendrán que usarla para conectarse de nuevo. La contraseña actual nunca se muestra.',
+    passwordAction: 'Cambiar contraseña',
+    enableTitle: 'Activar la red',
+    enableMessage: '¿Activar "{name}"? Empezará a emitirse en su alcance:',
+    enableAction: 'Activar red',
+    disableTitle: 'Desactivar la red',
+    disableMessage: '¿Desactivar "{name}"? Dejará de emitirse y se desconectarán sus clientes en todo su alcance:',
+    disableAction: 'Desactivar red',
+    deleteTitle: 'Eliminar la red',
+    deleteMessage: '¿Eliminar la red Wi-Fi "{name}"? Dejará de emitirse y se desconectarán sus clientes en todo su alcance. No se puede deshacer.',
+    deleteAction: 'Eliminar red',
+    impactScope: 'Alcance',
+    impactGroups: 'Grupos de AP',
+    impactAllNote: 'Incluye los puntos de acceso que se añadan más adelante.',
+    impactUnknownNote: 'El controlador no indica con claridad dónde se emite: puede afectar a cualquier punto de acceso del sitio.',
+    creating: 'Creando la red…',
+    created: 'Se creó la red "{name}" (desactivada).',
+    createdEnabled: 'Se creó y se activó la red "{name}".',
+    createdNoId: 'Se creó la red "{name}", pero sigue desactivada: el controlador no indicó cuál es la red nueva, así que no se pudo activar. Actívala desde sus detalles.',
+    saved: 'Se guardaron los cambios de "{name}".',
+    passwordChanged: 'Se cambió la contraseña de "{name}".',
+    enabledDone: 'Se activó la red "{name}".',
+    disabledDone: 'Se desactivó la red "{name}".',
+    deleted: 'Se eliminó la red "{name}".',
+    errNameRequired: 'Escribe un nombre para la red.',
+    errNameTooLong: 'El nombre puede ocupar como máximo 32 bytes (las letras con tilde y los emoji ocupan más de uno).',
+    errNameTaken: 'El controlador ya tiene una red con este nombre (o es el nombre de la red de emergencia).',
+    errPassphraseRequired: 'Escribe la contraseña de la red.',
+    errPassphraseInvalid: 'La contraseña debe tener de 8 a 63 caracteres ASCII imprimibles (letras sin tilde, números, espacios y símbolos).',
+    errMismatch: 'Las dos contraseñas no coinciden.',
+    errGroupsRequired: 'Elige al menos un grupo de AP.',
+    errNothingToChange: 'No hay nada que guardar: cambia el nombre, la seguridad o las bandas (para cambiar solo la contraseña, usa Cambiar contraseña).',
+    conflictIot: 'Esta combinación de seguridad y bandas choca con la conectividad IoT mejorada de la red, que solo funciona en 2,4 GHz y sin WPA3 y que la aplicación no cambia: desactívala en el controlador o deja fuera 5 GHz y 6 GHz.',
+    conflictOwe: 'Esta combinación choca con OWE (Enhanced Open): una red abierta con 6 GHz lo necesita y no se puede activar al crearla. Créala sin 6 GHz y añade 6 GHz después con Editar.',
+    errRequestFailed: 'El controlador no pudo completar la solicitud.',
+    blockedDataStale: 'Los datos en pantalla no están al día (falló su última actualización): no se puede cambiar ninguna red Wi-Fi hasta que se actualicen.',
+    blockedListStale: 'La lista de redes Wi-Fi no está al día (falló su última lectura): no se puede cambiar ninguna red hasta que se vuelva a leer (Reintentar).',
+    networkChanged: 'La red ha cambiado en el controlador (o ya no está) desde que se mostró: revisa sus datos actualizados y vuelve a intentarlo. No se envió nada.',
+  },
+  en: {
+    newNetwork: 'New network',
+    actionsLabel: 'Network actions',
+    edit: 'Edit',
+    password: 'Change password',
+    enable: 'Enable',
+    disable: 'Disable',
+    delete: 'Delete',
+    notEditable: 'The app edits only Open and WPA-Personal networks, so the settings and the password of this {security} network can\'t be changed here: use the controller. It can still be enabled, disabled or deleted.',
+    notEditableUnknown: 'The controller does not report this network\'s security clearly and the app edits only Open and WPA-Personal networks, so its settings and its password can\'t be changed here. It can still be deleted.',
+    toggleUnavailable: 'The controller does not report whether this network is enabled, so Enable / Disable is not offered.',
+    nameLabel: 'Network name (SSID)',
+    nameHint: '1 to 32 bytes (accented letters and emoji take more than one), no control characters.',
+    passphraseLabel: 'Network password',
+    confirmationLabel: 'Type the password again',
+    passphraseHint: '8 to 63 printable ASCII characters (unaccented letters, digits, spaces and symbols); used exactly as typed.',
+    groupsHint: 'Pick at least one group.',
+    enableAfter: 'Enable after creating',
+    createTitle: 'New Wi-Fi network',
+    createMessage: 'The network is created disabled (it is not broadcast until you enable it) on the AP groups you pick. Only Open and WPA-Personal networks can be created.',
+    create6Ghz: 'An open network can\'t be created with 6 GHz: that band requires OWE (Enhanced Open), which can\'t be set when creating it. Create it without 6 GHz, then add 6 GHz with Edit.',
+    createAction: 'Create network',
+    editTitle: 'Edit the Wi-Fi network',
+    editMessage: 'Change the basic settings of "{name}". Nothing is sent until you review the changes and save them.',
+    editPassphraseNote: 'Saving a WPA-Personal network needs its password: the app never reads the current password from the controller, so every save sends the one you type here (the current one or a new one).',
+    reviewAction: 'Review changes',
+    reviewTitle: 'Review the changes',
+    reviewMessage: 'Saving changes "{name}" as follows:',
+    saveAction: 'Save changes',
+    backAction: 'Back',
+    reviewName: 'Name',
+    reviewPassphraseValue: 'The one you typed (not shown)',
+    noteRename: 'Devices that saved the network under its old name will have to join the new name.',
+    noteToOpen: 'Anyone in range will be able to join without a password.',
+    notePmf: 'If this network\'s PMF (Protected Management Frames) is set to "Mandatory", saving with this security and these bands may lower it to "Capable". Check it in the controller afterwards.',
+    passwordTitle: 'Change the password',
+    passwordMessage: 'Type the new password of "{name}". Devices will need it to join again. The current password is never shown.',
+    passwordAction: 'Change password',
+    enableTitle: 'Enable the network',
+    enableMessage: 'Enable "{name}"? It will start broadcasting on its scope:',
+    enableAction: 'Enable network',
+    disableTitle: 'Disable the network',
+    disableMessage: 'Disable "{name}"? It will stop broadcasting, and its clients will be disconnected on its whole scope:',
+    disableAction: 'Disable network',
+    deleteTitle: 'Delete the network',
+    deleteMessage: 'Delete the Wi-Fi network "{name}"? It will stop broadcasting and its clients will be disconnected on its whole scope. This cannot be undone.',
+    deleteAction: 'Delete network',
+    impactScope: 'Scope',
+    impactGroups: 'AP groups',
+    impactAllNote: 'This includes the access points added later.',
+    impactUnknownNote: 'The controller does not report clearly where it is broadcast: it may affect any access point of the site.',
+    creating: 'Creating the network…',
+    created: 'Network "{name}" created (disabled).',
+    createdEnabled: 'Network "{name}" created and enabled.',
+    createdNoId: 'Network "{name}" was created but is still disabled: the controller did not say which network is the new one, so it could not be enabled. Enable it from its details.',
+    saved: 'Changes to "{name}" saved.',
+    passwordChanged: 'The password of "{name}" was changed.',
+    enabledDone: 'Network "{name}" enabled.',
+    disabledDone: 'Network "{name}" disabled.',
+    deleted: 'Network "{name}" deleted.',
+    errNameRequired: 'Type a name for the network.',
+    errNameTooLong: 'The name can take at most 32 bytes (accented letters and emoji take more than one).',
+    errNameTaken: 'The controller already has a network with this name (or it is the emergency network\'s name).',
+    errPassphraseRequired: 'Type the network password.',
+    errPassphraseInvalid: 'The password must have 8 to 63 printable ASCII characters (unaccented letters, digits, spaces and symbols).',
+    errMismatch: 'The two passwords do not match.',
+    errGroupsRequired: 'Pick at least one AP group.',
+    errNothingToChange: 'Nothing to save: change the name, the security or the bands (to change only the password, use Change password).',
+    conflictIot: 'This combination of security and bands conflicts with the network\'s Enhanced IoT Connectivity, which works only on 2.4 GHz without WPA3 and which the app does not change: turn it off in the controller, or leave out 5 GHz and 6 GHz.',
+    conflictOwe: 'This combination conflicts with OWE (Enhanced Open): an open network with 6 GHz needs it, and it can\'t be turned on when creating the network. Create it without 6 GHz, then add 6 GHz with Edit.',
+    errRequestFailed: 'The controller could not complete the request.',
+    blockedDataStale: 'The data on screen is not up to date (its last refresh failed): no Wi-Fi network can be changed until it is refreshed.',
+    blockedListStale: 'The Wi-Fi network list is not up to date (its last read failed): no network can be changed until it is read again (Retry).',
+    networkChanged: 'The network changed on the controller (or is gone) since it was shown: check its updated details and try again. Nothing was sent.',
+  },
+};
+
+/**
+ * Reads the Wi-Fi networks view's write controls: "New network" (in the
+ * list header) and the detail's action bar (id, data-network-action, text,
+ * disabled, its group label) and the detail's notes.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The controls.
+ */
+function readNetworkControls(page) {
+  return page.evaluate(() => ({
+    list: Array.from(document.querySelectorAll('#networkListActions button')).map((button) => ({ id: button.id, action: button.dataset.networkAction, text: button.textContent, disabled: button.disabled })),
+    detail: Array.from(document.querySelectorAll('#networkDetail [data-network-action]')).map((button) => ({ id: button.id, action: button.dataset.networkAction, text: button.textContent, disabled: button.disabled })),
+    label: document.querySelector('#networkDetail .detail-actions')?.getAttribute('aria-label') ?? null,
+    notes: Array.from(document.querySelectorAll('#networkDetail > .detail-note')).map((note) => ({ kind: note.dataset.note, reason: note.dataset.reason ?? null, text: note.textContent })),
+    activeId: document.activeElement?.id || '',
+    activeNetwork: document.activeElement?.dataset?.networkName ?? null,
+  }));
+} // End of function readNetworkControls()
+
+/**
+ * Reads the Wi-Fi network dialog: dialog semantics, its kind and step, title
+ * and message, the form's fields (name, the two password fields with their
+ * type, autocomplete and whether shown, the security, bands and groups
+ * choices, "Enable after creating"), the visible help lines, the summary
+ * (rows and notes), the error and progress lines, the buttons, the focused
+ * element and the background's inertness.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The dialog's state.
+ */
+function readNetworkModal(page) {
+  return page.evaluate(() => {
+    const modal = document.getElementById('networkModal');
+    const form = document.getElementById('networkModalForm');
+    /**
+     * Reads one text or password field, or null when absent.
+     * @param {string} id - The input id.
+     * @returns {object | null} Its state.
+     */
+    const field = (id) => {
+      const input = document.getElementById(id);
+      return input ? {
+        value: input.value, type: input.type, autocomplete: input.getAttribute('autocomplete'), shown: input.closest('[hidden]') === null,
+        invalid: input.getAttribute('aria-invalid'), readOnly: input.readOnly, label: document.querySelector(`label[for="${id}"]`)?.textContent ?? null,
+      } : null;
+    };
+    /**
+     * The values of the checked inputs of a selector.
+     * @param {string} selector - The inputs.
+     * @returns {string[]} The checked values.
+     */
+    const checked = (selector) => Array.from(document.querySelectorAll(selector)).filter((input) => input.checked).map((input) => input.value);
+    const error = document.getElementById('networkModalError');
+    const back = document.getElementById('backNetworkBtn');
+    const confirm = document.getElementById('confirmNetworkBtn');
+    const cancel = document.getElementById('cancelNetworkBtn');
+    const enableAfter = document.getElementById('networkEnableAfterInput');
+    return {
+      open: modal.classList.contains('visible'),
+      role: modal.getAttribute('role'),
+      ariaModal: modal.getAttribute('aria-modal'),
+      busy: modal.getAttribute('aria-busy'),
+      kind: modal.dataset.kind ?? null,
+      step: modal.dataset.step ?? null,
+      title: document.getElementById('networkModalHeading')?.textContent ?? '',
+      message: document.getElementById('networkModalMessage')?.textContent ?? '',
+      formShown: !form.hidden,
+      inputs: form.querySelectorAll('input').length,
+      name: field('networkNameInput'),
+      passphrase: field('networkPassphraseInput'),
+      confirmation: field('networkPassphraseConfirmInput'),
+      security: checked('#networkSecurityField input'),
+      securityLabels: Array.from(document.querySelectorAll('#networkSecurityField label')).map((label) => label.textContent),
+      bands: checked('#networkBandsField input'),
+      groups: Array.from(document.querySelectorAll('#networkGroupsField label')).map((label) => ({
+        id: label.querySelector('input')?.value ?? null, text: label.querySelector('.network-choice-text')?.textContent ?? '', meta: label.querySelector('.detail-meta')?.textContent ?? null, checked: label.querySelector('input')?.checked ?? false,
+      })),
+      enableAfter: enableAfter ? { checked: enableAfter.checked, label: enableAfter.closest('label')?.textContent ?? '' } : null,
+      helps: Array.from(form.querySelectorAll('.network-help')).filter((help) => help.closest('[hidden]') === null).map((help) => ({ kind: help.dataset.note, text: help.textContent })),
+      summaryShown: !document.getElementById('networkModalSummary').hidden,
+      rows: Array.from(document.querySelectorAll('#networkModalSummary .network-summary-row')).map((row) => ({ row: row.dataset.row, label: row.querySelector('dt')?.textContent ?? '', value: row.querySelector('dd')?.textContent ?? '' })),
+      notes: Array.from(document.querySelectorAll('#networkModalSummary .network-summary-note')).map((note) => note.textContent),
+      errorShown: !error.hidden,
+      error: error.textContent,
+      errorRole: error.getAttribute('role'),
+      status: document.getElementById('networkModalStatus')?.textContent ?? '',
+      cancel: cancel.textContent,
+      cancelDisabled: cancel.disabled,
+      back: back.hidden ? null : back.textContent,
+      confirm: confirm.textContent,
+      confirmDisabled: confirm.disabled,
+      danger: confirm.classList.contains('btn-danger'),
+      activeId: document.activeElement?.id || '',
+      inert: document.querySelector('.app-container')?.hasAttribute('inert'),
+    };
+  }); // End of the in-page network dialog probe
+} // End of function readNetworkModal()
+
+/**
+ * Waits until the Wi-Fi network dialog is open.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function waitForNetworkModal(page) {
+  await page.waitForSelector('#networkModal.visible', { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the Wi-Fi network dialog is closed.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function waitForNetworkModalClosed(page) {
+  await page.waitForFunction(() => !document.getElementById('networkModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the Wi-Fi network dialog's error line shows the given text.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} text - Expected text.
+ * @returns {Promise<void>}
+ */
+async function waitForNetworkError(page, text) {
+  await page.waitForFunction((expected) => {
+    const error = document.getElementById('networkModalError');
+    return Boolean(error) && !error.hidden && error.textContent === expected;
+  }, text, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the Wi-Fi network dialog shows the given step ('form', 'review', 'confirm').
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} step - The step.
+ * @returns {Promise<void>}
+ */
+async function waitForNetworkStep(page, step) {
+  await page.waitForFunction((expected) => document.getElementById('networkModal')?.dataset.step === expected, step, { timeout: WAIT_MS });
+}
+
+/**
+ * Lists the [netedit] sentinel secrets found in the renderer: in the markup
+ * (attributes included) or in any input's value.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<string[]>} The leaked secrets (empty when clean).
+ */
+function findNeteditSecrets(page) {
+  return page.evaluate((secrets) => {
+    const values = Array.from(document.querySelectorAll('input')).map((input) => input.value).join('\n');
+    const html = document.documentElement.outerHTML;
+    return secrets.filter((secret) => html.includes(secret) || values.includes(secret));
+  }, NETEDIT_SECRETS);
+}
+
+/**
+ * Waits until the managed list's latest read is in the given status (the
+ * list's data-managed-read: a re-read does not re-render the view as it
+ * starts, so this is what tells it ran).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} status - 'idle', 'loading', 'ready' or 'failed'.
+ * @returns {Promise<void>}
+ */
+async function waitForManagedRead(page, status) {
+  await page.waitForFunction((expected) => document.getElementById('networkList')?.dataset.managedRead === expected, status, { timeout: WAIT_MS });
+}
+
+/**
+ * Refreshes (once no load is in flight) and waits until the managed list
+ * was read again successfully, the refresh notice gone.
+ * @param {object} session - The launch.
+ * @returns {Promise<void>}
+ */
+async function refreshNetworksFully(session) {
+  await refreshNetworks(session);
+  await waitForManagedRead(session.page, 'ready');
+  await session.page.waitForFunction(() => document.getElementById('refreshNotice').hidden && document.getElementById('networksStaleNotice').hidden, null, { timeout: WAIT_MS });
+}
+
+/**
+ * Clicks a Wi-Fi network write action even while it is rendered disabled
+ * (re-enabled by script first, like a button rendered before the data went
+ * stale): the flow itself must refuse.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} id - The button id.
+ * @returns {Promise<void>}
+ */
+async function forceNetworkAction(page, id) {
+  await page.evaluate((buttonId) => {
+    const button = document.getElementById(buttonId);
+    button.disabled = false;
+    button.click();
+  }, id);
+}
+
+/**
+ * The stub's calls of the Wi-Fi network write channels and its applied
+ * writes, for counting what a step sent.
+ * @param {object} session - The launch.
+ * @returns {Promise<{ snapshot: object; create: object[]; update: object[]; password: object[]; enable: object[]; delete: object[]; writes: object[] }>}
+ */
+async function networkWriteState(session) {
+  const snapshot = await stubState(session);
+  return {
+    snapshot,
+    create: callsTo(snapshot, 'management:network-create'),
+    update: callsTo(snapshot, 'management:network-update'),
+    password: callsTo(snapshot, 'management:network-password'),
+    enable: callsTo(snapshot, 'management:network-enable'),
+    delete: callsTo(snapshot, 'management:network-delete'),
+    writes: snapshot.networkWrites,
+  };
+} // End of function networkWriteState()
+
+/**
+ * Counts the network write calls and applied writes of a state.
+ * @param {object} state - networkWriteState().
+ * @returns {number[]} The counts (create, update, password, enable, delete, applied).
+ */
+function writeCounts(state) {
+  return [state.create.length, state.update.length, state.password.length, state.enable.length, state.delete.length, state.writes.length];
+}
+
+/**
+ * The managed list's line of a network ("state · security · bands").
+ * @param {string} enabled - The enabled state's text.
+ * @param {string} security - The security's text.
+ * @param {string} bands - The bands' text.
+ * @returns {string} The line.
+ */
+function neteditProps(enabled, security, bands) {
+  return `${enabled} · ${security} · ${bands}`;
+}
+
+/**
+ * The [netedit] checks of one language, over NETEDIT_NETWORKS freshly loaded
+ * (the English run starts again from them): the actions per security mode,
+ * hidden while management is off or being re-checked; New network with its
+ * client-side refusals and Escape, created without and with "Enable after
+ * creating" (also an answer without an id), and refused by the controller;
+ * the staged edit (review, Back, Save) and an edit cancelled; a double-click
+ * and a held Enter on the edit's form (never a save); Change password;
+ * Disable / Enable; a conflict main reports; no write on stale data (a
+ * stale managed list, a failed refresh); the confirmations built from a
+ * fresh read (fresh impact, a failed read, a changed network); Delete with
+ * its impact summary. After every dialog closes no sentinel passphrase is
+ * in the DOM.
+ * @param {object} session - The launch.
+ * @param {'es' | 'en'} language - UI language.
+ * @returns {Promise<void>}
+ */
+async function runNetworkEditingChecks(session, language) {
+  const { page } = session;
+  const L = `[netedit] ${language}`;
+  const text = TEXT[language];
+  const nets = NETS_TEXT[language];
+  const ed = NETEDIT_TEXT[language];
+  const typed = NETEDIT_TYPED[language];
+  const ppsk = language === 'es' ? 'PPSK sin RADIUS' : 'PPSK without RADIUS';
+  const cancel = language === 'es' ? 'Cancelar' : 'Cancel';
+  const band6 = '6 GHz';
+  const bandsAll = nets.bandsAll;
+  const bands2g5g = nets.bands2g5g;
+  const groups = (count) => (count === 1 ? text.groupOne : fmt(text.groupMany, { count }));
+
+  await check(`${L}: the write actions per security mode — "${ed.newNetwork}" above the list; Casa (WPA-Personal, enabled): ${ed.edit}, ${ed.password}, ${ed.disable}, ${ed.delete} in a group "${ed.actionsLabel}"; Invitados (open, disabled): ${ed.edit}, ${ed.enable}, ${ed.delete}; Empresa (WPA-Enterprise) and Clave (PPSK): no ${ed.edit} / ${ed.password}, only ${ed.disable} and ${ed.delete}, with the explanation that the app edits only Open and WPA-Personal networks`, async () => {
+    await page.click('#navNetworks');
+    await waitForNetworksMode(page, 'managedReady');
+    await openNetworkDetail(page, 'Casa');
+    const casa = await readNetworkControls(page);
+    await openNetworkDetail(page, 'Invitados');
+    const invitados = await readNetworkControls(page);
+    await openNetworkDetail(page, 'Empresa');
+    const empresa = await readNetworkControls(page);
+    await openNetworkDetail(page, 'Clave');
+    const clave = await readNetworkControls(page);
+    const leaks = await findNeteditSecrets(page);
+    /**
+     * The actions as [action, text] pairs.
+     * @param {object} controls - readNetworkControls().
+     * @returns {string[][]} The pairs.
+     */
+    const pairs = (controls) => controls.detail.map((button) => [button.action, button.text]);
+    return verdict(
+      isDeepStrictEqual(casa.list, [{ id: 'newNetworkBtn', action: 'create', text: ed.newNetwork, disabled: false }]) &&
+      isDeepStrictEqual(pairs(casa), [['edit', ed.edit], ['password', ed.password], ['disable', ed.disable], ['delete', ed.delete]]) &&
+      isDeepStrictEqual(casa.detail.map((button) => button.id), ['networkEditBtn', 'networkPasswordBtn', 'networkToggleBtn', 'networkDeleteBtn']) &&
+      casa.label === ed.actionsLabel && casa.notes.length === 0 &&
+      isDeepStrictEqual(pairs(invitados), [['edit', ed.edit], ['enable', ed.enable], ['delete', ed.delete]]) &&
+      isDeepStrictEqual(invitados.notes.map((note) => note.kind), ['allAccessPoints']) &&
+      isDeepStrictEqual(pairs(empresa), [['disable', ed.disable], ['delete', ed.delete]]) &&
+      isDeepStrictEqual(empresa.notes, [{ kind: 'notEditable', reason: 'enterprise', text: fmt(ed.notEditable, { security: nets.wpaEnterprise }) }]) &&
+      isDeepStrictEqual(pairs(clave), [['disable', ed.disable], ['delete', ed.delete]]) &&
+      isDeepStrictEqual(clave.notes, [
+        { kind: 'notEditable', reason: 'ppsk', text: fmt(ed.notEditable, { security: ppsk }) },
+        { kind: 'unknownScope', reason: null, text: nets.unknownNote },
+      ]) &&
+      leaks.length === 0,
+      { casa, invitados, empresa, clave, leaks }
+    );
+  }); // End of check "the write actions per security mode"
+
+  await check(`${L}: the actions are hidden — not just disabled — while "Test management access" re-checks (fail closed) and while management is off ("siteNotFound"); they come back once the check passes`, async () => {
+    let checking;
+    let off;
+    try {
+      await openNetworkDetail(page, 'Casa');
+      await configureStub(session, { delays: { 'management:test': 1000 } });
+      await openSettingsWhenIdle(page);
+      await page.click('#testManagementBtn');
+      await page.waitForFunction(() => document.getElementById('readOnlyBanner')?.dataset.reason === 'managementChecking', null, { timeout: WAIT_MS });
+      checking = await readNetworkControls(page);
+      await waitForTestResult(page, CAPS_TEXT[language].result.ok);
+      await configureStub(session, { delays: {}, managementReason: 'siteNotFound', managementDiagnostic: 'sites 2' });
+      await page.click('#testManagementBtn');
+      await waitForTestResult(page, `${CAPS_TEXT[language].result.siteNotFound} (sites 2)`);
+      await page.click('#cancelSettingsBtn');
+      await waitForSettingsClosed(page);
+      await waitForNetworksMode(page, 'internal');
+      off = await readNetworkControls(page);
+    } finally {
+      await configureStub(session, { delays: {}, managementReason: null, managementDiagnostic: null });
+      if (await page.isVisible('#settingsModal.visible')) {
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+      }
+      await recheckManagement(page, CAPS_TEXT[language].result.ok);
+    }
+    await waitForNetworksMode(page, 'managedReady');
+    await openNetworkDetail(page, 'Casa');
+    const on = await readNetworkControls(page);
+    return verdict(
+      checking.list.length === 0 && checking.detail.length === 0 && off.list.length === 0 && off.detail.length === 0 &&
+      on.list.length === 1 && on.detail.length === 4,
+      { checking, off, on }
+    );
+  }); // End of check "the actions are hidden..."
+
+  await check(`${L}: "${ed.newNetwork}" opens the dialog (role dialog, aria-modal, background inert) on the name field: "${ed.createTitle}", "${ed.createMessage}"; WPA-Personal chosen, the two password fields empty (type password, autocomplete new-password), 2.4 + 5 GHz ticked with the 6 GHz explanation, the AP groups to pick (none ticked), "${ed.enableAfter}" off; refused client-side without asking main: a blank name, 33 bytes, no group, a short passphrase, a confirmation that differs, an open network with 6 GHz (OWE); choosing Open hides and empties the password fields; Escape cancels — nothing sent, focus back on "${ed.newNetwork}", no passphrase left in the DOM`, async () => {
+    const before = writeCounts(await networkWriteState(session));
+    await page.click('#newNetworkBtn');
+    await waitForNetworkModal(page);
+    const opened = await readNetworkModal(page);
+    await page.press('#networkNameInput', 'Enter');
+    await waitForNetworkError(page, ed.errNameRequired);
+    const blank = await readNetworkModal(page);
+    await page.fill('#networkNameInput', 'ñ'.repeat(16) + 'a');
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkError(page, ed.errNameTooLong);
+    await page.fill('#networkNameInput', 'Oficina 2');
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkError(page, ed.errGroupsRequired);
+    await page.check(`#networkGroupsField input[value="${NETEDIT_ZGRUPO}"]`);
+    await page.fill('#networkPassphraseInput', 'short');
+    await page.fill('#networkPassphraseConfirmInput', 'short');
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkError(page, ed.errPassphraseInvalid);
+    await page.fill('#networkPassphraseInput', typed.create);
+    await page.fill('#networkPassphraseConfirmInput', typed.other);
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkError(page, ed.errMismatch);
+    const mismatch = await readNetworkModal(page);
+    await page.check('#networkSecurityField input[value="open"]');
+    const open = await readNetworkModal(page);
+    await page.check('#networkBandsField input[value="band6g"]');
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkError(page, ed.conflictOwe);
+    await page.keyboard.press('Escape');
+    await waitForNetworkModalClosed(page);
+    const after = writeCounts(await networkWriteState(session));
+    const focus = await readNetworkControls(page);
+    const leaks = await findNeteditSecrets(page);
+    const closed = await readNetworkModal(page);
+    return verdict(
+      opened.role === 'dialog' && opened.ariaModal === 'true' && opened.inert && opened.kind === 'create' && opened.step === 'form' &&
+      opened.title === ed.createTitle && opened.message === ed.createMessage && opened.activeId === 'networkNameInput' &&
+      opened.name?.value === '' && opened.name.label === ed.nameLabel &&
+      opened.passphrase?.type === 'password' && opened.passphrase.autocomplete === 'new-password' && opened.passphrase.value === '' && opened.passphrase.shown &&
+      opened.passphrase.label === ed.passphraseLabel &&
+      opened.confirmation?.type === 'password' && opened.confirmation.autocomplete === 'new-password' && opened.confirmation.value === '' && opened.confirmation.label === ed.confirmationLabel &&
+      isDeepStrictEqual(opened.security, ['wpaPersonal']) && isDeepStrictEqual(opened.securityLabels, [nets.open, nets.wpaPersonal]) &&
+      isDeepStrictEqual(opened.bands, ['band2g', 'band5g']) &&
+      isDeepStrictEqual(opened.groups.map((option) => [option.id, option.text, option.checked]), [
+        [NETEDIT_DEFAULT, 'Default', false], [GROUP.Exterior.wlanId, 'Exterior', false], [NETEDIT_ZGRUPO, 'zGrupo B', false], [GROUP.zNinguna.wlanId, 'zNinguna', false],
+      ]) &&
+      isDeepStrictEqual(opened.enableAfter, { checked: false, label: ed.enableAfter }) &&
+      isDeepStrictEqual(opened.helps, [
+        { kind: 'nameHint', text: ed.nameHint }, { kind: 'passphraseHint', text: ed.passphraseHint }, { kind: 'bandsNote', text: ed.create6Ghz }, { kind: 'groupsHint', text: ed.groupsHint },
+      ]) &&
+      opened.confirm === ed.createAction && opened.cancel === cancel && opened.back === null && !opened.danger &&
+      blank.errorShown && blank.errorRole === 'alert' && blank.name.invalid === 'true' && blank.activeId === 'networkNameInput' &&
+      mismatch.activeId === 'networkPassphraseConfirmInput' && mismatch.confirmation.invalid === 'true' &&
+      isDeepStrictEqual(open.security, ['open']) && !open.passphrase.shown && open.passphrase.value === '' && open.confirmation.value === '' &&
+      isDeepStrictEqual(after, before) && focus.activeId === 'newNetworkBtn' && leaks.length === 0 && closed.inputs === 0 && !closed.inert,
+      { opened, blank, mismatch, open, before, after, focus: focus.activeId, leaks }
+    );
+  }); // End of check "New network opens the dialog..."
+
+  await check(`${L}: create "  Oficina 2  " (WPA-Personal, typed passphrase, zGrupo B) without "${ed.enableAfter}": while it runs "${ed.creating}" with the buttons disabled; ONE createNetwork call {sessionNonce, name trimmed, security, bands, apGroupIds, passphrase} and no enable; the fake controller created it disabled; the toast "${fmt(ed.created, { name: 'Oficina 2' })}"; the new network listed (${nets.disabled} · WPA-Personal), selected and focused; no passphrase in the DOM`, async () => {
+    const before = await networkWriteState(session);
+    let busy;
+    try {
+      await configureStub(session, { delays: { 'management:network-create': 600 } });
+      await page.click('#newNetworkBtn');
+      await waitForNetworkModal(page);
+      await page.fill('#networkNameInput', '  Oficina 2  ');
+      await page.fill('#networkPassphraseInput', typed.create);
+      await page.fill('#networkPassphraseConfirmInput', typed.create);
+      await page.check(`#networkGroupsField input[value="${NETEDIT_ZGRUPO}"]`);
+      await page.click('#confirmNetworkBtn');
+      await page.waitForFunction((expected) => document.getElementById('networkModalStatus')?.textContent === expected, ed.creating, { timeout: WAIT_MS });
+      busy = await readNetworkModal(page);
+    } finally {
+      await configureStub(session, { delays: {} });
+    }
+    await waitForNetworkModalClosed(page);
+    await waitForToast(page, 'success', fmt(ed.created, { name: 'Oficina 2' }));
+    const after = await networkWriteState(session);
+    const creates = after.create.slice(before.create.length);
+    const writes = after.writes.slice(before.writes.length);
+    const list = await readManagedList(page);
+    const row = list.items.find((item) => item.name === 'Oficina 2');
+    const focus = await readNetworkControls(page);
+    const leaks = await findNeteditSecrets(page);
+    return verdict(
+      busy.busy === 'true' && busy.confirmDisabled && busy.cancelDisabled && busy.activeId === 'networkModalStatus' && busy.passphrase.readOnly &&
+      creates.length === 1 && isDeepStrictEqual(creates[0].args, [{
+        sessionNonce: after.snapshot.sessionNonce, name: 'Oficina 2', security: 'wpaPersonal', bands: ['band2g', 'band5g'], apGroupIds: [NETEDIT_ZGRUPO], passphrase: typed.create,
+      }]) &&
+      after.enable.length === before.enable.length &&
+      writes.length === 1 && writes[0].op === 'create' && writes[0].body.ssidEnable === false && writes[0].body.name === 'Oficina 2' &&
+      writes[0].body.pskSetting?.securityKey === typed.create &&
+      row?.props === neteditProps(nets.disabled, nets.wpaPersonal, bands2g5g) && row.scope === `${groups(1)} · ${text.apOne}` && row.current === 'true' &&
+      focus.activeNetwork === 'Oficina 2' && leaks.length === 0,
+      { busy, creates: creates.map((call) => call.args), writes, row, focus: focus.activeNetwork, leaks }
+    );
+  }); // End of check "create Oficina 2..."
+
+  await check(`${L}: create with "${ed.enableAfter}" (open "Abierta 2", 2.4 GHz, Default): createNetwork (no passphrase key) then setNetworkEnabled with the id main reported; the toast "${fmt(ed.createdEnabled, { name: 'Abierta 2' })}"; listed as ${nets.enabled} · ${nets.open}. An answer WITHOUT an id: no enable call at all, and the toast says the network stays disabled`, async () => {
+    const before = await networkWriteState(session);
+    await page.click('#newNetworkBtn');
+    await waitForNetworkModal(page);
+    await page.fill('#networkNameInput', 'Abierta 2');
+    await page.check('#networkSecurityField input[value="open"]');
+    await page.uncheck('#networkBandsField input[value="band5g"]');
+    await page.check(`#networkGroupsField input[value="${NETEDIT_DEFAULT}"]`);
+    await page.check('#networkEnableAfterInput');
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkModalClosed(page);
+    await waitForToast(page, 'success', fmt(ed.createdEnabled, { name: 'Abierta 2' }));
+    const middle = await networkWriteState(session);
+    const creates = middle.create.slice(before.create.length);
+    const enables = middle.enable.slice(before.enable.length);
+    const writes = middle.writes.slice(before.writes.length);
+    const row = (await readManagedList(page)).items.find((item) => item.name === 'Abierta 2');
+    let noId;
+    let toastNoId = false;
+    try {
+      await configureStub(session, { networkResults: { 'management:network-create': { success: true } } });
+      await page.click('#newNetworkBtn');
+      await waitForNetworkModal(page);
+      await page.fill('#networkNameInput', 'Sin id');
+      await page.check('#networkSecurityField input[value="open"]');
+      await page.check(`#networkGroupsField input[value="${NETEDIT_DEFAULT}"]`);
+      await page.check('#networkEnableAfterInput');
+      await page.click('#confirmNetworkBtn');
+      await waitForNetworkModalClosed(page);
+      await waitForToast(page, 'info', fmt(ed.createdNoId, { name: 'Sin id' }));
+      toastNoId = true;
+      noId = await networkWriteState(session);
+    } finally {
+      await configureStub(session, { networkResults: {} });
+    }
+    const leaks = await findNeteditSecrets(page);
+    return verdict(
+      creates.length === 1 && isDeepStrictEqual(creates[0].args, [{
+        sessionNonce: middle.snapshot.sessionNonce, name: 'Abierta 2', security: 'open', bands: ['band2g'], apGroupIds: [NETEDIT_DEFAULT],
+      }]) &&
+      writes.length === 2 && writes[0].op === 'create' && writes[0].body.ssidEnable === false &&
+      enables.length === 1 && isDeepStrictEqual(enables[0].args, [{ sessionNonce: middle.snapshot.sessionNonce, networkId: writes[0].networkId, enabled: true }]) &&
+      isDeepStrictEqual(writes[1], { op: 'enable', networkId: writes[0].networkId, enabled: true }) &&
+      row?.props === neteditProps(nets.enabled, nets.open, nets.band2g) &&
+      toastNoId && noId.create.length === middle.create.length + 1 && noId.enable.length === middle.enable.length && noId.writes.length === middle.writes.length &&
+      leaks.length === 0,
+      { creates: creates.map((call) => call.args), enables: enables.map((call) => call.args), writes, row, noId: noId && writeCounts(noId), leaks }
+    );
+  }); // End of check "create with Enable after creating..."
+
+  await check(`${L}: a create the controller refuses shows main's code as text with its diagnostic — "${ed.errNameTaken} (ssid create: apiError, errorCode -33219)" — the dialog stays open on the name field (aria-invalid); nothing is created; Cancel closes it with no passphrase left in the DOM`, async () => {
+    const before = await networkWriteState(session);
+    let refused;
+    try {
+      await configureStub(session, { networkResults: { 'management:network-create': { success: false, error: 'nameTaken', diagnostic: 'ssid create: apiError, errorCode -33219' } } });
+      await page.click('#newNetworkBtn');
+      await waitForNetworkModal(page);
+      await page.fill('#networkNameInput', 'Casa');
+      await page.fill('#networkPassphraseInput', typed.refused);
+      await page.fill('#networkPassphraseConfirmInput', typed.refused);
+      await page.check(`#networkGroupsField input[value="${NETEDIT_DEFAULT}"]`);
+      await page.click('#confirmNetworkBtn');
+      await waitForNetworkError(page, `${ed.errNameTaken} (ssid create: apiError, errorCode -33219)`);
+      refused = await readNetworkModal(page);
+      await page.click('#cancelNetworkBtn');
+      await waitForNetworkModalClosed(page);
+    } finally {
+      await configureStub(session, { networkResults: {} });
+    }
+    const after = await networkWriteState(session);
+    const leaks = await findNeteditSecrets(page);
+    const focus = await readNetworkControls(page);
+    return verdict(
+      refused.open && refused.activeId === 'networkNameInput' && refused.name.invalid === 'true' && !refused.confirmDisabled &&
+      after.create.length === before.create.length + 1 && after.writes.length === before.writes.length &&
+      focus.activeId === 'newNetworkBtn' && leaks.length === 0,
+      { refused, leaks, focus: focus.activeId }
+    );
+  }); // End of check "a create the controller refuses..."
+
+  await check(`${L}: edit Casa — the staged form (name "Casa" selected, WPA-Personal, 2.4 + 5 GHz, empty password fields with why they are needed); "${ed.reviewAction}" without a change says "${ed.errNothingToChange}"; renamed "Casa Nueva" + 6 GHz without the passphrase says "${ed.errPassphraseRequired}"; with it the review lists "${ed.reviewName}: Casa → Casa Nueva", the bands before → after and the password as "${ed.reviewPassphraseValue}", with the rename and PMF notes, focus on ${cancel}; Back keeps the form's values; Save sends ONE updateNetwork with only the edited fields and the passphrase (main merges: 6 GHz → WPA2/WPA3, the typed key — never the stored one); the toast; the detail shows "Casa Nueva" with focus on ${ed.edit}`, async () => {
+    const before = await networkWriteState(session);
+    await openNetworkDetail(page, 'Casa');
+    await page.click('#networkEditBtn');
+    await waitForNetworkModal(page);
+    const opened = await readNetworkModal(page);
+    const selection = await page.evaluate(() => {
+      const input = document.getElementById('networkNameInput');
+      return [input.selectionStart, input.selectionEnd];
+    });
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkError(page, ed.errNothingToChange);
+    await page.fill('#networkNameInput', 'Casa Nueva');
+    await page.check('#networkBandsField input[value="band6g"]');
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkError(page, ed.errPassphraseRequired);
+    await page.fill('#networkPassphraseInput', typed.edit);
+    await page.fill('#networkPassphraseConfirmInput', typed.edit);
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkStep(page, 'review');
+    const review = await readNetworkModal(page);
+    const sentBeforeSave = writeCounts(await networkWriteState(session));
+    await page.click('#backNetworkBtn');
+    await waitForNetworkStep(page, 'form');
+    const back = await readNetworkModal(page);
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkStep(page, 'review');
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkModalClosed(page);
+    await waitForToast(page, 'success', fmt(ed.saved, { name: 'Casa Nueva' }));
+    const after = await networkWriteState(session);
+    const updates = after.update.slice(before.update.length);
+    const writes = after.writes.slice(before.writes.length);
+    const detail = await readDetailPane(page, '#networkDetail');
+    const focus = await readNetworkControls(page);
+    const leaks = await findNeteditSecrets(page);
+    return verdict(
+      opened.kind === 'edit' && opened.title === ed.editTitle && opened.message === fmt(ed.editMessage, { name: 'Casa' }) &&
+      opened.name?.value === 'Casa' && isDeepStrictEqual(selection, [0, 4]) && opened.activeId === 'networkNameInput' &&
+      isDeepStrictEqual(opened.security, ['wpaPersonal']) && isDeepStrictEqual(opened.bands, ['band2g', 'band5g']) &&
+      opened.passphrase?.value === '' && opened.passphrase.type === 'password' && opened.passphrase.autocomplete === 'new-password' && opened.confirmation?.value === '' &&
+      opened.helps.some((help) => help.kind === 'passphraseNote' && help.text === ed.editPassphraseNote) &&
+      opened.groups.length === 0 && opened.enableAfter === null && opened.confirm === ed.reviewAction &&
+      review.step === 'review' && review.title === ed.reviewTitle && review.message === fmt(ed.reviewMessage, { name: 'Casa' }) && !review.formShown &&
+      isDeepStrictEqual(review.rows, [
+        { row: 'name', label: ed.reviewName, value: 'Casa → Casa Nueva' },
+        { row: 'bands', label: nets.bandsLabel, value: `${bands2g5g} → ${bandsAll}` },
+        { row: 'passphrase', label: nets.passphraseLabel, value: ed.reviewPassphraseValue },
+      ]) &&
+      isDeepStrictEqual(review.notes, [ed.noteRename, ed.notePmf]) &&
+      review.back === ed.backAction && review.confirm === ed.saveAction && review.activeId === 'cancelNetworkBtn' &&
+      isDeepStrictEqual(sentBeforeSave, writeCounts(before)) &&
+      back.step === 'form' && back.name.value === 'Casa Nueva' && isDeepStrictEqual(back.bands, ['band2g', 'band5g', 'band6g']) && back.back === null &&
+      updates.length === 1 && isDeepStrictEqual(updates[0].args, [{
+        sessionNonce: after.snapshot.sessionNonce, networkId: NETEDIT_IDS.casa, name: 'Casa Nueva', bands: ['band2g', 'band5g', 'band6g'], passphrase: typed.edit,
+      }]) &&
+      writes.length === 1 && writes[0].op === 'update' && writes[0].body.name === 'Casa Nueva' && writes[0].body.band === 7 &&
+      writes[0].body.pskSetting?.securityKey === typed.edit && writes[0].body.pskSetting.versionPsk === 4 && writes[0].body.pmfMode === 2 &&
+      detail.heading === 'Casa Nueva' && detail.facts.bands?.value === bandsAll && focus.activeId === 'networkEditBtn' && leaks.length === 0,
+      { opened, selection, review, back, updates: updates.map((call) => call.args), writes, detail: detail.heading, focus: focus.activeId, leaks }
+    );
+  }); // End of check "edit Casa..."
+
+  await check(`${L}: an edit cancelled sends nothing — staged changes (a new name, Open) reviewed (the "${ed.noteToOpen}" note) then ${cancel}; and staged changes then Escape on the form: no updateNetwork call, nothing applied, the detail unchanged, focus back on ${ed.edit}, no passphrase in the DOM`, async () => {
+    const before = writeCounts(await networkWriteState(session));
+    await page.click('#networkEditBtn');
+    await waitForNetworkModal(page);
+    await page.fill('#networkNameInput', 'Descartada');
+    await page.check('#networkSecurityField input[value="open"]');
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkStep(page, 'review');
+    const review = await readNetworkModal(page);
+    await page.click('#cancelNetworkBtn');
+    await waitForNetworkModalClosed(page);
+    const afterCancel = await readNetworkControls(page);
+    await page.click('#networkEditBtn');
+    await waitForNetworkModal(page);
+    await page.fill('#networkNameInput', 'Descartada 2');
+    await page.fill('#networkPassphraseInput', typed.other);
+    await page.fill('#networkPassphraseConfirmInput', typed.other);
+    await page.keyboard.press('Escape');
+    await waitForNetworkModalClosed(page);
+    const after = writeCounts(await networkWriteState(session));
+    const detail = await readDetailPane(page, '#networkDetail');
+    const focus = await readNetworkControls(page);
+    const leaks = await findNeteditSecrets(page);
+    return verdict(
+      isDeepStrictEqual(review.rows.map((row) => row.row), ['name', 'security']) && isDeepStrictEqual(review.notes, [ed.noteRename, ed.noteToOpen]) &&
+      afterCancel.activeId === 'networkEditBtn' && isDeepStrictEqual(after, before) &&
+      detail.heading === 'Casa Nueva' && detail.facts.security?.value === nets.wpaPersonal && focus.activeId === 'networkEditBtn' && leaks.length === 0,
+      { review, before, after, detail: detail.heading, focus: focus.activeId, leaks }
+    );
+  }); // End of check "an edit cancelled sends nothing..."
+
+  await check(`${L}: entering the review always needs its own deliberate interaction — a real double-click on "${ed.reviewAction}" (staged rename + passphrase; the dialog at its full height, so both clicks land on the button) shows the review and does NOT also save it; Back, then Enter held down in the name field (key repeats) shows the review once and stays there (no save, no Cancel); ${cancel} then sends nothing, focus back on ${ed.edit}, no passphrase in the DOM`, async () => {
+    const before = writeCounts(await networkWriteState(session));
+    await page.click('#networkEditBtn');
+    await waitForNetworkModal(page);
+    await page.fill('#networkNameInput', 'Doble clic');
+    await page.fill('#networkPassphraseInput', typed.other);
+    await page.fill('#networkPassphraseConfirmInput', typed.other);
+    let doubled;
+    let pinned;
+    try {
+      // The dialog keeps its size and its footer's place when the review
+      // replaces the form (as when both overflow a small window), so the
+      // confirming button stays under the pointer and BOTH clicks of the
+      // double-click land on it — in the default layout the shorter review
+      // moves the footer away. Set through the CSSOM (the CSP allows no
+      // style element) and removed below.
+      pinned = await page.evaluate(async () => {
+        const modal = document.querySelector('#networkModal .modal');
+        // Measured once the opening transition (a scale) has finished
+        await Promise.all(modal.getAnimations().map((animation) => animation.finished));
+        modal.style.height = `${modal.getBoundingClientRect().height}px`;
+        modal.querySelector('.modal-body').style.flexGrow = '1';
+        return document.getElementById('confirmNetworkBtn').getBoundingClientRect().top;
+      });
+      await page.dblclick('#confirmNetworkBtn');
+      await waitForNetworkStep(page, 'review');
+      // Room for a second click that wrongly confirmed the review to show
+      await page.waitForTimeout(400);
+      doubled = await readNetworkModal(page);
+      doubled.confirmTop = await page.evaluate(() => document.getElementById('confirmNetworkBtn').getBoundingClientRect().top);
+    } finally {
+      await page.evaluate(() => {
+        const modal = document.querySelector('#networkModal .modal');
+        modal.style.removeProperty('height');
+        modal.querySelector('.modal-body').style.removeProperty('flex-grow');
+      });
+    }
+    const afterDouble = writeCounts(await networkWriteState(session));
+    await page.click('#backNetworkBtn');
+    await waitForNetworkStep(page, 'form');
+    await page.focus('#networkNameInput');
+    await page.keyboard.down('Enter');
+    await waitForNetworkStep(page, 'review');
+    // The held key's repeats land on the review step (focus on Cancel)
+    await page.keyboard.down('Enter');
+    await page.keyboard.down('Enter');
+    await page.keyboard.up('Enter');
+    await page.waitForTimeout(400);
+    const held = await readNetworkModal(page);
+    const afterHeld = writeCounts(await networkWriteState(session));
+    await page.click('#cancelNetworkBtn');
+    await waitForNetworkModalClosed(page);
+    const after = writeCounts(await networkWriteState(session));
+    const focus = await readNetworkControls(page);
+    const leaks = await findNeteditSecrets(page);
+    return verdict(
+      doubled.open && doubled.step === 'review' && Math.abs(doubled.confirmTop - pinned) < 1 && doubled.confirm === ed.saveAction && doubled.busy === null && !doubled.errorShown &&
+      isDeepStrictEqual(doubled.rows.map((row) => row.row), ['name', 'passphrase']) && isDeepStrictEqual(afterDouble, before) &&
+      held.open && held.step === 'review' && held.activeId === 'cancelNetworkBtn' && held.busy === null && isDeepStrictEqual(afterHeld, before) &&
+      isDeepStrictEqual(after, before) && focus.activeId === 'networkEditBtn' && leaks.length === 0,
+      { pinned, doubled, held, before, afterDouble, afterHeld, after, focus: focus.activeId, leaks }
+    );
+  }); // End of check "entering the review always needs its own deliberate interaction..."
+
+  await check(`${L}: "${ed.password}" — its own dialog ("${ed.passwordTitle}", the network named) with only the two empty password fields (type password, autocomplete new-password), focus on the first; a confirmation that differs is refused client-side; Enter sends ONE changeNetworkPassword {sessionNonce, networkId, passphrase}; the toast "${fmt(ed.passwordChanged, { name: 'Casa Nueva' })}"; focus on ${ed.password}; the passphrase never echoed or kept in the DOM`, async () => {
+    const before = await networkWriteState(session);
+    await page.click('#networkPasswordBtn');
+    await waitForNetworkModal(page);
+    const opened = await readNetworkModal(page);
+    await page.fill('#networkPassphraseInput', typed.password);
+    await page.fill('#networkPassphraseConfirmInput', typed.other);
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkError(page, ed.errMismatch);
+    const afterMismatch = writeCounts(await networkWriteState(session));
+    await page.fill('#networkPassphraseConfirmInput', typed.password);
+    await page.press('#networkPassphraseConfirmInput', 'Enter');
+    await waitForNetworkModalClosed(page);
+    await waitForToast(page, 'success', fmt(ed.passwordChanged, { name: 'Casa Nueva' }));
+    const after = await networkWriteState(session);
+    const calls = after.password.slice(before.password.length);
+    const writes = after.writes.slice(before.writes.length);
+    const focus = await readNetworkControls(page);
+    const leaks = await findNeteditSecrets(page);
+    return verdict(
+      opened.kind === 'password' && opened.title === ed.passwordTitle && opened.message === fmt(ed.passwordMessage, { name: 'Casa Nueva' }) &&
+      opened.name === null && opened.security.length === 0 && opened.bands.length === 0 &&
+      opened.passphrase?.type === 'password' && opened.passphrase.autocomplete === 'new-password' && opened.passphrase.value === '' &&
+      opened.confirmation?.type === 'password' && opened.confirmation.value === '' && opened.activeId === 'networkPassphraseInput' && opened.confirm === ed.passwordAction &&
+      isDeepStrictEqual(afterMismatch, writeCounts(before)) &&
+      calls.length === 1 && isDeepStrictEqual(calls[0].args, [{ sessionNonce: after.snapshot.sessionNonce, networkId: NETEDIT_IDS.casa, passphrase: typed.password }]) &&
+      writes.length === 1 && writes[0].op === 'password' && writes[0].body.pskSetting?.securityKey === typed.password &&
+      focus.activeId === 'networkPasswordBtn' && leaks.length === 0,
+      { opened, calls: calls.map((call) => call.args), writes, focus: focus.activeId, leaks }
+    );
+  }); // End of check "Change password..."
+
+  await check(`${L}: "${ed.disable}" asks first — the confirmation opens on ${cancel} with the impact (${ed.impactScope} "${groups(1)} · ${fmt(text.apMany, { count: 4 })}", ${ed.impactGroups} "Default"), the destructive button "${ed.disableAction}"; confirmed: ONE setNetworkEnabled(false), the detail says ${nets.disabled} and focus is on its "${ed.enable}"; Invitados' "${ed.enable}" shows "${nets.all}" with the note that later APs are included, and enables it`, async () => {
+    const before = await networkWriteState(session);
+    await page.click('#networkToggleBtn');
+    await waitForNetworkModal(page);
+    const disable = await readNetworkModal(page);
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkModalClosed(page);
+    await waitForToast(page, 'success', fmt(ed.disabledDone, { name: 'Casa Nueva' }));
+    const disabledDetail = await readDetailPane(page, '#networkDetail');
+    const disabledControls = await readNetworkControls(page);
+    await openNetworkDetail(page, 'Invitados');
+    await page.click('#networkToggleBtn');
+    await waitForNetworkModal(page);
+    const enable = await readNetworkModal(page);
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkModalClosed(page);
+    await waitForToast(page, 'success', fmt(ed.enabledDone, { name: 'Invitados' }));
+    const after = await networkWriteState(session);
+    const calls = after.enable.slice(before.enable.length).map((call) => call.args[0]);
+    const invitados = (await readManagedList(page)).items.find((item) => item.name === 'Invitados');
+    return verdict(
+      disable.kind === 'disable' && disable.step === 'confirm' && disable.title === ed.disableTitle && disable.message === fmt(ed.disableMessage, { name: 'Casa Nueva' }) &&
+      disable.activeId === 'cancelNetworkBtn' && disable.danger && disable.confirm === ed.disableAction && disable.inputs === 0 &&
+      isDeepStrictEqual(disable.rows, [
+        { row: 'scope', label: ed.impactScope, value: `${groups(1)} · ${fmt(text.apMany, { count: 4 })}` },
+        { row: 'groups', label: ed.impactGroups, value: 'Default' },
+      ]) && disable.notes.length === 0 &&
+      disabledDetail.facts.enabled?.value === nets.disabled &&
+      disabledControls.activeId === 'networkToggleBtn' && disabledControls.detail.find((button) => button.id === 'networkToggleBtn')?.text === ed.enable &&
+      enable.kind === 'enable' && enable.title === ed.enableTitle && enable.message === fmt(ed.enableMessage, { name: 'Invitados' }) && !enable.danger &&
+      enable.activeId === 'cancelNetworkBtn' && enable.confirm === ed.enableAction &&
+      isDeepStrictEqual(enable.rows, [{ row: 'scope', label: ed.impactScope, value: nets.all }]) && isDeepStrictEqual(enable.notes, [ed.impactAllNote]) &&
+      isDeepStrictEqual(calls, [
+        { sessionNonce: after.snapshot.sessionNonce, networkId: NETEDIT_IDS.casa, enabled: false },
+        { sessionNonce: after.snapshot.sessionNonce, networkId: NETEDIT_IDS.invitados, enabled: true },
+      ]) &&
+      invitados?.props === neteditProps(nets.enabled, nets.open, nets.band2g),
+      { disable, disabledDetail: disabledDetail.facts.enabled, disabledControls, enable, calls, invitados }
+    );
+  }); // End of check "Disable asks first..."
+
+  await check(`${L}: a conflict main reports names its setting — adding 5 GHz to Invitados (Enhanced IoT Connectivity on) is refused at the save by main's real merge: the form comes back with "${ed.conflictIot} (conflict: enhancedIotConnectivity)"; nothing applied`, async () => {
+    const before = await networkWriteState(session);
+    await page.click('#networkEditBtn');
+    await waitForNetworkModal(page);
+    await page.check('#networkBandsField input[value="band5g"]');
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkStep(page, 'review');
+    const review = await readNetworkModal(page);
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkError(page, `${ed.conflictIot} (conflict: enhancedIotConnectivity)`);
+    const refused = await readNetworkModal(page);
+    await page.click('#cancelNetworkBtn');
+    await waitForNetworkModalClosed(page);
+    const after = await networkWriteState(session);
+    return verdict(
+      isDeepStrictEqual(review.rows.map((row) => row.row), ['bands']) && review.notes.length === 0 &&
+      refused.step === 'form' && refused.formShown && refused.errorShown && after.update.length === before.update.length + 1 && after.writes.length === before.writes.length,
+      { review, refused, updates: after.update.length - before.update.length }
+    );
+  }); // End of check "a conflict main reports..."
+
+  await check(`${L}: no write acts on data known to be stale — a refresh whose managed read fails ("requestFailed") keeps the list, stale: "${ed.newNetwork}" and Empresa's ${ed.disable} / ${ed.delete} are disabled with the note "${ed.blockedListStale}", and "${ed.newNetwork}" forced back on opens nothing (the same text as a toast); after a good Retry, a refresh that fails (internal data stale) disables them again with "${ed.blockedDataStale}", and a forced ${ed.disable} opens nothing; nothing sent; a good refresh brings them back`, async () => {
+    const before = writeCounts(await networkWriteState(session));
+    let listStale;
+    let listForced;
+    let dataStale;
+    let dataForced;
+    let restored;
+    try {
+      await openNetworkDetail(page, 'Empresa');
+      await configureStub(session, { networksResult: NETS_FAILURE });
+      await refreshNetworks(session);
+      await waitForNetworksStale(page, 'requestFailed');
+      listStale = await readNetworkControls(page);
+      await forceNetworkAction(page, 'newNetworkBtn');
+      await waitForToast(page, 'error', ed.blockedListStale);
+      listForced = await readNetworkModal(page);
+      await configureStub(session, { networksResult: null });
+      const reads = callsTo(await stubState(session), 'management:networks').length;
+      await page.click('#networksStaleRetryBtn');
+      await waitForStubCall(session, 'management:networks', reads);
+      await waitForManagedRead(page, 'ready');
+      await configureStub(session, { failChannels: ['omada:get-aps'] });
+      await waitForLoadIdle(page);
+      await page.click('#refreshBtn');
+      await waitForToast(page, 'error', text.loadError);
+      await waitForLoadIdle(page);
+      await page.waitForFunction(() => document.querySelector('#networkDetail [data-note="writesBlocked"]')?.dataset.reason === 'dataStale', null, { timeout: WAIT_MS });
+      dataStale = await readNetworkControls(page);
+      await forceNetworkAction(page, 'networkToggleBtn');
+      await waitForToast(page, 'error', ed.blockedDataStale);
+      dataForced = await readNetworkModal(page);
+    } finally {
+      await configureStub(session, { networksResult: null, failChannels: [] });
+      await refreshNetworksFully(session);
+    }
+    restored = await readNetworkControls(page);
+    const after = writeCounts(await networkWriteState(session));
+    /**
+     * Tells whether every write control is disabled and the first note says why.
+     * @param {object} controls - readNetworkControls().
+     * @param {string} reason - The expected NetworkWriteBlock.
+     * @param {string} noteText - The expected note.
+     * @returns {boolean} True when held back as expected.
+     */
+    const heldBack = (controls, reason, noteText) =>
+      controls.list.length === 1 && controls.list[0].disabled && isDeepStrictEqual(controls.detail.map((button) => [button.action, button.disabled]), [['disable', true], ['delete', true]]) &&
+      isDeepStrictEqual(controls.notes[0], { kind: 'writesBlocked', reason, text: noteText });
+    return verdict(
+      heldBack(listStale, 'listStale', ed.blockedListStale) && !listForced.open &&
+      heldBack(dataStale, 'dataStale', ed.blockedDataStale) && !dataForced.open &&
+      isDeepStrictEqual(after, before) &&
+      restored.list[0]?.disabled === false && restored.detail.every((button) => !button.disabled) && !restored.notes.some((note) => note.kind === 'writesBlocked'),
+      { listStale, listForced: listForced?.open, dataStale, dataForced: dataForced?.open, before, after, restored }
+    );
+  }); // End of check "no write acts on data known to be stale..."
+
+  await check(`${L}: Enable / Disable / Delete read the data again before asking — Empresa shows "${groups(2)} · ${fmt(text.apMany, { count: 5 })}"; once an AP moved into zGrupo B on the controller, ${ed.delete} reads the APs, the groups and the managed list again and the confirmation states the FRESH impact "${groups(2)} · ${fmt(text.apMany, { count: 6 })}"; a managed read failing at ${ed.disable} opens nothing ("${ed.blockedListStale}" toast, the list stale); Empresa bound to Default only on the controller: ${ed.delete} opens nothing ("${ed.networkChanged}"), the detail shows "${groups(1)} · ${fmt(text.apMany, { count: 4 })}", and ${ed.delete} again states that impact; with that confirmation open, Empresa bound back to both groups and the delete refused by main ("${ed.errRequestFailed}", which re-reads the list), confirming again sends nothing ("${ed.networkChanged}"); nothing deleted`, async () => {
+    const before = writeCounts(await networkWriteState(session));
+    const original = (await stubState(session)).scenario.networks;
+    const movedAps = NETS_APS.map((item) => (item.name === 'Jardín' ? { ...item, wlanGroup: 'zGrupo B' } : item));
+    const rebound = original.map((item) => (item.entry.id === NETEDIT_IDS.empresa
+      ? { ...item, detail: { ...item.detail, apGroupIds: [NETEDIT_DEFAULT] }, bindings: { apGroups: [{ id: NETEDIT_DEFAULT }] } }
+      : item));
+    let shown;
+    let fresh;
+    let reads;
+    let failedRead;
+    let failedNotice;
+    let failedControls;
+    let changed;
+    let changedDetail;
+    let again;
+    let refusedFirst;
+    let refusedSecond;
+    try {
+      await openNetworkDetail(page, 'Empresa');
+      shown = (await readDetailPane(page, '#networkDetail')).summary;
+      await configureStub(session, { accessPoints: movedAps });
+      const calls = await stubState(session);
+      await page.click('#networkDeleteBtn');
+      await waitForNetworkModal(page);
+      fresh = await readNetworkModal(page);
+      const callsAfter = await stubState(session);
+      reads = ['omada:get-aps', 'omada:get-wlans', 'management:networks'].map((channel) => callsTo(callsAfter, channel).length - callsTo(calls, channel).length);
+      await page.keyboard.press('Escape');
+      await waitForNetworkModalClosed(page);
+      await configureStub(session, { networksResult: NETS_FAILURE });
+      await page.click('#networkToggleBtn');
+      await waitForToast(page, 'error', ed.blockedListStale);
+      failedRead = await readNetworkModal(page);
+      failedNotice = await readNetworksStaleNotice(page);
+      failedControls = await readNetworkControls(page);
+      await configureStub(session, { networksResult: null });
+      const retries = callsTo(await stubState(session), 'management:networks').length;
+      await page.click('#networksStaleRetryBtn');
+      await waitForStubCall(session, 'management:networks', retries);
+      await waitForManagedRead(page, 'ready');
+      // Empresa re-bound on the controller after the view read it
+      await configureStub(session, { networks: rebound });
+      await page.click('#networkDeleteBtn');
+      await waitForToast(page, 'error', ed.networkChanged);
+      changed = await readNetworkModal(page);
+      changedDetail = await readDetailPane(page, '#networkDetail');
+      await page.click('#networkDeleteBtn');
+      await waitForNetworkModal(page);
+      again = await readNetworkModal(page);
+      // While this confirmation is open: Empresa bound back to both groups
+      // on the controller, and main refuses the delete with a code that
+      // re-reads the list (in the background): the network the dialog states
+      // is no longer the one listed, so confirming again sends nothing
+      await configureStub(session, {
+        networks: original,
+        networkResults: { 'management:network-delete': { success: false, error: 'requestFailed', diagnostic: 'ssid delete: httpError, HTTP 503' } },
+      });
+      await page.click('#confirmNetworkBtn');
+      await waitForNetworkError(page, `${ed.errRequestFailed} (ssid delete: httpError, HTTP 503)`);
+      refusedFirst = await readNetworkModal(page);
+      await waitForManagedRead(page, 'ready');
+      await page.click('#confirmNetworkBtn');
+      await waitForNetworkError(page, ed.networkChanged);
+      refusedSecond = await readNetworkModal(page);
+      await page.click('#cancelNetworkBtn');
+      await waitForNetworkModalClosed(page);
+    } finally {
+      await configureStub(session, { accessPoints: NETS_APS, networksResult: null, networks: original, networkResults: {} });
+      if (await page.isVisible('#networkModal.visible')) {
+        await page.click('#cancelNetworkBtn');
+        await waitForNetworkModalClosed(page);
+      }
+      await refreshNetworksFully(session);
+    }
+    const afterState = await networkWriteState(session);
+    const after = writeCounts(afterState);
+    const restoredDetail = await readDetailPane(page, '#networkDetail');
+    return verdict(
+      shown === `${groups(2)} · ${fmt(text.apMany, { count: 5 })}` &&
+      fresh.kind === 'delete' && isDeepStrictEqual(fresh.rows, [
+        { row: 'scope', label: ed.impactScope, value: `${groups(2)} · ${fmt(text.apMany, { count: 6 })}` },
+        { row: 'groups', label: ed.impactGroups, value: 'Default, zGrupo B' },
+      ]) && isDeepStrictEqual(reads, [1, 1, 1]) &&
+      !failedRead.open && failedNotice.shown && failedNotice.error === 'requestFailed' &&
+      isDeepStrictEqual(failedControls.notes[0], { kind: 'writesBlocked', reason: 'listStale', text: ed.blockedListStale }) &&
+      !changed.open && changedDetail.summary === `${groups(1)} · ${fmt(text.apMany, { count: 4 })}` &&
+      again.kind === 'delete' && isDeepStrictEqual(again.rows, [
+        { row: 'scope', label: ed.impactScope, value: `${groups(1)} · ${fmt(text.apMany, { count: 4 })}` },
+        { row: 'groups', label: ed.impactGroups, value: 'Default' },
+      ]) &&
+      refusedFirst.open && refusedFirst.kind === 'delete' && refusedSecond.open && refusedSecond.errorShown && !refusedSecond.confirmDisabled &&
+      // Only the delete main refused was sent; nothing applied, nothing else written
+      isDeepStrictEqual(after, [before[0], before[1], before[2], before[3], before[4] + 1, before[5]]) &&
+      isDeepStrictEqual(afterState.delete.at(-1)?.args, [{ sessionNonce: afterState.snapshot.sessionNonce, networkId: NETEDIT_IDS.empresa }]) &&
+      restoredDetail.summary === `${groups(2)} · ${fmt(text.apMany, { count: 5 })}`,
+      { shown, fresh: fresh?.rows, reads, failedRead: failedRead?.open, failedNotice, failedControls: failedControls?.notes, changed: changed?.open, changedDetail: changedDetail?.summary, again: again?.rows, refusedFirst: refusedFirst?.error, refusedSecond: refusedSecond?.error, before, after, restored: restoredDetail.summary }
+    );
+  }); // End of check "Enable / Disable / Delete read the data again before asking..."
+
+  await check(`${L}: "${ed.delete}" asks first with an impact summary — Empresa: the confirmation opens on ${cancel}, "${fmt(ed.deleteMessage, { name: 'Empresa' })}", ${ed.impactScope} "${groups(2)} · ${fmt(text.apMany, { count: 5 })}", ${ed.impactGroups} "Default, zGrupo B"; ${cancel} sends nothing; confirmed: ONE deleteNetwork, Empresa gone, focus in the list, the toast. Clave (unknown scope): "${nets.unknownScope}" with the note that it may affect any access point`, async () => {
+    const before = await networkWriteState(session);
+    await openNetworkDetail(page, 'Empresa');
+    await page.click('#networkDeleteBtn');
+    await waitForNetworkModal(page);
+    const first = await readNetworkModal(page);
+    await page.click('#cancelNetworkBtn');
+    await waitForNetworkModalClosed(page);
+    const cancelled = writeCounts(await networkWriteState(session));
+    const cancelFocus = await readNetworkControls(page);
+    await page.click('#networkDeleteBtn');
+    await waitForNetworkModal(page);
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkModalClosed(page);
+    await waitForToast(page, 'success', fmt(ed.deleted, { name: 'Empresa' }));
+    const after = await networkWriteState(session);
+    const deletes = after.delete.slice(before.delete.length);
+    const list = await readManagedList(page);
+    const focus = await page.evaluate(() => ({ inList: document.getElementById('networkList')?.contains(document.activeElement) ?? false, item: document.activeElement?.classList.contains('master-item') ?? false }));
+    await openNetworkDetail(page, 'Clave');
+    await page.click('#networkDeleteBtn');
+    await waitForNetworkModal(page);
+    const clave = await readNetworkModal(page);
+    await page.keyboard.press('Escape');
+    await waitForNetworkModalClosed(page);
+    const final = await networkWriteState(session);
+    return verdict(
+      first.kind === 'delete' && first.title === ed.deleteTitle && first.message === fmt(ed.deleteMessage, { name: 'Empresa' }) && first.danger &&
+      first.activeId === 'cancelNetworkBtn' && first.confirm === ed.deleteAction &&
+      isDeepStrictEqual(first.rows, [
+        { row: 'scope', label: ed.impactScope, value: `${groups(2)} · ${fmt(text.apMany, { count: 5 })}` },
+        { row: 'groups', label: ed.impactGroups, value: 'Default, zGrupo B' },
+      ]) &&
+      isDeepStrictEqual(cancelled, writeCounts(before)) && cancelFocus.activeId === 'networkDeleteBtn' &&
+      deletes.length === 1 && isDeepStrictEqual(deletes[0].args, [{ sessionNonce: after.snapshot.sessionNonce, networkId: NETEDIT_IDS.empresa }]) &&
+      !list.items.some((item) => item.name === 'Empresa') && focus.inList && focus.item &&
+      isDeepStrictEqual(clave.rows, [{ row: 'scope', label: ed.impactScope, value: nets.unknownScope }]) && isDeepStrictEqual(clave.notes, [ed.impactUnknownNote]) &&
+      final.delete.length === after.delete.length,
+      { first, cancelled, cancelFocus: cancelFocus.activeId, deletes: deletes.map((call) => call.args), list: list.items.map((item) => item.name), focus, clave }
+    );
+  }); // End of check "Delete asks first..."
+
+  await check(`${L}: no passphrase ever reached the DOM — neither the stored key nor any typed one — and the Wi-Fi network dialog holds no field once closed`, async () => {
+    for (const name of (await readManagedList(page)).items.map((item) => item.name)) {
+      await openNetworkDetail(page, name);
+    }
+    const leaks = await findNeteditSecrets(page);
+    const modal = await readNetworkModal(page);
+    return verdict(leaks.length === 0 && !modal.open && modal.inputs === 0, { leaks, inputs: modal.inputs });
+  }); // End of check "no passphrase ever reached the DOM"
+} // End of function runNetworkEditingChecks()
+
+/**
+ * Wi-Fi network editing launch (phase 18b): an Omada 6.3 controller with
+ * management access whose every check passes and NETEDIT_NETWORKS (their
+ * details complete, so the stub's real read-merge-write saves them); the
+ * checks of runNetworkEditingChecks() in Spanish, then — the fake controller
+ * reset to NETEDIT_NETWORKS and the language switched (saved, reconnected)
+ * — in English. The rules and texts are unit-tested
+ * (renderer-network-editing.test.ts), the main-side writes too
+ * (wifi-network-write*.test.ts).
+ * @param {{ binary: string }} electronInfo - Resolved Electron binary.
+ * @returns {Promise<void>}
+ */
+async function runNetworkEditing(electronInfo) {
+  const session = await launch(electronInfo, 'netedit', {
+    config: { url: CONTROLLER_URL, username: 'admin', language: 'es', hasPassword: true, clientId: 'owm-client-1', hasClientSecret: true },
+    connect: { success: true },
+    siteName: 'Casa',
+    controllerVersion: data.controllerVersion,
+    accessPoints: NETS_APS,
+    wlanGroups: NETEDIT_GROUPS,
+    networks: NETEDIT_NETWORKS,
+  });
+  const { page } = session;
+  try {
+    await checkTranslations(session, 'es');
+    await check('[netedit] es: connected with management on — the Wi-Fi networks view lists the four networks (Casa, Clave, Empresa, Invitados)', async () => {
+      await waitForConnected(page);
+      await waitForApCount(page, NETS_APS.filter((ap) => MAC_REGEX.test(ap.mac)).length);
+      await page.click('#navNetworks');
+      await waitForNetworksMode(page, 'managedReady');
+      const list = await readManagedList(page);
+      return verdict(isDeepStrictEqual(list.items.map((item) => item.name), ['Casa', 'Clave', 'Empresa', 'Invitados']), list.items);
+    });
+    await runNetworkEditingChecks(session, 'es');
+
+    await check('[netedit] en: after switching to English (saved, reconnected) with the fake controller reset, the networks are listed again', async () => {
+      await configureStub(session, { networks: NETEDIT_NETWORKS, wlanGroups: NETEDIT_GROUPS, networkResults: {}, delays: {} });
+      await openSettingsWhenIdle(page);
+      await page.selectOption('#languageSelect', 'en');
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      await waitForConnected(page);
+      await page.waitForFunction(() => document.documentElement.lang === 'en', null, { timeout: WAIT_MS });
+      await page.click('#navNetworks');
+      await waitForNetworksMode(page, 'managedReady');
+      await page.waitForFunction(() => document.querySelectorAll('#networkList .master-item').length === 4, null, { timeout: WAIT_MS });
+      const list = await readManagedList(page);
+      return verdict(isDeepStrictEqual(list.items.map((item) => item.name), ['Casa', 'Clave', 'Empresa', 'Invitados']), list.items);
+    });
+    await runNetworkEditingChecks(session, 'en');
+  } finally {
+    session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
+    await session.app.close().catch(() => {});
+  }
+} // End of function runNetworkEditing()
+
+// ============================================================================
 // Whole-run checks
 // ============================================================================
 
@@ -7237,6 +8505,7 @@ async function main() {
       ['caps', runManagementCapabilities],
       ['groups', runApGroupManagement],
       ['nets', runManagedNetworks],
+      ['netedit', runNetworkEditing],
     ]) {
       try {
         await runLaunch(electronInfo);
