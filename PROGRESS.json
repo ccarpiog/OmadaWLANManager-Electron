@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T03:05:34Z",
+ "updated": "2026-10-07T03:05:56Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -159,7 +159,8 @@
    "risk": "high",
    "summary": "Adds the controller session facade, background capability checks with reason codes, the site name in the header and a Test management access button.",
    "review": "docs/reviews/phase15b.md",
-   "narrative": "docs/progress-archive/phase-15b.md"
+   "narrative": "docs/progress-archive/phase-15b.md",
+   "commit": "1bcc5ea"
   },
   {
    "id": "16",

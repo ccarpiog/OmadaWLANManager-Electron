@@ -375,4 +375,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 14a: `33bcb34` ("Add read-only AP group and Wi-Fi network views with cross-navigation"), pushed to origin/main (`cf2db68..33bcb34`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 14b: `b68ea14` ("Add view states, the read-only banner and the responsive layout"), pushed to origin/main (`9567098..b68ea14`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 15a: `a14415d` ("Add optional Open API credentials, an Open API client and a central redactor"), pushed to origin/main (`72faed9..a14415d`). A follow-up commit records this SHA. Tree clean after it.
-- Phase 15b: committed and pushed to origin/main; the SHA is recorded by the follow-up commit.
+- Phase 15b: `1bcc5ea` ("Add the controller session, management capability checks and a test button"), pushed to origin/main (`4a259f6..1bcc5ea`). A follow-up commit records this SHA. Tree clean after it.
