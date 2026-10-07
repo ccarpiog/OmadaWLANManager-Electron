@@ -172,9 +172,10 @@ const AP = Object.fromEntries(data.accessPoints.map((ap) => [ap.name, ap]));
 const GROUP = Object.fromEntries(data.wlanGroups.map((group) => [group.wlanName, group]));
 const LEGACY_GROUP = Object.fromEntries(data.legacyWlanGroups.map((group) => [group.wlanName, group]));
 const EXPECTED_BRIDGE = [
-  'connect', 'createApGroup', 'deleteApGroup', 'disconnect', 'getAccessPoints', 'getManagedApGroups', 'getManagedNetworks', 'getManagementCapabilities',
-  'getWlanGroups', 'loadConfig', 'platform', 'renameApGroup', 'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup',
-  'testManagementAccess', 'trustCertificate',
+  'changeNetworkPassword', 'connect', 'createApGroup', 'createNetwork', 'deleteApGroup', 'deleteNetwork', 'disconnect', 'getAccessPoints',
+  'getManagedApGroups', 'getManagedNetworks', 'getManagementCapabilities', 'getWlanGroups', 'loadConfig', 'platform', 'renameApGroup',
+  'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup', 'setNetworkEnabled', 'testManagementAccess', 'trustCertificate',
+  'updateNetwork',
 ];
 // The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
 const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
@@ -4935,6 +4936,10 @@ async function runManagementCapabilities(electronInfo) {
     await check('[caps] Wi-Fi network read bridge (phase 17a, no UI yet): getManagedNetworks() reaches management:networks with the session nonce and the stub answers through the real validators and DTO — the networks derived from the groups, then "All access points", one bound to 3 groups, an unknown scope and a binding list with a non-24-hex AP-group id (unknown scope, never filtered); no passphrase or sentinel secret in any reply; a malformed catalog / detail / bindings and a scripted error answered with codes; management off, a stale nonce and a malformed nonce refused', async () => {
       return networkBridgeVerdict(session);
     });
+
+    await check('[caps] Wi-Fi network write bridge (phase 18a, no UI yet): the five new preload methods reach their channels with the session nonce, and the stub answers through the real guards, write rules, read-merge-write and DTO — create (trimmed, disabled, WPA-Personal, bound to 2 groups; the exact body) shows on the next read and in the groups; Enterprise / no passphrase / a 34-byte name / an unknown group refused; a rename without the re-typed passphrase refused, with it saved (every reported setting kept); to open (a passphrase refused), back to WPA-Personal, Change password (too short refused, then saved; refused on an open network), enabled; a scripted nameTaken; fresh data turning the network Enterprise refuses edits but not disable or delete; management off, a stale nonce, malformed payloads and an unknown network refused; no passphrase in any reply', async () => {
+      return networkWriteBridgeVerdict(session);
+    });
   } finally {
     session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
     await session.app.close().catch(() => {});
@@ -5159,6 +5164,150 @@ async function networkBridgeVerdict(session) {
     after.scenario.networks === null && after.scenario.networksResult === null;
   return verdict(ok, { outcome });
 } // End of function networkBridgeVerdict()
+
+/**
+ * The phase 18a Wi-Fi network write bridge check of the [caps] launch: drives
+ * the five new preload methods against the stub (no UI involved) — one
+ * network created, edited, re-secured (the PMF mode derived for each
+ * security change), re-keyed, enabled, given Enhanced IoT Connectivity by
+ * "fresh data" (a band change then refused as securityBandConflict), turned
+ * Enterprise by "fresh data", disabled and deleted; an open create on 6 GHz
+ * refused — and restores the stub's networks,
+ * groups and knobs afterwards. Sentinel passphrases must never come back in
+ * a reply.
+ * @param {object} session - The launch.
+ * @returns {Promise<{ ok: boolean; detail: unknown }>} The verdict.
+ */
+async function networkWriteBridgeVerdict(session) {
+  const { page } = session;
+  const before = await stubState(session);
+  const nonce = before.sessionNonce;
+  const groupsBefore = before.scenario.wlanGroups;
+  const writesBefore = before.networkWrites.length;
+  const [g1, g2] = ['Default', 'zGrupo B'].map((name) => GROUP[name].wlanId);
+  const [pass1, pass2, pass3] = ['SENTINEL-smoke-pass-1-18a', 'SENTINEL-smoke-pass-2-18a', 'SENTINEL-smoke-pass-3-18a'];
+  const outcome = {};
+  let id = null;
+  let groupsAfterCreate = null;
+  /**
+   * Calls one network write with this launch's session nonce.
+   * @param {string} method - The bridge method.
+   * @param {object} fields - The request without the nonce.
+   * @returns {Promise<{ value?: unknown; rejected?: string }>} The outcome.
+   */
+  const write = (method, fields) => callBridge(page, method, { sessionNonce: nonce, ...fields });
+  try {
+    outcome.created = await write('createNetwork', { name: '  Red de prueba  ', security: 'wpaPersonal', bands: ['band5g', 'band2g'], apGroupIds: [g1, g2], passphrase: pass1 });
+    id = outcome.created.value && outcome.created.value.networkId;
+    groupsAfterCreate = (await stubState(session)).scenario.wlanGroups;
+    outcome.afterCreate = await callBridge(page, 'getManagedNetworks', nonce);
+    outcome.enterprise = await write('createNetwork', { name: 'Empresa', security: 'wpaEnterprise', bands: ['band2g'], apGroupIds: [g1] });
+    outcome.noPass = await write('createNetwork', { name: 'Sin clave', security: 'wpaPersonal', bands: ['band2g'], apGroupIds: [g1] });
+    outcome.longName = await write('createNetwork', { name: 'é'.repeat(17), security: 'open', bands: ['band2g'], apGroupIds: [g1] });
+    outcome.unknownGroup = await write('createNetwork', { name: 'Huérfana', security: 'open', bands: ['band2g'], apGroupIds: ['6512a0e1f3b2c41d2e3f4a00'] });
+    outcome.open6g = await write('createNetwork', { name: 'Abierta 6 GHz', security: 'open', bands: ['band2g', 'band6g'], apGroupIds: [g1] });
+    outcome.renameNoPass = await write('updateNetwork', { networkId: id, name: 'Red renombrada' });
+    outcome.renamed = await write('updateNetwork', { networkId: id, name: 'Red renombrada', passphrase: pass1 });
+    outcome.openWithPass = await write('updateNetwork', { networkId: id, security: 'open', passphrase: pass2 });
+    outcome.opened = await write('updateNetwork', { networkId: id, security: 'open' });
+    outcome.passOnOpen = await write('changeNetworkPassword', { networkId: id, passphrase: pass2 });
+    outcome.toWpa = await write('updateNetwork', { networkId: id, security: 'wpaPersonal', bands: ['band2g'], passphrase: pass2 });
+    outcome.shortPass = await write('changeNetworkPassword', { networkId: id, passphrase: 'corta' });
+    outcome.password = await write('changeNetworkPassword', { networkId: id, passphrase: pass3 });
+    outcome.enabled = await write('setNetworkEnabled', { networkId: id, enabled: true });
+    outcome.afterEdits = await callBridge(page, 'getManagedNetworks', nonce);
+    await configureStub(session, { networkResults: { 'management:network-update': { success: false, error: 'nameTaken', diagnostic: 'ssid basic-config: apiError, errorCode -33219' } } });
+    outcome.scripted = await write('updateNetwork', { networkId: id, name: 'Casa', passphrase: pass3 });
+    await configureStub(session, { networkResults: {} });
+    // Fresh data the renderer has not seen: Enhanced IoT Connectivity is on,
+    // so a band change adding 5 GHz conflicts with it (never flipped)
+    const iot = (await stubState(session)).scenario.networks.map((network) =>
+      network.entry.id === id ? { ...network, detail: { ...network.detail, enhancedIotConnectivity: true } } : network
+    );
+    await configureStub(session, { networks: iot });
+    outcome.iotConflict = await write('updateNetwork', { networkId: id, bands: ['band2g', 'band5g'], passphrase: pass3 });
+    // Fresh data the renderer has not seen: the network is Enterprise now
+    const live = (await stubState(session)).scenario.networks.map((network) =>
+      network.entry.id === id ? { ...network, entry: { ...network.entry, security: 2 }, detail: { ...network.detail, security: 2 } } : network
+    );
+    await configureStub(session, { networks: live });
+    outcome.freshEnterprise = await write('updateNetwork', { networkId: id, name: 'Otra', passphrase: pass3 });
+    outcome.freshEnterprisePass = await write('changeNetworkPassword', { networkId: id, passphrase: pass3 });
+    outcome.disabled = await write('setNetworkEnabled', { networkId: id, enabled: false });
+    await configureStub(session, { managementReason: 'apGroupsMismatch' });
+    outcome.off = await write('deleteNetwork', { networkId: id });
+    await configureStub(session, { managementReason: null });
+    outcome.stale = await callBridge(page, 'deleteNetwork', { sessionNonce: 'f'.repeat(32), networkId: id });
+    outcome.extraKey = await write('deleteNetwork', { networkId: id, force: true });
+    outcome.badSecurity = await write('createNetwork', { name: 'x', security: 'wep', bands: ['band2g'], apGroupIds: [g1] });
+    outcome.badEnabled = await write('setNetworkEnabled', { networkId: id, enabled: 'yes' });
+    outcome.badId = await write('deleteNetwork', { networkId: '../x' });
+    outcome.unknownNetwork = await write('deleteNetwork', { networkId: 'no-such-network' });
+    outcome.deleted = await write('deleteNetwork', { networkId: id });
+    outcome.afterDelete = await callBridge(page, 'getManagedNetworks', nonce);
+  } finally {
+    await configureStub(session, { networks: null, networkResults: {}, managementReason: null, wlanGroups: groupsBefore });
+  }
+  const after = await stubState(session);
+  const writes = after.networkWrites.slice(writesBefore);
+  /**
+   * The error code of one recorded bridge outcome.
+   * @param {string} key - The outcome's key.
+   * @returns {string | undefined} The reply's `error`.
+   */
+  const code = (key) => outcome[key].value && outcome[key].value.error;
+  /**
+   * Whether one recorded bridge outcome is a plain success.
+   * @param {string} key - The outcome's key.
+   * @returns {boolean} True for { success: true }.
+   */
+  const succeeded = (key) => isDeepStrictEqual(outcome[key].value, { success: true });
+  /**
+   * The managed network with the created id in one recorded read.
+   * @param {string} key - The outcome's key.
+   * @returns {object | undefined} The DTO.
+   */
+  const created = (key) => ((outcome[key].value && outcome[key].value.networks) || []).find((network) => network.id === id);
+  const kept = { guestNetEnable: false, broadcast: true, vlanEnable: false, mloEnable: false, pmfMode: 2, enable11r: false, hidePwd: false };
+  const psk = (securityKey) => ({ securityKey, versionPsk: 2, encryptionPsk: 3, gikRekeyPskEnable: false });
+  const replies = JSON.stringify(outcome);
+  const ok =
+    /^[0-9a-f]{24}$/.test(id || '') && isDeepStrictEqual(outcome.created.value, { success: true, networkId: id }) &&
+    isDeepStrictEqual(created('afterCreate'), { id, name: 'Red de prueba', security: 'wpaPersonal', bands: ['band2g', 'band5g'], enabled: false, hasPassphrase: true, scope: 'apGroups', apGroupIds: [g1, g2] }) &&
+    [g1, g2].every((groupId) => groupsAfterCreate.find((group) => group.wlanId === groupId).ssidList.some((ssid) => ssid.ssidName === 'Red de prueba')) &&
+    code('enterprise') === 'unsupportedSecurity' && code('noPass') === 'passphraseRequired' && code('longName') === 'nameTooLong' &&
+    code('unknownGroup') === 'groupNotFound' && code('renameNoPass') === 'passphraseRequired' && succeeded('renamed') &&
+    isDeepStrictEqual(outcome.open6g.value, { success: false, error: 'securityBandConflict', diagnostic: 'conflict: oweEnable' }) &&
+    isDeepStrictEqual(outcome.iotConflict.value, { success: false, error: 'securityBandConflict', diagnostic: 'conflict: enhancedIotConnectivity' }) &&
+    code('openWithPass') === 'passphraseNotApplicable' && succeeded('opened') && code('passOnOpen') === 'passphraseNotApplicable' &&
+    succeeded('toWpa') && code('shortPass') === 'passphraseInvalid' && succeeded('password') && succeeded('enabled') &&
+    isDeepStrictEqual(created('afterEdits'), { id, name: 'Red renombrada', security: 'wpaPersonal', bands: ['band2g'], enabled: true, hasPassphrase: true, scope: 'apGroups', apGroupIds: [g1, g2] }) &&
+    isDeepStrictEqual(outcome.scripted.value, { success: false, error: 'nameTaken', diagnostic: 'ssid basic-config: apiError, errorCode -33219' }) &&
+    code('freshEnterprise') === 'unsupportedSecurity' && code('freshEnterprisePass') === 'unsupportedSecurity' && succeeded('disabled') &&
+    code('off') === 'managementUnavailable' && code('stale') === 'superseded' &&
+    /invalid Wi-Fi network request keys/.test(outcome.extraKey.rejected || '') && /invalid Wi-Fi network security/.test(outcome.badSecurity.rejected || '') &&
+    /invalid Wi-Fi network enable state/.test(outcome.badEnabled.rejected || '') && /invalid Wi-Fi network id format/.test(outcome.badId.rejected || '') &&
+    isDeepStrictEqual(outcome.unknownNetwork.value, { success: false, error: 'requestFailed', diagnostic: 'ssid detail: malformedResponse' }) &&
+    succeeded('deleted') && outcome.afterDelete.value.success === true && created('afterDelete') === undefined &&
+    isDeepStrictEqual(writes, [
+      {
+        op: 'create', networkId: id,
+        body: { name: 'Red de prueba', deviceType: 1, ssidEnable: false, chooseDevices: 1, apGroupIds: [g1, g2], band: 3, security: 3, ...kept, pskSetting: psk(pass1) },
+      },
+      { op: 'update', networkId: id, body: { name: 'Red renombrada', band: 3, security: 3, ...kept, pskSetting: psk(pass1) } },
+      // WPA-Personal → open without OWE: PMF disabled (derived); open → WPA2-PSK keeps it (still valid)
+      { op: 'update', networkId: id, body: { name: 'Red renombrada', band: 3, security: 0, ...kept, pmfMode: 3 } },
+      { op: 'update', networkId: id, body: { name: 'Red renombrada', band: 1, security: 3, ...kept, pmfMode: 3, pskSetting: psk(pass2) } },
+      { op: 'password', networkId: id, body: { name: 'Red renombrada', band: 1, security: 3, ...kept, pmfMode: 3, pskSetting: psk(pass3) } },
+      { op: 'enable', networkId: id, enabled: true },
+      { op: 'enable', networkId: id, enabled: false },
+      { op: 'delete', networkId: id },
+    ]) &&
+    !replies.includes('SENTINEL') && !replies.includes('stub-passphrase') &&
+    callsTo(after, 'management:network-create')[0].args[0].sessionNonce === nonce &&
+    isDeepStrictEqual(after.scenario.wlanGroups, groupsBefore) && after.scenario.networks === null;
+  return verdict(ok, { outcome, writes });
+} // End of function networkWriteBridgeVerdict()
 
 // ============================================================================
 // Launch 6: AP group management (phase 16b) — New group, Rename, Delete with

@@ -37,8 +37,11 @@
 // A key is sensitive when, lowercased and stripped of everything but letters
 // and digits, it CONTAINS one of SENSITIVE_KEY_FRAGMENTS (so `client_secret`,
 // `clientSecret`, `Csrf-Token`, `set-cookie`, `access_token`, `securityKey`,
-// `pskSetting` and `TPOMADA_SESSIONID` all match). Over-redaction is accepted:
-// these strings are diagnostics, never data the app relies on.
+// `pskSetting`, `ppskSetting` and `TPOMADA_SESSIONID` all match, and so do the
+// Wi-Fi passphrase spellings of the network writes — `passphrase` (the IPC
+// field), `securityKey` (the Open API body), `psk`, `preSharedKey`, `wpaKey`).
+// Over-redaction is accepted: these strings are diagnostics, never data the
+// app relies on.
 //
 // The text scan is linear-time: a key is matched from a word start only, with
 // a bounded length, and only the value of a SENSITIVE key is scanned (after
@@ -66,6 +69,8 @@ export const SENSITIVE_KEY_FRAGMENTS: readonly string[] = [
   'authorization',
   'securitykey',
   'psk',
+  'presharedkey',
+  'wpakey',
   'sessionid'
 ];
 

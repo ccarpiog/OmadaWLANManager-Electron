@@ -48,7 +48,11 @@ describe('isSensitiveKey', () => {
     for (const key of ['pskSetting', 'newPassword', 'x-csrf-token', 'radiusSecret', 'wpaPassphrase']) {
       assert.equal(isSensitiveKey(key), true, key);
     }
-  });
+    // The Wi-Fi passphrase spellings of the network writes (phase 18a)
+    for (const key of ['passphrase', 'newPassphrase', 'securityKey', 'pskSetting', 'ppskSetting', 'psk', 'preSharedKey', 'pre_shared_key', 'wpaKey', 'WPA-Key']) {
+      assert.equal(isSensitiveKey(key), true, key);
+    }
+  }); // End of test "every listed key is sensitive..."
 
   test('ordinary keys are not', () => {
     for (const key of [...PLAIN_KEYS, '', '-']) {
@@ -310,3 +314,25 @@ describe('redactText', () => {
     assert.equal(redactErrorMessage(new Error('leaked tok-8'), ['tok-8']), `leaked ${REDACTED}`);
   });
 }); // End of the describe block for redactText
+
+describe('Wi-Fi network write payloads (phase 18a)', () => {
+  test('structured: an IPC write request and an SSID body lose every passphrase at any depth', () => {
+    const request = { sessionNonce: 'n', networkId: 'id', name: 'Casa', passphrase: 'wifi-pass-typed' };
+    assert.deepEqual(redactValue(request), { sessionNonce: 'n', networkId: 'id', name: 'Casa', passphrase: REDACTED });
+    const body = { name: 'Casa', security: 3, pskSetting: { securityKey: 'wifi-pass-body', versionPsk: 2 }, nested: [{ preSharedKey: 'wifi-pass-2' }, { wpaKey: 'wifi-pass-3' }] };
+    const redacted = JSON.stringify(redactValue(body));
+    for (const secret of ['wifi-pass-body', 'wifi-pass-2', 'wifi-pass-3']) {
+      assert.ok(!redacted.includes(secret), secret);
+    }
+    assert.ok(redacted.includes('"name":"Casa"'));
+  });
+
+  test('free text: JSON pairs, key=value pairs and header lines of every passphrase spelling', () => {
+    for (const key of ['passphrase', 'securityKey', 'psk', 'preSharedKey', 'wpaKey']) {
+      assert.equal(redactText(`{"${key}":"wifi pass 1","x":1}`), `{"${key}":"${REDACTED}","x":1}`, key);
+      assert.equal(redactText(`${key}=wifi-pass-2&x=1`), `${key}=${REDACTED}&x=1`, key);
+      assert.equal(redactText(`${key}: wifi pass 3`), `${key}: ${REDACTED}`, key);
+    }
+    assert.ok(!redactText('{"pskSetting":{"securityKey":"wifi pass 4","versionPsk":2}}').includes('wifi pass 4'));
+  });
+}); // End of the describe block for the Wi-Fi network write payloads

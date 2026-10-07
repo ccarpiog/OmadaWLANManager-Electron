@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T06:30:17Z",
+ "updated": "2026-10-07T07:36:08Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -221,7 +221,23 @@
    "title": "Wi-Fi network editing",
    "status": "queued",
    "risk": "high",
-   "summary": "Edits Open and WPA-Personal Wi-Fi networks with read-merge-write and password change."
+   "summary": "Split into 18a (main-side Open API network writes, guarded IPC) and 18b (editing UI, smoke)."
+  },
+  {
+   "id": "18a",
+   "title": "Wi-Fi network writes in main",
+   "status": "done",
+   "risk": "high",
+   "summary": "Creates, edits, enables, disables and deletes Open and WPA-Personal networks in main with read-merge-write, consistent security settings and guarded IPC.",
+   "review": "docs/reviews/phase18a.md",
+   "narrative": "docs/progress-archive/phase-18a.md"
+  },
+  {
+   "id": "18b",
+   "title": "Wi-Fi network editing UI",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Adds create, staged edit, change password, enable or disable and delete with impact summary to the Wi-Fi networks view."
   },
   {
    "id": "19",

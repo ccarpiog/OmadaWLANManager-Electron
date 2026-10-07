@@ -209,7 +209,7 @@ export interface SiteInfo {
 // opaque token identifying the installed controller session: the renderer
 // echoes it back verbatim with the management-access calls
 // (getManagementCapabilities(), testManagementAccess(), the AP-group calls
-// and getManagedNetworks()), so they only ever act on the session it is
+// and the Wi-Fi network calls), so they only ever act on the session it is
 // showing.
 // When authentication succeeds but the controller manages several sites and
 // none could be picked automatically, `success` is false with no `error`,
@@ -263,7 +263,7 @@ export type ManagementReason =
 // The management capabilities of the connected controller, computed in main
 // (flags plus a reason code — never a raw controller response).
 // `manageApGroups` (phase 16) and `manageWifiNetworks` (phases 17–19; the
-// network read of getManagedNetworks() requires it) are
+// network read of getManagedNetworks() and the network writes require it) are
 // true only when every §2.2 check passed; `reason` says why they are off
 // (null when they are on). `diagnostic` optionally adds a short technical
 // detail built by main from error codes and counts only (e.g. "httpError,
@@ -455,6 +455,128 @@ export interface ManagedNetworksResult {
   networks?: ManagedNetwork[];
 }
 
+// The security modes a Wi-Fi network can be created with or edited to (todo.md
+// 4.11): open and WPA-Personal only. Enterprise and PPSK networks can be
+// enabled / disabled and deleted, never created or edited.
+export type WritableNetworkSecurity = Extract<NetworkSecurity, 'open' | 'wpaPersonal'>;
+
+// Why a Wi-Fi network write (todo.md 4.11) failed. Main decides every one of
+// them, on FRESH controller data where the rule depends on it; the renderer
+// maps them to text.
+// Session: 'notConnected' / 'superseded' as for the capabilities (a late
+//   result is discarded); 'managementUnavailable' — the capabilities say Wi-Fi
+//   network management is off;
+// Name: 'nameRequired' (blank after trimming), 'nameTooLong' (over 32 bytes
+//   of UTF-8 — or the controller said so), 'nameInvalid' (control or
+//   bidirectional-control characters), 'nameTaken' (the controller reports a
+//   network with this name, or the emergency network's name);
+// Passphrase: 'passphraseRequired' (a WPA-Personal create, or a save whose
+//   result is WPA-Personal, came without a typed passphrase — spec §3: the
+//   current one is never reused), 'passphraseInvalid' (not 8–63 printable
+//   ASCII characters), 'passphraseNotApplicable' (a passphrase for a network
+//   whose result is open);
+// Settings: 'bandsRequired' (no band), 'groupsRequired' (a create bound to no
+//   AP group), 'unsupportedSecurity' (Enterprise, PPSK or an unknown mode —
+//   asked for by the renderer, or reported by the fresh detail, or refused by
+//   the controller), 'nothingToChange' (an edit without any edited field),
+//   'bandLimitReached' (the controller's per-band network limit),
+//   'securityBandConflict' (the requested security / band combination
+//   conflicts with a setting the app does not change — e.g. Enhanced IoT
+//   Connectivity on a network gaining 5 / 6 GHz — or with what the create
+//   request can carry — an open network on 6 GHz needs OWE; `diagnostic`
+//   names the conflicting field);
+// Fresh data: 'groupNotFound' (a create's AP group is not in the controller's
+//   AP-group list), 'groupListIncomplete' (that list could not be read
+//   completely), 'networkStateUnknown' (the fresh detail lacks a setting the
+//   save must carry unchanged, or reports one with the wrong type, so it
+//   cannot be merged safely);
+// 'requestFailed' — the controller could not be asked, refused for another
+//   reason or answered something malformed (`diagnostic` carries the failed
+//   call and error codes only).
+export type NetworkOperationError =
+  | ManagementCheckError
+  | 'managementUnavailable'
+  | 'nameRequired'
+  | 'nameTooLong'
+  | 'nameInvalid'
+  | 'nameTaken'
+  | 'passphraseRequired'
+  | 'passphraseInvalid'
+  | 'passphraseNotApplicable'
+  | 'bandsRequired'
+  | 'groupsRequired'
+  | 'unsupportedSecurity'
+  | 'nothingToChange'
+  | 'bandLimitReached'
+  | 'securityBandConflict'
+  | 'groupNotFound'
+  | 'groupListIncomplete'
+  | 'networkStateUnknown'
+  | 'requestFailed';
+
+// Payloads of the Wi-Fi network write calls (todo.md 4.11). Each carries the
+// session nonce of the connect result (echoed back verbatim) and nothing else
+// than listed here. `passphrase` is present only when the user typed one: it
+// crosses IPC renderer → main only, and never comes back in any reply.
+// `security` may name any NetworkSecurity value; main refuses every mode but
+// 'open' and 'wpaPersonal' with 'unsupportedSecurity'. Main trims and
+// validates the name, checks the passphrase and every rule itself.
+
+// Create a network: disabled, bound to the given AP groups (24-hex ids).
+export interface NetworkCreateRequest {
+  sessionNonce: string;
+  name: string;
+  security: NetworkSecurity;
+  bands: NetworkBand[];
+  apGroupIds: string[];
+  passphrase?: string;
+}
+
+// Save the basic settings of a network (read-merge-write in main): only the
+// edited fields are present; every other setting is kept as the controller
+// reports it. A save whose result is WPA-Personal needs `passphrase`.
+export interface NetworkUpdateRequest {
+  sessionNonce: string;
+  networkId: string;
+  name?: string;
+  security?: NetworkSecurity;
+  bands?: NetworkBand[];
+  passphrase?: string;
+}
+
+// "Change password" of a WPA-Personal network
+export interface NetworkPasswordRequest {
+  sessionNonce: string;
+  networkId: string;
+  passphrase: string;
+}
+
+// Enable or disable a network (its dedicated endpoint; no passphrase needed)
+export interface NetworkEnableRequest {
+  sessionNonce: string;
+  networkId: string;
+  enabled: boolean;
+}
+
+// Delete a network
+export interface NetworkDeleteRequest {
+  sessionNonce: string;
+  networkId: string;
+}
+
+// Result of every Wi-Fi network write. A successful create carries
+// `networkId` when main could identify the new network (from the
+// controller's answer, else the one catalog id that is new since the
+// pre-create catalog read AND carries the requested name — never a name
+// match alone); without it the renderer reloads and finds the network by its
+// name. Never a passphrase.
+export interface NetworkActionResult {
+  success: boolean;
+  error?: NetworkOperationError;
+  diagnostic?: string;
+  networkId?: string;
+}
+
 // Data loaded from controller
 export interface ControllerData {
   accessPoints: AccessPoint[];
@@ -485,6 +607,11 @@ export interface OmadaAPI {
   renameApGroup(request: ApGroupRenameRequest): Promise<ApGroupActionResult>;
   deleteApGroup(request: ApGroupDeleteRequest): Promise<ApGroupActionResult>;
   getManagedNetworks(sessionNonce: string): Promise<ManagedNetworksResult>;
+  createNetwork(request: NetworkCreateRequest): Promise<NetworkActionResult>;
+  updateNetwork(request: NetworkUpdateRequest): Promise<NetworkActionResult>;
+  changeNetworkPassword(request: NetworkPasswordRequest): Promise<NetworkActionResult>;
+  setNetworkEnabled(request: NetworkEnableRequest): Promise<NetworkActionResult>;
+  deleteNetwork(request: NetworkDeleteRequest): Promise<NetworkActionResult>;
 }
 
 // IPC channel names (type-safe)
@@ -520,6 +647,16 @@ export const IPC_CHANNELS = {
   // Wi-Fi network read model (Open API, management on only): the site's
   // networks with their scope and bindings, never a passphrase
   MANAGEMENT_NETWORKS: 'management:networks',
+
+  // Wi-Fi network writes (Open API, management on only): create (open /
+  // WPA-Personal, disabled), save basic settings (read-merge-write), change
+  // the passphrase, enable / disable, delete. A typed passphrase crosses
+  // renderer → main only, never back
+  MANAGEMENT_NETWORK_CREATE: 'management:network-create',
+  MANAGEMENT_NETWORK_UPDATE: 'management:network-update',
+  MANAGEMENT_NETWORK_PASSWORD: 'management:network-password',
+  MANAGEMENT_NETWORK_ENABLE: 'management:network-enable',
+  MANAGEMENT_NETWORK_DELETE: 'management:network-delete',
 } as const;
 
 // Type for IPC channel values

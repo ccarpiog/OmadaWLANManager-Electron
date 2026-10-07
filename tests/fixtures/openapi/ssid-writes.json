@@ -1,0 +1,180 @@
+{
+  "description": "The documented contract of the Open API Wi-Fi network (SSID) writes (docs/omada-openapi-ops.md, controller 6.3.0.45 spec) used by the OpenApiClient contract tests and the write-rule tests (src/main/wifi-network-write.ts): method, versioned path ({omadacId}, {siteId}, {ssidId} placeholders), the exact request bodies the app builds for an open and a WPA-Personal create, a full v1 detail (many settings outside the renderer DTO, a current key that must never be sent back) with the exact basic-config bodies its read-merge-write produces (the edit adds 6 GHz to a WPA2/WPA3 network: PMF capable, the transition mode's; the switch to open without OWE: PMF disabled), the enable body, the documented success answers, create answers without a usable id and the documented operation-specific errorCodes. Every id, name and key is made up.",
+  "siteId": "64f0c0ffee0000000000a001",
+  "ssidId": "5f00c0ffee0000000000c001",
+  "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5b", "6512a0e1f3b2c41d2e3f4a5c"],
+  "create": {
+    "method": "POST",
+    "path": "/openapi/v2/{omadacId}/sites/{siteId}/wireless-network/ssids",
+    "open": {
+      "input": { "name": "  Invitados  ", "security": "open", "bands": ["band2g"], "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5b", "6512a0e1f3b2c41d2e3f4a5c", "6512a0e1f3b2c41d2e3f4a5b"] },
+      "body": {
+        "name": "Invitados",
+        "deviceType": 1,
+        "ssidEnable": false,
+        "chooseDevices": 1,
+        "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5b", "6512a0e1f3b2c41d2e3f4a5c"],
+        "band": 1,
+        "guestNetEnable": false,
+        "security": 0,
+        "broadcast": true,
+        "vlanEnable": false,
+        "mloEnable": false,
+        "pmfMode": 3,
+        "enable11r": false,
+        "hidePwd": false
+      }
+    },
+    "wpaPersonal": {
+      "input": { "name": "Casa 6G", "security": "wpaPersonal", "bands": ["band6g", "band5g"], "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5c"], "passphrase": " fixture pass 2! " },
+      "body": {
+        "name": "Casa 6G",
+        "deviceType": 1,
+        "ssidEnable": false,
+        "chooseDevices": 1,
+        "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5c"],
+        "band": 6,
+        "guestNetEnable": false,
+        "security": 3,
+        "broadcast": true,
+        "vlanEnable": false,
+        "mloEnable": false,
+        "pmfMode": 2,
+        "enable11r": false,
+        "hidePwd": false,
+        "pskSetting": { "securityKey": " fixture pass 2! ", "versionPsk": 4, "encryptionPsk": 3, "gikRekeyPskEnable": false }
+      }
+    },
+    "success": { "errorCode": 0, "msg": "Success.", "result": { "id": "5f00c0ffee0000000000c0aa" } },
+    "expectedId": "5f00c0ffee0000000000c0aa",
+    "successWithoutUsableId": [
+      { "errorCode": 0, "msg": "Success.", "result": {} },
+      { "errorCode": 0, "msg": "Success." },
+      { "errorCode": 0, "msg": "Success.", "result": null },
+      { "errorCode": 0, "msg": "Success.", "result": { "id": 42 } },
+      { "errorCode": 0, "msg": "Success.", "result": { "id": "" } },
+      { "errorCode": 0, "msg": "Success.", "result": { "id": "../5f00" } },
+      { "errorCode": 0, "msg": "Success.", "result": "5f00c0ffee0000000000c0aa" }
+    ],
+    "errors": [
+      { "errorCode": -33000, "msg": "This site does not exist." },
+      { "errorCode": -33217, "msg": "Invalid SSID security mode." },
+      { "errorCode": -33219, "msg": "This SSID already exists." },
+      { "errorCode": -33231, "msg": "The ssid' s name should not be the same with emergency ssid." },
+      { "errorCode": -33240, "msg": "The SSID name should be between 1 and 32 bytes." }
+    ]
+  },
+  "basicConfig": {
+    "method": "PATCH",
+    "path": "/openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}/basic-config",
+    "detail": {
+      "ssidId": "5f00c0ffee0000000000c001",
+      "id": "5f00c0ffee0000000000c001",
+      "name": "Casa",
+      "band": 3,
+      "autoWanAccess": false,
+      "guestNetEnable": false,
+      "security": 3,
+      "oweEnable": false,
+      "broadcast": false,
+      "vlanEnable": true,
+      "vlanId": null,
+      "hidePwd": true,
+      "vlanSetting": { "mode": 1, "customConfig": { "customMode": 1, "vlanId": 20, "vlanPoolIds": "20,30" } },
+      "pskSetting": { "securityKey": "fixture-current-key-NEVER-SENT", "versionPsk": 4, "encryptionPsk": 3, "gikRekeyPskEnable": true, "rekeyPskInterval": 60, "intervalPskType": 1 },
+      "entSetting": { "radiusProfileId": "radius-profile-1", "versionEnt": 2, "encryptionEnt": 3, "gikRekeyEntEnable": false },
+      "ppskSetting": { "ppskProfileId": "ppsk-profile-1" },
+      "mloEnable": true,
+      "pmfMode": 1,
+      "enable11r": true,
+      "greEnable": false,
+      "prohibitWifiShare": true,
+      "enhancedIotConnectivity": false,
+      "CondBroadcastCtrl": { "enable": true, "condition": 1, "upTime": 10, "downTime": 20 },
+      "clientRateLimit": { "profileId": "rate-profile-1" },
+      "ssidRateLimit": { "customSetting": { "downLimitEnable": true, "downLimit": 10, "downLimitType": 1, "upLimitEnable": false } },
+      "wlanSchedule": { "wlanScheduleEnable": true, "action": 1, "scheduleId": "schedule-1" },
+      "rateControl": { "rate2gCtrlEnable": true, "lowerDensity2g": 5.5 },
+      "macFilter": { "macFilterEnable": false, "policy": 0 },
+      "multiCast": { "multiCastEnable": true, "channelUtil": 100 },
+      "dhcpOption82": { "dhcpEnable": false },
+      "deviceType": 1,
+      "ssidEnable": true,
+      "chooseDevices": 1,
+      "hotspotV2Setting": { "hotspotV2Enable": false },
+      "wifiCallingEnable": false,
+      "ssidDhcpOption": { "mode": 3 },
+      "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5b", "6512a0e1f3b2c41d2e3f4a5c"],
+      "unknownFutureField": { "x": 1 }
+    },
+    "edit": {
+      "edits": { "name": " Casa 2 ", "bands": ["band6g", "band2g", "band5g"], "passphrase": "fixture-new-passphrase-1" },
+      "body": {
+        "name": "Casa 2",
+        "band": 7,
+        "autoWanAccess": false,
+        "guestNetEnable": false,
+        "security": 3,
+        "oweEnable": false,
+        "broadcast": false,
+        "vlanEnable": true,
+        "vlanId": null,
+        "pskSetting": { "versionPsk": 4, "encryptionPsk": 3, "gikRekeyPskEnable": true, "rekeyPskInterval": 60, "intervalPskType": 1, "securityKey": "fixture-new-passphrase-1" },
+        "mloEnable": true,
+        "pmfMode": 2,
+        "enable11r": true,
+        "hidePwd": true,
+        "greEnable": false,
+        "vlanSetting": { "mode": 1, "customConfig": { "customMode": 1, "vlanId": 20, "vlanPoolIds": "20,30" } },
+        "prohibitWifiShare": true,
+        "enhancedIotConnectivity": false,
+        "CondBroadcastCtrl": { "enable": true, "condition": 1, "upTime": 10, "downTime": 20 }
+      }
+    },
+    "toOpen": {
+      "edits": { "security": "open" },
+      "body": {
+        "name": "Casa",
+        "band": 3,
+        "autoWanAccess": false,
+        "guestNetEnable": false,
+        "security": 0,
+        "oweEnable": false,
+        "broadcast": false,
+        "vlanEnable": true,
+        "vlanId": null,
+        "mloEnable": true,
+        "pmfMode": 3,
+        "enable11r": true,
+        "hidePwd": true,
+        "greEnable": false,
+        "vlanSetting": { "mode": 1, "customConfig": { "customMode": 1, "vlanId": 20, "vlanPoolIds": "20,30" } },
+        "prohibitWifiShare": true,
+        "enhancedIotConnectivity": false,
+        "CondBroadcastCtrl": { "enable": true, "condition": 1, "upTime": 10, "downTime": 20 }
+      }
+    },
+    "success": { "errorCode": 0, "msg": "Success." },
+    "errors": [
+      { "errorCode": -33000, "msg": "This site does not exist." },
+      { "errorCode": -33217, "msg": "Invalid SSID security mode." },
+      { "errorCode": -33219, "msg": "This SSID already exists." },
+      { "errorCode": -33238, "msg": "The number of SSIDs on 5GHz has reached the limit. At most 8 SSIDs can be created on each band." },
+      { "errorCode": -33240, "msg": "The SSID name should be between 1 and 32 bytes." },
+      { "errorCode": -33807, "msg": "Invalid VLAN ID. Enter a number from 1 to 4094." }
+    ]
+  },
+  "enable": {
+    "method": "PATCH",
+    "path": "/openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}/enable",
+    "body": { "ssidEnable": false },
+    "success": { "errorCode": 0, "msg": "Success." },
+    "errors": [{ "errorCode": -33000, "msg": "This site does not exist." }]
+  },
+  "delete": {
+    "method": "DELETE",
+    "path": "/openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}",
+    "success": { "errorCode": 0, "msg": "Success.", "result": {} },
+    "errors": [{ "errorCode": -33000, "msg": "This site does not exist." }]
+  }
+}

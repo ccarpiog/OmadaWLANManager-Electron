@@ -17,20 +17,30 @@ import { CertificateTrustSource, ControllerTlsSessions, installCertificateVerify
 import { ConnectionManager } from './connection-manager';
 import {
   applyManagementAccessChange,
+  changeNetworkPasswordReply,
   ControllerSession,
   createApGroupReply,
+  createNetworkReply,
   deleteApGroupReply,
+  deleteNetworkReply,
   getSessionCapabilities,
   managedApGroupsReply,
   managedNetworksReply,
   renameApGroupReply,
-  testManagementAccess
+  setNetworkEnabledReply,
+  testManagementAccess,
+  updateNetworkReply
 } from './controller-session';
 import {
   NONCE_REGEX,
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
   parseApGroupRenameRequest,
+  parseNetworkCreateRequest,
+  parseNetworkDeleteRequest,
+  parseNetworkEnableRequest,
+  parseNetworkPasswordRequest,
+  parseNetworkUpdateRequest,
   requireSessionNonce
 } from './ipc-guards';
 import { createNetTransport } from './net-transport';
@@ -45,6 +55,7 @@ import {
   ManagedApGroupsResult,
   ManagedNetworksResult,
   ManagementCapabilitiesResult,
+  NetworkActionResult,
   RendererConfig
 } from '../shared/types';
 
@@ -623,3 +634,48 @@ ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORKS, async (event, sessionNonce: unk
   assertTrustedIpcSender(event);
   return managedNetworksReply(connectionManager, requireSessionNonce(sessionNonce, extra));
 }); // End of the MANAGEMENT_NETWORKS handler
+
+// Wi-Fi network writes (todo.md 4.11; spec §3, §4.5). Every channel: the
+// trusted sender, then a strict shape guard (ipc-guards.ts: exactly the
+// listed keys — the optional ones only when present —, a plain object, the
+// 32-hex session nonce, an SSID id, 24-hex AP-group ids, a known security
+// mode and bands, booleans, raw length caps on the name and the passphrase;
+// a rejection never quotes a value), then the installed session named by the
+// nonce (notConnected / superseded otherwise, also when it changes while the
+// write runs). The session refuses unless Wi-Fi network management is on,
+// checks the write rules and reads fresh data right before writing
+// (read-merge-write for basic settings; ControllerSession in
+// controller-session.ts). A typed passphrase travels renderer → main only:
+// no reply, error, diagnostic or log line carries it.
+
+// Create a network, disabled ({sessionNonce, name, security, bands,
+// apGroupIds} + passphrase when typed)
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_CREATE, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
+  assertTrustedIpcSender(event);
+  return createNetworkReply(connectionManager, parseNetworkCreateRequest(payload, extra));
+}); // End of the MANAGEMENT_NETWORK_CREATE handler
+
+// Save the edited basic settings ({sessionNonce, networkId} + the edited
+// fields among name, security, bands, passphrase)
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_UPDATE, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
+  assertTrustedIpcSender(event);
+  return updateNetworkReply(connectionManager, parseNetworkUpdateRequest(payload, extra));
+}); // End of the MANAGEMENT_NETWORK_UPDATE handler
+
+// Change the passphrase of a WPA-Personal network ({sessionNonce, networkId, passphrase})
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_PASSWORD, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
+  assertTrustedIpcSender(event);
+  return changeNetworkPasswordReply(connectionManager, parseNetworkPasswordRequest(payload, extra));
+}); // End of the MANAGEMENT_NETWORK_PASSWORD handler
+
+// Enable or disable a network ({sessionNonce, networkId, enabled})
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_ENABLE, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
+  assertTrustedIpcSender(event);
+  return setNetworkEnabledReply(connectionManager, parseNetworkEnableRequest(payload, extra));
+}); // End of the MANAGEMENT_NETWORK_ENABLE handler
+
+// Delete a network ({sessionNonce, networkId})
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_DELETE, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
+  assertTrustedIpcSender(event);
+  return deleteNetworkReply(connectionManager, parseNetworkDeleteRequest(payload, extra));
+}); // End of the MANAGEMENT_NETWORK_DELETE handler

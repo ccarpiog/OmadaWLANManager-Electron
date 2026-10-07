@@ -25,10 +25,12 @@ import {
   validateOpenApiApGroup,
   validateOpenApiPage,
   validateOpenApiSite,
+  validateCreatedSsid,
   validateTokenResult,
   type OpenApiErrorCode
 } from '../../src/main/openapi-client';
 import apGroupWriteFixtures from '../fixtures/openapi/ap-group-writes.json';
+import ssidWriteFixtures from '../fixtures/openapi/ssid-writes.json';
 import apGroupFixtures from '../fixtures/openapi/ap-groups.json';
 import siteFixtures from '../fixtures/openapi/sites.json';
 import ssidFixtures from '../fixtures/openapi/ssids.json';
@@ -1142,3 +1144,197 @@ describe('OpenApiClient: Wi-Fi network read contract (fixtures: tests/fixtures/o
     assert.deepEqual(transport.requests, []);
   }); // End of test "unusable arguments are refused..."
 }); // End of the describe block for the Wi-Fi network read contract
+
+/**
+ * Resolves an SSID write contract path of tests/fixtures/openapi/ssid-writes.json.
+ * @param {string} template - The path with {omadacId} / {siteId} / {ssidId}.
+ * @returns {string} The path.
+ */
+function ssidWritePath(template: string): string {
+  return template.replace('{omadacId}', OMADAC_ID).replace('{siteId}', ssidWriteFixtures.siteId).replace('{ssidId}', ssidWriteFixtures.ssidId);
+}
+
+/**
+ * Asserts the contract of one recorded SSID write: method, the explicit
+ * version and path (no query), the access-token header and the exact JSON
+ * body (none for DELETE, with no Content-Type then).
+ * @param {RecordedRequest} request - The recorded request.
+ * @param {{ method: string; path: string }} contract - The fixture contract.
+ * @param {'v1' | 'v2'} version - The documented API version.
+ * @param {unknown} [body] - The exact body expected.
+ */
+function assertSsidWriteContract(request: RecordedRequest, contract: { method: string; path: string }, version: 'v1' | 'v2', body?: unknown): void {
+  assert.equal(request.method, contract.method);
+  assert.equal(request.path, ssidWritePath(contract.path));
+  assert.ok(request.path.startsWith(`/openapi/${version}/${OMADAC_ID}/sites/`), `explicit ${version} path`);
+  assert.equal(request.headers.Authorization, 'AccessToken=AT-1');
+  if (body === undefined) {
+    assert.equal(request.body, undefined, 'no body');
+    assert.equal(request.headers['Content-Type'], undefined);
+  } else {
+    assert.deepEqual(request.body, body, 'exactly the given body');
+    assert.deepEqual(Object.keys(request.body as object).sort(), Object.keys(body as object).sort(), 'no extra keys');
+    assert.equal(request.headers['Content-Type'], 'application/json');
+  }
+} // End of function assertSsidWriteContract()
+
+describe('OpenApiClient: Wi-Fi network write contract (fixtures: tests/fixtures/openapi/ssid-writes.json)', () => {
+  const { siteId, ssidId } = ssidWriteFixtures;
+  const create = ssidWriteFixtures.create;
+  const basicConfig = ssidWriteFixtures.basicConfig;
+  const enable = ssidWriteFixtures.enable;
+  const remove = ssidWriteFixtures.delete;
+  const detailPath = `/openapi/v1/${OMADAC_ID}/sites/${siteId}/wireless-network/ssids/${ssidId}`;
+
+  test('createSsid(): POST /openapi/v2/{omadacId}/sites/{siteId}/wireless-network/ssids with exactly the open / WPA-Personal body; returns result.id', async () => {
+    for (const body of [create.open.body, create.wpaPersonal.body] as Array<Record<string, unknown>>) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('POST', ssidWritePath(create.path), { body: create.success });
+      assert.equal(await client.createSsid(siteId, body), create.expectedId);
+      assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `POST ${ssidWritePath(create.path)}`]);
+      assertSsidWriteContract(transport.requests[1], create, 'v2', body);
+    }
+  });
+
+  test('createSsid(): an answer without a usable SSID id resolves null (never a guessed id)', async () => {
+    for (const answer of create.successWithoutUsableId) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('POST', ssidWritePath(create.path), { body: answer });
+      assert.equal(await client.createSsid(siteId, create.open.body), null, JSON.stringify(answer));
+      assert.equal(validateCreatedSsid((answer as { result?: unknown }).result), null);
+    }
+    assert.equal(validateCreatedSsid(create.success.result), create.expectedId);
+  });
+
+  test('getSsidWriteDetail(): one GET of the v1 detail; the validated detail plus the result exactly as sent; a detail naming another SSID is malformedResponse', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', detailPath, ok(basicConfig.detail));
+    const fresh = await client.getSsidWriteDetail(siteId, ssidId);
+    assert.deepEqual(fresh.raw, basicConfig.detail);
+    assert.equal(fresh.detail.id, ssidId);
+    assert.equal(fresh.detail.security, 'wpaPersonal');
+    assert.equal('securityKey' in fresh.detail, false, 'the validated detail keeps no key');
+    assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `GET ${detailPath}`]);
+    const other = setup();
+    other.transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', detailPath, ok({ ...basicConfig.detail, id: '5f00c0ffee0000000000c009', ssidId: undefined }));
+    const error = await expectOpenApiError(other.client.getSsidWriteDetail(siteId, ssidId), 'malformedResponse');
+    assert.ok(!error.message.includes('fixture-current-key'), 'the error never quotes the payload');
+  }); // End of test "getSsidWriteDetail()..."
+
+  test('updateSsidBasicConfig(): PATCH /openapi/v1/…/ssids/{ssidId}/basic-config with exactly the merged body; errorCode 0 is the confirmation', async () => {
+    for (const body of [basicConfig.edit.body, basicConfig.toOpen.body] as Array<Record<string, unknown>>) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('PATCH', ssidWritePath(basicConfig.path), { body: basicConfig.success });
+      assert.equal(await client.updateSsidBasicConfig(siteId, ssidId, body), undefined);
+      assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `PATCH ${ssidWritePath(basicConfig.path)}`]);
+      assertSsidWriteContract(transport.requests[1], basicConfig, 'v1', body);
+    }
+  });
+
+  test('setSsidEnabled(): PATCH /openapi/v1/…/ssids/{ssidId}/enable with exactly {ssidEnable}', async () => {
+    for (const enabled of [false, true]) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('PATCH', ssidWritePath(enable.path), { body: enable.success });
+      assert.equal(await client.setSsidEnabled(siteId, ssidId, enabled), undefined);
+      assertSsidWriteContract(transport.requests[1], enable, 'v1', { ssidEnable: enabled });
+    }
+  });
+
+  test('deleteSsid(): DELETE /openapi/v1/…/ssids/{ssidId} with no body and no Content-Type', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('DELETE', ssidWritePath(remove.path), { body: remove.success });
+    assert.equal(await client.deleteSsid(siteId, ssidId), undefined);
+    assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `DELETE ${ssidWritePath(remove.path)}`]);
+    assertSsidWriteContract(transport.requests[1], remove, 'v1');
+  });
+
+  test('the documented errorCodes of each write surface as apiError carrying the code; HTTP 500 is httpError; a refused write is never retried', async () => {
+    const calls: Array<[string, string, (client: OpenApiClient) => Promise<unknown>, Array<{ errorCode: number; msg: string }>]> = [
+      ['POST', create.path, (client) => client.createSsid(siteId, create.wpaPersonal.body), create.errors],
+      ['PATCH', basicConfig.path, (client) => client.updateSsidBasicConfig(siteId, ssidId, basicConfig.edit.body), basicConfig.errors],
+      ['PATCH', enable.path, (client) => client.setSsidEnabled(siteId, ssidId, false), enable.errors],
+      ['DELETE', remove.path, (client) => client.deleteSsid(siteId, ssidId), remove.errors]
+    ];
+    for (const [method, path, call, errors] of calls) {
+      for (const answer of errors) {
+        const { client, transport } = setup();
+        transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on(method, ssidWritePath(path), { body: answer });
+        const error = await expectOpenApiError(call(client), 'apiError');
+        assert.equal(error.controllerErrorCode, answer.errorCode);
+        assert.equal(transport.requestsTo(method, ssidWritePath(path)).length, 1, 'no retry of a refused write');
+      }
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on(method, ssidWritePath(path), { status: 500, body: '<html>oops</html>' });
+      assert.equal((await expectOpenApiError(call(client), 'httpError')).httpStatus, 500);
+    } // End of the loop over the four writes
+  }); // End of test "the documented errorCodes of each write..."
+
+  test('the passphrase of a body is scrubbed by value from every diagnostic of that call (controller text, an HTTP error envelope, a transport failure)', async () => {
+    const passphrase = (create.wpaPersonal.body.pskSetting as { securityKey: string }).securityKey;
+    const edited = basicConfig.edit.body.pskSetting.securityKey;
+    const answers: Array<[string, string, (client: OpenApiClient) => Promise<unknown>, string, FakeReply | (() => never)]> = [
+      ['POST', create.path, (client) => client.createSsid(siteId, create.wpaPersonal.body), passphrase, { body: { errorCode: -1, msg: `Bad key${passphrase}here` } }],
+      ['PATCH', basicConfig.path, (client) => client.updateSsidBasicConfig(siteId, ssidId, basicConfig.edit.body), edited, { body: { errorCode: -1, msg: `Bad key ${edited}` } }],
+      ['PATCH', basicConfig.path, (client) => client.updateSsidBasicConfig(siteId, ssidId, basicConfig.edit.body), edited, { status: 400, body: { errorCode: -2, msg: `rejected ${edited}` } }],
+      [
+        'PATCH',
+        basicConfig.path,
+        (client) => client.updateSsidBasicConfig(siteId, ssidId, basicConfig.edit.body),
+        edited,
+        () => {
+          throw new Error(`socket hang up while sending ${edited}`);
+        }
+      ]
+    ];
+    for (const [method, path, call, secret, answer] of answers) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on(method, ssidWritePath(path), answer);
+      let caught: unknown;
+      try {
+        await call(client);
+      } catch (error) {
+        caught = error;
+      }
+      assert.ok(caught instanceof OpenApiError, String(caught));
+      for (const text of [caught.message, caught.diagnostic, inspect(caught), JSON.stringify(caught)]) {
+        assert.ok(!text.includes(secret.trim()), `${caught.code}: ${text}`);
+      }
+    } // End of the loop over the failing writes
+  }); // End of test "the passphrase of a body is scrubbed..."
+
+  test('a rejected token on a write re-acquires once and resends the same body once', async () => {
+    const { client, transport } = setup();
+    let token = 0;
+    transport
+      .on('POST', TOKEN_PATH, () => tokenReply(`AT-${++token}`))
+      .on('PATCH', ssidWritePath(basicConfig.path), [EXPIRED, { body: basicConfig.success }]);
+    await client.updateSsidBasicConfig(siteId, ssidId, basicConfig.edit.body);
+    const sent = transport.requestsTo('PATCH', ssidWritePath(basicConfig.path));
+    assert.deepEqual(sent.map((request) => request.headers.Authorization), ['AccessToken=AT-1', 'AccessToken=AT-2']);
+    assert.deepEqual(sent[1].body, sent[0].body);
+  }); // End of test "a rejected token on a..."
+
+  test('unusable arguments are refused before anything is sent: ids, an Enterprise / PPSK / garbage body, a key on an open body, a non-boolean enable state', async () => {
+    const { client, transport } = setup();
+    const wpa = basicConfig.edit.body as Record<string, unknown>;
+    await assert.rejects(client.createSsid('', create.open.body), /Invalid SSID create arguments/);
+    for (const security of [2, 4, 5, 1]) {
+      await assert.rejects(client.createSsid(siteId, { ...wpa, security }), /Invalid SSID create arguments/, String(security));
+      await assert.rejects(client.updateSsidBasicConfig(siteId, ssidId, { ...wpa, security }), /Invalid SSID basic-config arguments/, String(security));
+    }
+    await assert.rejects(client.createSsid(siteId, { ...create.open.body, pskSetting: { securityKey: '12345678' } }), /Invalid SSID create arguments/);
+    await assert.rejects(client.updateSsidBasicConfig(siteId, ssidId, { ...wpa, pskSetting: { versionPsk: 2 } }), /Invalid SSID basic-config arguments/);
+    for (const badId of ['', '..', '../sites', 'a b', 'x'.repeat(129)]) {
+      await assert.rejects(client.updateSsidBasicConfig(siteId, badId, wpa), /Invalid SSID basic-config arguments/, badId);
+      await assert.rejects(client.setSsidEnabled(siteId, badId, true), /Invalid SSID enable arguments/, badId);
+      await assert.rejects(client.deleteSsid(siteId, badId), /Invalid SSID delete arguments/, badId);
+      await assert.rejects(client.getSsidWriteDetail(siteId, badId), /Invalid SSID detail arguments/, badId);
+    }
+    await assert.rejects(client.setSsidEnabled(siteId, ssidId, 'true' as unknown as boolean), /Invalid SSID enable arguments/);
+    assert.deepEqual(transport.requests, []);
+    client.close();
+    await expectOpenApiError(client.createSsid(siteId, create.open.body), 'clientClosed');
+    await expectOpenApiError(client.deleteSsid(siteId, ssidId), 'clientClosed');
+    assert.deepEqual(transport.requests, []);
+  }); // End of test "unusable arguments are refused..."
+}); // End of the describe block for the Wi-Fi network write contract

@@ -55,7 +55,14 @@
 // parallel. The name rules and the delete policy (ap-group-policy.ts) are
 // decided here on FRESH Open API data read right before the write, never on
 // what the renderer believed; the writes of one session run one at a time,
-// so two of them cannot both pass the same check.
+// so two of them cannot both pass the same check. A write waiting in that
+// queue is bound to the management state it was INVOKED under
+// (#serializeWrite()): every invalidation — close() (a connect or a
+// disconnect), a management-credentials save (invalidateCapabilities()),
+// "Test management access" (refreshCapabilities()) — bumps a write epoch, and
+// a queued write whose epoch changed answers 'superseded' when its turn
+// comes, sending nothing, instead of picking up the client of a newer check
+// run.
 //
 // Wi-Fi network read model (todo.md 4.10; spec §2.3, §3, §4.5, §5):
 // listManagedNetworks() is the only caller of the Open API client's SSID
@@ -66,6 +73,28 @@
 // replaced or its client dropped. Its requests are bounded and deterministic
 // (sequential: the catalog pages, then two per network). The reply is the
 // allowlisted DTO of wifi-network-model.ts: no passphrase or other secret.
+//
+// Wi-Fi network writes (todo.md 4.11; spec §3, §4.5, §5): createNetwork(),
+// updateNetwork(), changeNetworkPassword(), setNetworkEnabled() and
+// deleteNetwork() are the only callers of the Open API client's SSID writes,
+// under the same binding ('managementUnavailable' unless Wi-Fi network
+// management is on, the client of the latest successful check run,
+// 'superseded' — nothing more sent, a late answer discarded — after any await
+// once the session is closed or replaced or its client dropped), and they
+// share the AP-group writes' queue and its write epoch: one session's writes
+// run one at a time, and a queued one invalidated before its turn sends
+// nothing ('superseded'). The renderer's input is checked first
+// (wifi-network-write.ts: name, passphrase, security, bands, groups — nothing
+// is sent for a refused one); then every write reads FRESH data right before
+// writing: a create the AP-group list (every bound group must exist) and the
+// SSID catalog (the ids before the create), an edit / password change the
+// network's detail, which the save is merged onto (read-merge-write: only the
+// edited fields and the dependents of a security / band change change; the
+// detail's own key is never reused and never leaves main), an enable / delete
+// the detail too (the id must name a network the controller reports).
+// Enterprise / PPSK / unknown security is refused for an edit on the fresh
+// detail, whatever the renderer believed. A typed passphrase is scrubbed by
+// value from every log line; replies and diagnostics carry codes only.
 
 import type {
   AccessPoint,
@@ -85,6 +114,13 @@ import type {
   ManagementCapabilitiesResult,
   ManagementCheckError,
   ManagementReason,
+  NetworkActionResult,
+  NetworkCreateRequest,
+  NetworkDeleteRequest,
+  NetworkEnableRequest,
+  NetworkOperationError,
+  NetworkPasswordRequest,
+  NetworkUpdateRequest,
   SiteInfo
 } from '../shared/types';
 import {
@@ -98,9 +134,21 @@ import {
 import { ConnectionManager, createNonce, InstalledDetails, ManagedController } from './connection-manager';
 import { ConnectOutcome, OmadaController } from './omada-api';
 import type { OmadaTransport } from './omada-transport';
-import { OpenApiApGroupList, OpenApiClient, OpenApiClientOptions, OpenApiError, PagedList } from './openapi-client';
+import { OpenApiApGroupList, OpenApiClient, OpenApiClientOptions, OpenApiError, OpenApiSsidWriteDetail, PagedList } from './openapi-client';
 import { redactText } from './redact';
 import { MAX_MANAGED_NETWORKS, OpenApiSsid, OpenApiSsidBindings, OpenApiSsidDetail, toManagedNetwork } from './wifi-network-model';
+import {
+  buildCreateSsidBody,
+  checkNetworkCreate,
+  checkNetworkEdits,
+  CheckedNetworkEdits,
+  isTypedPassphrase,
+  mergeBasicConfig,
+  NETWORK_CONTROLLER_ERRORS,
+  NetworkCreateInput,
+  NetworkEditsInput,
+  NetworkWriteOperation
+} from './wifi-network-write';
 
 /** The Open API credentials (main process only — never over IPC or in a log). */
 export interface ManagementCredentials {
@@ -356,6 +404,73 @@ export function describeNetworkReadFailure(call: NetworkReadCall, error: unknown
   return networkReadFailure('requestFailed', `${call}: ${describeOpenApiFailure(error)}`);
 }
 
+/** The Open API calls of the Wi-Fi network writes (the prefix of their diagnostics). */
+export type NetworkWriteCall = 'ap-groups' | 'ssids' | 'ssid detail' | 'ssid create' | 'ssid basic-config' | 'ssid enable' | 'ssid delete';
+
+// The write call of each Wi-Fi network write: only its errorCodes map to
+// specific codes (NETWORK_CONTROLLER_ERRORS); a failed fresh read never does
+const NETWORK_WRITE_CALLS: Record<NetworkWriteOperation, NetworkWriteCall> = {
+  create: 'ssid create',
+  update: 'ssid basic-config',
+  password: 'ssid basic-config',
+  enable: 'ssid enable',
+  delete: 'ssid delete'
+};
+
+/** A failed Wi-Fi network write reply. */
+export interface NetworkWriteFailure {
+  success: false;
+  error: NetworkOperationError;
+  diagnostic?: string;
+}
+
+/**
+ * Builds a failed Wi-Fi network write reply.
+ * @param {NetworkOperationError} error - The stable error code.
+ * @param {string} [diagnostic] - Codes-only technical detail.
+ * @returns {NetworkWriteFailure} The reply.
+ */
+export function networkWriteFailure(error: NetworkOperationError, diagnostic?: string): NetworkWriteFailure {
+  return diagnostic ? { success: false, error, diagnostic } : { success: false, error };
+}
+
+/**
+ * Maps a failed Open API call of a Wi-Fi network write to its reply: a closed
+ * client is 'superseded' (the session moved on), a documented errorCode of
+ * the operation's own write call maps per operation
+ * (NETWORK_CONTROLLER_ERRORS: e.g. -33219 → 'nameTaken'), anything else is
+ * 'requestFailed'; the diagnostic is "<call>: <codes>" (e.g. "ssid
+ * basic-config: apiError, errorCode -33219", "ssid detail: malformedResponse")
+ * — never controller text.
+ * @param {NetworkWriteOperation} operation - The write.
+ * @param {NetworkWriteCall} call - The failed call.
+ * @param {unknown} error - The thrown value.
+ * @returns {NetworkWriteFailure} The failed reply.
+ */
+export function describeNetworkWriteFailure(operation: NetworkWriteOperation, call: NetworkWriteCall, error: unknown): NetworkWriteFailure {
+  if (error instanceof OpenApiError && error.code === 'clientClosed') {
+    return networkWriteFailure('superseded');
+  }
+  const diagnostic = `${call}: ${describeOpenApiFailure(error)}`;
+  if (call === NETWORK_WRITE_CALLS[operation] && error instanceof OpenApiError && error.code === 'apiError' && error.controllerErrorCode !== null) {
+    const mapped = NETWORK_CONTROLLER_ERRORS[operation].get(error.controllerErrorCode);
+    if (mapped !== undefined) {
+      return networkWriteFailure(mapped, diagnostic);
+    }
+  }
+  return networkWriteFailure('requestFailed', diagnostic);
+} // End of function describeNetworkWriteFailure()
+
+/**
+ * The secrets of one write to scrub from its log lines: the typed
+ * passphrase, when there is one.
+ * @param {unknown} passphrase - The passphrase field of the request.
+ * @returns {string[]} The values to scrub.
+ */
+function writeSecrets(passphrase: unknown): string[] {
+  return isTypedPassphrase(passphrase) ? [passphrase] : [];
+}
+
 /**
  * One management operation's view of management access: the verified Open
  * API client, the site, and whether the operation may still act.
@@ -413,9 +528,15 @@ export class ControllerSession implements ManagedController {
   // of phases 16–19), and the client of the run in flight
   #openApi: OpenApiClient | null = null;
   #checkClient: OpenApiClient | null = null;
-  // The tail of this session's AP-group writes: each write starts once the
-  // previous one settled (#serializeWrite())
+  // The tail of this session's writes (AP groups and Wi-Fi networks): each
+  // write starts once the previous one settled (#serializeWrite())
   #writeChain: Promise<unknown> = Promise.resolve();
+  // Bumped by every invalidation of the management state a write may have
+  // been invoked under — close(), invalidateCapabilities() and an explicit
+  // refreshCapabilities() ("Test management access"); never by the check run
+  // a write itself starts (#startChecks()). A write captures it when invoked
+  // and is superseded once it changed (#serializeWrite())
+  #writeEpoch = 0;
 
   /**
    * Creates the session. Nothing is sent until connect().
@@ -519,7 +640,7 @@ export class ControllerSession implements ManagedController {
   activate(): InstalledDetails {
     if (!this.#activated && !this.#closed) {
       this.#activated = true;
-      void this.refreshCapabilities();
+      void this.#startChecks();
     }
     const site = this.site;
     return site ? { siteName: site.name, sessionNonce: this.sessionNonce } : { sessionNonce: this.sessionNonce };
@@ -662,12 +783,14 @@ export class ControllerSession implements ManagedController {
    * the one group with this name that was not listed before; when that is
    * not exactly one group, or that read fails, the reply carries no id —
    * unless the operation was invalidated meanwhile: then it is 'superseded'.
+   * Queued behind another write, it is 'superseded' (nothing sent) when an
+   * invalidation came after this call (#serializeWrite()).
    * @param {string} rawName - The name as typed (shape-checked by the IPC guard).
    * @param {() => boolean} isInstalled - Whether this session is still the installed one.
    * @returns {Promise<ApGroupActionResult>} The reply.
    */
   createApGroup(rawName: string, isInstalled: () => boolean): Promise<ApGroupActionResult> {
-    return this.#serializeWrite(() => this.#guarded('create', () => this.#create(rawName, isInstalled)));
+    return this.#serializeWrite(isInstalled, (isCurrent) => this.#guarded('create', () => this.#create(rawName, isCurrent)));
   }
 
   /**
@@ -681,7 +804,7 @@ export class ControllerSession implements ManagedController {
    * @returns {Promise<ApGroupActionResult>} The reply.
    */
   renameApGroup(apGroupId: string, rawName: string, isInstalled: () => boolean): Promise<ApGroupActionResult> {
-    return this.#serializeWrite(() => this.#guarded('rename', () => this.#rename(apGroupId, rawName, isInstalled)));
+    return this.#serializeWrite(isInstalled, (isCurrent) => this.#guarded('rename', () => this.#rename(apGroupId, rawName, isCurrent)));
   }
 
   /**
@@ -694,19 +817,148 @@ export class ControllerSession implements ManagedController {
    * @returns {Promise<ApGroupActionResult>} The reply.
    */
   deleteApGroup(apGroupId: string, isInstalled: () => boolean): Promise<ApGroupActionResult> {
-    return this.#serializeWrite(() => this.#guarded('delete', () => this.#delete(apGroupId, isInstalled)));
+    return this.#serializeWrite(isInstalled, (isCurrent) => this.#guarded('delete', () => this.#delete(apGroupId, isCurrent)));
   }
 
   /**
-   * Runs the capability checks again (activation, "Test management access",
-   * the first capabilities request after invalidateCapabilities()): the
-   * previous Open API client is closed at once (management is off while
-   * checking) and a fresh run starts with the credentials configured now. A
-   * run still in flight is superseded; its waiters get this run's result.
+   * Creates a Wi-Fi network (open or WPA-Personal), DISABLED and bound to the
+   * given AP groups. The input is checked first (checkNetworkCreate(): no
+   * request for a refused one); then, on a FRESH AP-group list, every bound
+   * group must exist ('groupNotFound'; a truncated list is
+   * 'groupListIncomplete'); then the SSID catalog is read (the ids that exist
+   * before the create; a failed read refuses the create, nothing sent); the
+   * POST follows (v2, buildCreateSsidBody()). The new network's id comes from
+   * the answer, or (unverified answer shape) from a fresh catalog: the one id
+   * that is new since the read before the create AND carries the requested
+   * name — never a name match alone (duplicate names are allowed). When that
+   * is not exactly one id, either catalog was truncated, or the read after
+   * the create fails, the reply carries no id — unless the operation was
+   * invalidated meanwhile: then it is 'superseded'.
+   * @param {NetworkCreateInput} input - The request's fields (shape-checked by the IPC guard).
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<NetworkActionResult>} The reply.
+   */
+  createNetwork(input: NetworkCreateInput, isInstalled: () => boolean): Promise<NetworkActionResult> {
+    const secrets = writeSecrets(input.passphrase);
+    return this.#serializeWrite(isInstalled, (isCurrent) => this.#guardedNetwork('create', secrets, () => this.#createNetwork(input, isCurrent, secrets)));
+  }
+
+  /**
+   * Saves the edited basic settings of a Wi-Fi network (read-merge-write):
+   * the edits are checked first (checkNetworkEdits()), then the network's
+   * FRESH detail is read and the save merged onto it (mergeBasicConfig():
+   * every unedited setting kept as reported; the dependents of a security /
+   * band change derived; Enterprise / PPSK / unknown security refused; a
+   * WPA-Personal result needs the typed passphrase), then the PATCH
+   * …/basic-config carries the merged body.
+   * @param {string} networkId - The SSID id (format-checked by the IPC guard).
+   * @param {NetworkEditsInput} edits - The edited fields only.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<NetworkActionResult>} The reply.
+   */
+  updateNetwork(networkId: string, edits: NetworkEditsInput, isInstalled: () => boolean): Promise<NetworkActionResult> {
+    const secrets = writeSecrets(edits.passphrase);
+    return this.#serializeWrite(isInstalled, (isCurrent) =>
+      this.#guardedNetwork('update', secrets, async () => {
+        const checked = checkNetworkEdits(edits);
+        if (!checked.ok) {
+          return networkWriteFailure(checked.error);
+        }
+        return this.#saveBasicConfig('update', networkId, checked.edits, isCurrent, secrets);
+      })
+    );
+  } // End of function updateNetwork()
+
+  /**
+   * "Change password" of a WPA-Personal network: the ops doc has no dedicated
+   * operation, so it is a basic-config save (read-merge-write, as
+   * updateNetwork()) whose only edit is the typed passphrase. A blank one is
+   * 'passphraseRequired', a malformed one 'passphraseInvalid'; on the fresh
+   * detail an open network is 'passphraseNotApplicable' and Enterprise /
+   * PPSK / unknown security 'unsupportedSecurity'.
+   * @param {string} networkId - The SSID id (format-checked by the IPC guard).
+   * @param {string} passphrase - The new passphrase as typed.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<NetworkActionResult>} The reply.
+   */
+  changeNetworkPassword(networkId: string, passphrase: string, isInstalled: () => boolean): Promise<NetworkActionResult> {
+    const secrets = writeSecrets(passphrase);
+    return this.#serializeWrite(isInstalled, (isCurrent) =>
+      this.#guardedNetwork('password', secrets, async () => {
+        if (!isTypedPassphrase(passphrase)) {
+          return networkWriteFailure('passphraseRequired');
+        }
+        const checked = checkNetworkEdits({ passphrase });
+        if (!checked.ok) {
+          return networkWriteFailure(checked.error);
+        }
+        return this.#saveBasicConfig('password', networkId, checked.edits, isCurrent, secrets);
+      })
+    );
+  } // End of function changeNetworkPassword()
+
+  /**
+   * Enables or disables a Wi-Fi network through its dedicated endpoint (no
+   * passphrase needed; any security mode, spec §4.5): the network's FRESH
+   * detail is read first (it must name this network), then the PATCH
+   * …/enable carries exactly `{ssidEnable}`.
+   * @param {string} networkId - The SSID id (format-checked by the IPC guard).
+   * @param {boolean} enabled - The new enable state.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<NetworkActionResult>} The reply.
+   */
+  setNetworkEnabled(networkId: string, enabled: boolean, isInstalled: () => boolean): Promise<NetworkActionResult> {
+    return this.#serializeWrite(isInstalled, (isCurrent) =>
+      this.#guardedNetwork('enable', [], () =>
+        this.#writeAfterFreshDetail('enable', networkId, isCurrent, (context) => context.client.setSsidEnabled(context.siteId, networkId, enabled))
+      )
+    );
+  }
+
+  /**
+   * Deletes a Wi-Fi network (any security mode, spec §4.5; the UI confirms
+   * the impact): the network's FRESH detail is read first (it must name this
+   * network), then the DELETE follows.
+   * @param {string} networkId - The SSID id (format-checked by the IPC guard).
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<NetworkActionResult>} The reply.
+   */
+  deleteNetwork(networkId: string, isInstalled: () => boolean): Promise<NetworkActionResult> {
+    return this.#serializeWrite(isInstalled, (isCurrent) =>
+      this.#guardedNetwork('delete', [], () =>
+        this.#writeAfterFreshDetail('delete', networkId, isCurrent, (context) => context.client.deleteSsid(context.siteId, networkId))
+      )
+    );
+  }
+
+  /**
+   * Runs the capability checks again on request ("Test management access"):
+   * an invalidation — every write invoked before this call and still queued
+   * or in flight is superseded (the write epoch is bumped) —, then a fresh
+   * run (#startChecks()).
    * @returns {Promise<ManagementCapabilities | null>} The result, or null when
    *   the session was closed first.
    */
   refreshCapabilities(): Promise<ManagementCapabilities | null> {
+    if (this.#closed) {
+      return Promise.resolve(null);
+    }
+    this.#writeEpoch++;
+    return this.#startChecks();
+  }
+
+  /**
+   * Starts a capability check run (activation, refreshCapabilities(), the
+   * first capabilities request after invalidateCapabilities()): the previous
+   * Open API client is closed at once (management is off while checking) and
+   * a fresh run starts with the credentials configured now. A run still in
+   * flight is superseded; its waiters get this run's result. Not an
+   * invalidation of its own (the write epoch is unchanged): a write waiting
+   * for the capabilities may start the run it then uses.
+   * @returns {Promise<ManagementCapabilities | null>} The result, or null when
+   *   the session was closed first.
+   */
+  #startChecks(): Promise<ManagementCapabilities | null> {
     if (this.#closed) {
       return Promise.resolve(null);
     }
@@ -731,7 +983,7 @@ export class ControllerSession implements ManagedController {
       pending.resolve({ ...outcome.capabilities });
     }); // End of the check run's completion handler
     return pending.promise;
-  } // End of function refreshCapabilities()
+  } // End of function #startChecks()
 
   /**
    * The capabilities once known: the latest result, or the result of the run
@@ -750,16 +1002,18 @@ export class ControllerSession implements ManagedController {
     if (this.#capabilities !== null) {
       return Promise.resolve({ ...this.#capabilities });
     }
-    return this.refreshCapabilities();
+    return this.#startChecks();
   } // End of function waitForCapabilities()
 
   /**
-   * Shared by close() and invalidateCapabilities(): discards the check run in
-   * flight (sequence bump: its late result is ignored, nothing more is sent
-   * for it), closes every Open API client, clears the capabilities and
-   * settles the waiters with null.
+   * Shared by close() and invalidateCapabilities(): an invalidation (the
+   * write epoch is bumped: every write invoked before is superseded, see
+   * #serializeWrite()); discards the check run in flight (sequence bump: its
+   * late result is ignored, nothing more is sent for it), closes every Open
+   * API client, clears the capabilities and settles the waiters with null.
    */
   #discardManagementState(): void {
+    this.#writeEpoch++;
     this.#checkSequence++;
     this.#dropOpenApiClients();
     this.#capabilities = null;
@@ -900,17 +1154,39 @@ export class ControllerSession implements ManagedController {
   } // End of function #check()
 
   /**
-   * Runs this session's AP-group writes one at a time: `operation` starts once
-   * every earlier write settled, so the fresh-data checks of one write always
-   * see the result of the previous one.
-   * @param {() => Promise<T>} operation - The write (never rejects: see #guarded()).
-   * @returns {Promise<T>} Its result.
+   * Runs this session's writes (AP groups and Wi-Fi networks) one at a time:
+   * `operation` starts once every earlier write settled, so the fresh-data
+   * checks of one write always see the result of the previous one. The write
+   * is bound to the management state it was invoked under: the write epoch is
+   * captured NOW (when the public write method is called, before queueing),
+   * and `isCurrent` — which the operation uses in place of `isInstalled`, at
+   * its start and after every await (#managementContext(), the context's
+   * isCurrent()) — turns false once the epoch changed (close(),
+   * invalidateCapabilities(), refreshCapabilities()) or the session is no
+   * longer installed. A write whose turn comes after such an invalidation
+   * answers 'superseded' without running: nothing is sent, and it never
+   * picks up the client of a newer check run.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @param {(isCurrent: () => boolean) => Promise<T>} operation - The write (never rejects: see #guarded()).
+   * @returns {Promise<T | ContextFailure>} Its result, or 'superseded'.
    */
-  #serializeWrite<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.#writeChain.then(operation);
+  #serializeWrite<T>(isInstalled: () => boolean, operation: (isCurrent: () => boolean) => Promise<T>): Promise<T | ContextFailure> {
+    const epoch = this.#writeEpoch;
+    /**
+     * Whether the write may still act: the session is installed and nothing
+     * invalidated the management state since the write was invoked.
+     * @returns {boolean} True while current.
+     */
+    const isCurrent = (): boolean => this.#writeEpoch === epoch && isInstalled();
+    const run = this.#writeChain.then((): Promise<T | ContextFailure> => {
+      if (!isCurrent()) {
+        return Promise.resolve({ success: false, error: 'superseded' });
+      }
+      return operation(isCurrent);
+    });
     this.#writeChain = run.catch(() => undefined);
     return run;
-  }
+  } // End of function #serializeWrite()
 
   /**
    * Runs one AP-group operation, turning an unexpected exception into
@@ -1232,6 +1508,246 @@ export class ControllerSession implements ManagedController {
     }
     return { success: true };
   } // End of function #delete()
+
+  /**
+   * Runs one Wi-Fi network write, turning an unexpected exception into
+   * 'requestFailed' (logged by its name only, through the redactor, with the
+   * write's own secrets scrubbed by value).
+   * @param {NetworkWriteOperation} operation - The write (for the log).
+   * @param {readonly string[]} secrets - The write's secrets (the typed passphrase).
+   * @param {() => Promise<T>} body - The write.
+   * @returns {Promise<T | NetworkWriteFailure>} Its reply, or the failure.
+   */
+  async #guardedNetwork<T>(operation: NetworkWriteOperation, secrets: readonly string[], body: () => Promise<T>): Promise<T | NetworkWriteFailure> {
+    try {
+      return await body();
+    } catch (error) {
+      console.warn(redactText(`Wi-Fi network ${operation} failed unexpectedly: ${error instanceof Error ? error.name : 'unknown error'}`, secrets));
+      return networkWriteFailure('requestFailed', 'unexpected');
+    }
+  } // End of function #guardedNetwork()
+
+  /**
+   * Logs a failed Wi-Fi network request (stable code + codes-only
+   * diagnostic, through the redactor with the write's secrets scrubbed by
+   * value) and returns the failure.
+   * @param {NetworkWriteOperation} operation - The write.
+   * @param {NetworkWriteFailure} failure - The failure.
+   * @param {readonly string[]} secrets - The write's secrets.
+   * @returns {NetworkWriteFailure} The same failure.
+   */
+  #logNetworkWriteFailure(operation: NetworkWriteOperation, failure: NetworkWriteFailure, secrets: readonly string[]): NetworkWriteFailure {
+    if (failure.error !== 'superseded') {
+      console.warn(redactText(`Wi-Fi network ${operation} failed: ${failure.error}${failure.diagnostic ? ` (${failure.diagnostic})` : ''}`, secrets));
+    }
+    return failure;
+  }
+
+  /**
+   * Turns the failure of one Open API call of a Wi-Fi network write into its
+   * reply: 'superseded' when the operation is no longer current (a late
+   * answer is discarded), otherwise the mapped, logged failure.
+   * @param {NetworkWriteOperation} operation - The write.
+   * @param {NetworkWriteCall} call - The failed call.
+   * @param {ManagementContext} context - The operation's context.
+   * @param {unknown} error - The thrown value.
+   * @param {readonly string[]} secrets - The write's secrets.
+   * @returns {NetworkWriteFailure} The failure.
+   */
+  #networkWriteFailed(
+    operation: NetworkWriteOperation,
+    call: NetworkWriteCall,
+    context: ManagementContext,
+    error: unknown,
+    secrets: readonly string[]
+  ): NetworkWriteFailure {
+    if (!context.isCurrent()) {
+      return networkWriteFailure('superseded');
+    }
+    return this.#logNetworkWriteFailure(operation, describeNetworkWriteFailure(operation, call, error), secrets);
+  }
+
+  /**
+   * Reads one network's FRESH detail for a write (see getSsidWriteDetail():
+   * validated, plus the raw `result` the read-merge-write starts from).
+   * @param {NetworkWriteOperation} operation - The write.
+   * @param {ManagementContext} context - The operation's context.
+   * @param {string} networkId - The SSID id.
+   * @param {readonly string[]} secrets - The write's secrets.
+   * @returns {Promise<OpenApiSsidWriteDetail | NetworkWriteFailure>} The detail, or the failure.
+   */
+  async #readFreshDetail(
+    operation: NetworkWriteOperation,
+    context: ManagementContext,
+    networkId: string,
+    secrets: readonly string[]
+  ): Promise<OpenApiSsidWriteDetail | NetworkWriteFailure> {
+    let fresh: OpenApiSsidWriteDetail;
+    try {
+      fresh = await context.client.getSsidWriteDetail(context.siteId, networkId);
+    } catch (error) {
+      return this.#networkWriteFailed(operation, 'ssid detail', context, error, secrets);
+    }
+    if (!context.isCurrent()) {
+      return networkWriteFailure('superseded');
+    }
+    return fresh;
+  } // End of function #readFreshDetail()
+
+  /**
+   * The create operation (see createNetwork()).
+   * @param {NetworkCreateInput} input - The request's fields.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @param {readonly string[]} secrets - The write's secrets.
+   * @returns {Promise<NetworkActionResult>} The reply.
+   */
+  async #createNetwork(input: NetworkCreateInput, isInstalled: () => boolean, secrets: readonly string[]): Promise<NetworkActionResult> {
+    const checked = checkNetworkCreate(input);
+    if (!checked.ok) {
+      return networkWriteFailure(checked.error, checked.diagnostic);
+    }
+    const context = await this.#managementContext(isInstalled, 'manageWifiNetworks');
+    if (isContextFailure(context)) {
+      return context;
+    }
+    // Fresh AP groups right before the POST: every bound group must exist
+    const groups = await this.#readApGroups(context);
+    if (isApGroupFailure(groups)) {
+      const passed = groups.error === 'superseded' || groups.error === 'groupListIncomplete' ? groups.error : 'requestFailed';
+      return networkWriteFailure(passed, groups.diagnostic);
+    }
+    const listed = new Set(groups.items.map((group) => group.id));
+    if (!checked.create.apGroupIds.every((id) => listed.has(id))) {
+      return networkWriteFailure('groupNotFound');
+    }
+    // The catalog's ids before the create: a created id is only ever inferred
+    // as an id that is NEW since this read (null: truncated, never inferred)
+    let before: PagedList<OpenApiSsid>;
+    try {
+      before = await context.client.listSsids(context.siteId);
+    } catch (error) {
+      return this.#networkWriteFailed('create', 'ssids', context, error, secrets);
+    }
+    if (!context.isCurrent()) {
+      return networkWriteFailure('superseded');
+    }
+    const idsBefore = before.truncated ? null : new Set(before.items.map((entry) => entry.id));
+
+    let returnedId: string | null;
+    try {
+      returnedId = await context.client.createSsid(context.siteId, buildCreateSsidBody(checked.create));
+    } catch (error) {
+      return this.#networkWriteFailed('create', 'ssid create', context, error, secrets);
+    }
+    if (!context.isCurrent()) {
+      return networkWriteFailure('superseded');
+    }
+    if (returnedId !== null) {
+      return { success: true, networkId: returnedId };
+    }
+
+    // The answer carried no usable id (unverified answer shape): read the
+    // catalog again; the created network is the one id that is new since the
+    // read before the create AND carries the requested name — a name match
+    // alone never decides (duplicate names are allowed, and an existing
+    // network may have this name). Otherwise the create is reported without
+    // an id. An invalidation meanwhile discards the answer like after any
+    // other await; only a read that failed by itself still reports the
+    // create, without id
+    let after: PagedList<OpenApiSsid>;
+    try {
+      after = await context.client.listSsids(context.siteId);
+    } catch (error) {
+      if (!context.isCurrent()) {
+        return networkWriteFailure('superseded');
+      }
+      const diagnostic = describeNetworkWriteFailure('create', 'ssids', error).diagnostic ?? 'unexpected';
+      console.warn(redactText(`Wi-Fi network create: the new network's id could not be read (${diagnostic})`, secrets));
+      return { success: true };
+    }
+    if (!context.isCurrent()) {
+      return networkWriteFailure('superseded');
+    }
+    const added = idsBefore === null || after.truncated ? [] : after.items.filter((entry) => !idsBefore.has(entry.id));
+    return added.length === 1 && added[0].name === checked.create.name ? { success: true, networkId: added[0].id } : { success: true };
+  } // End of function #createNetwork()
+
+  /**
+   * The read-merge-write of an edit or a password change (see
+   * updateNetwork() and changeNetworkPassword()): the fresh detail, the merge
+   * (mergeBasicConfig()), the PATCH …/basic-config.
+   * @param {'update' | 'password'} operation - The write.
+   * @param {string} networkId - The SSID id.
+   * @param {CheckedNetworkEdits} edits - The checked edits.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @param {readonly string[]} secrets - The write's secrets.
+   * @returns {Promise<NetworkActionResult>} The reply.
+   */
+  async #saveBasicConfig(
+    operation: 'update' | 'password',
+    networkId: string,
+    edits: CheckedNetworkEdits,
+    isInstalled: () => boolean,
+    secrets: readonly string[]
+  ): Promise<NetworkActionResult> {
+    const context = await this.#managementContext(isInstalled, 'manageWifiNetworks');
+    if (isContextFailure(context)) {
+      return context;
+    }
+    const fresh = await this.#readFreshDetail(operation, context, networkId, secrets);
+    if ('success' in fresh) {
+      return fresh;
+    }
+    // Merged onto what the controller reports NOW, never what the renderer saw
+    const merged = mergeBasicConfig(fresh.raw, edits);
+    if (!merged.ok) {
+      return networkWriteFailure(merged.error, merged.diagnostic);
+    }
+    try {
+      await context.client.updateSsidBasicConfig(context.siteId, networkId, merged.body);
+    } catch (error) {
+      return this.#networkWriteFailed(operation, 'ssid basic-config', context, error, secrets);
+    }
+    if (!context.isCurrent()) {
+      return networkWriteFailure('superseded');
+    }
+    return { success: true };
+  } // End of function #saveBasicConfig()
+
+  /**
+   * An enable or delete (see setNetworkEnabled() and deleteNetwork()): the
+   * fresh detail (the id must name a network the controller reports), then
+   * the write.
+   * @param {'enable' | 'delete'} operation - The write.
+   * @param {string} networkId - The SSID id.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @param {(context: ManagementContext) => Promise<void>} write - Sends the write.
+   * @returns {Promise<NetworkActionResult>} The reply.
+   */
+  async #writeAfterFreshDetail(
+    operation: 'enable' | 'delete',
+    networkId: string,
+    isInstalled: () => boolean,
+    write: (context: ManagementContext) => Promise<void>
+  ): Promise<NetworkActionResult> {
+    const context = await this.#managementContext(isInstalled, 'manageWifiNetworks');
+    if (isContextFailure(context)) {
+      return context;
+    }
+    const fresh = await this.#readFreshDetail(operation, context, networkId, []);
+    if ('success' in fresh) {
+      return fresh;
+    }
+    try {
+      await write(context);
+    } catch (error) {
+      return this.#networkWriteFailed(operation, NETWORK_WRITE_CALLS[operation], context, error, []);
+    }
+    if (!context.isCurrent()) {
+      return networkWriteFailure('superseded');
+    }
+    return { success: true };
+  } // End of function #writeAfterFreshDetail()
 } // End of class ControllerSession
 
 /**
@@ -1390,4 +1906,73 @@ export function renameApGroupReply(manager: ConnectionManager<ControllerSession>
  */
 export function deleteApGroupReply(manager: ConnectionManager<ControllerSession>, request: ApGroupDeleteRequest): Promise<ApGroupActionResult> {
   return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) => session.deleteApGroup(request.apGroupId, isInstalled));
+}
+
+/**
+ * MANAGEMENT_NETWORK_CREATE (ControllerSession.createNetwork()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {NetworkCreateRequest} request - The shape-checked request.
+ * @returns {Promise<NetworkActionResult>} The reply (never a passphrase).
+ */
+export function createNetworkReply(manager: ConnectionManager<ControllerSession>, request: NetworkCreateRequest): Promise<NetworkActionResult> {
+  const input: NetworkCreateInput = { name: request.name, security: request.security, bands: request.bands, apGroupIds: request.apGroupIds };
+  if (request.passphrase !== undefined) {
+    input.passphrase = request.passphrase;
+  }
+  return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) => session.createNetwork(input, isInstalled));
+}
+
+/**
+ * MANAGEMENT_NETWORK_UPDATE (ControllerSession.updateNetwork()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {NetworkUpdateRequest} request - The shape-checked request.
+ * @returns {Promise<NetworkActionResult>} The reply (never a passphrase).
+ */
+export function updateNetworkReply(manager: ConnectionManager<ControllerSession>, request: NetworkUpdateRequest): Promise<NetworkActionResult> {
+  const edits: NetworkEditsInput = {};
+  if (request.name !== undefined) {
+    edits.name = request.name;
+  }
+  if (request.security !== undefined) {
+    edits.security = request.security;
+  }
+  if (request.bands !== undefined) {
+    edits.bands = request.bands;
+  }
+  if (request.passphrase !== undefined) {
+    edits.passphrase = request.passphrase;
+  }
+  return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) => session.updateNetwork(request.networkId, edits, isInstalled));
+} // End of function updateNetworkReply()
+
+/**
+ * MANAGEMENT_NETWORK_PASSWORD (ControllerSession.changeNetworkPassword()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {NetworkPasswordRequest} request - The shape-checked request.
+ * @returns {Promise<NetworkActionResult>} The reply (never a passphrase).
+ */
+export function changeNetworkPasswordReply(manager: ConnectionManager<ControllerSession>, request: NetworkPasswordRequest): Promise<NetworkActionResult> {
+  return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) =>
+    session.changeNetworkPassword(request.networkId, request.passphrase, isInstalled)
+  );
+}
+
+/**
+ * MANAGEMENT_NETWORK_ENABLE (ControllerSession.setNetworkEnabled()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {NetworkEnableRequest} request - The shape-checked request.
+ * @returns {Promise<NetworkActionResult>} The reply.
+ */
+export function setNetworkEnabledReply(manager: ConnectionManager<ControllerSession>, request: NetworkEnableRequest): Promise<NetworkActionResult> {
+  return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) => session.setNetworkEnabled(request.networkId, request.enabled, isInstalled));
+}
+
+/**
+ * MANAGEMENT_NETWORK_DELETE (ControllerSession.deleteNetwork()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {NetworkDeleteRequest} request - The shape-checked request.
+ * @returns {Promise<NetworkActionResult>} The reply.
+ */
+export function deleteNetworkReply(manager: ConnectionManager<ControllerSession>, request: NetworkDeleteRequest): Promise<NetworkActionResult> {
+  return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) => session.deleteNetwork(request.networkId, isInstalled));
 }

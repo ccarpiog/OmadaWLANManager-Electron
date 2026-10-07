@@ -10,13 +10,15 @@
 //
 // Invariant D4 (docs/management-design.md §1): this file never loads
 // dist/main/index.js, config.js, net-transport.js or anything else that does
-// network or touches the user's config. It only requires six pure compiled
+// network or touches the user's config. It only requires seven pure compiled
 // modules (shared/types.js for the channel table, main/url.js for URL
 // normalization and the same-controller check, main/controller-version.js for
 // the version -> group-model rule, main/ap-group-policy.js and
 // main/ipc-guards.js for the AP-group name rules, delete policy, DTO and IPC
 // shape guards, main/wifi-network-model.js for the Wi-Fi network validators
-// and DTO), refuses to start unless HOME points away from the real
+// and DTO, main/wifi-network-write.js for the Wi-Fi network write rules,
+// bodies and the security / band derivation, incl. its 'securityBandConflict'
+// refusals with their diagnostic), refuses to start unless HOME points away from the real
 // home directory, keeps Electron's userData under that temp HOME, writes no
 // files, and cancels every non-file: request the window makes.
 
@@ -40,11 +42,22 @@ const { groupModelForVersion, normalizeControllerVersion } = require(path.join(d
 const { AP_GROUP_ID_REGEX, checkApGroupDeletion, hasApGroupNameConflict, toApGroupSsidLimits, toManagedApGroup, validateApGroupName } = require(
   path.join(distDir, 'main', 'ap-group-policy.js')
 );
-const { parseApGroupCreateRequest, parseApGroupDeleteRequest, parseApGroupRenameRequest, requireSessionNonce } = require(
-  path.join(distDir, 'main', 'ipc-guards.js')
-);
+const {
+  parseApGroupCreateRequest,
+  parseApGroupDeleteRequest,
+  parseApGroupRenameRequest,
+  parseNetworkCreateRequest,
+  parseNetworkDeleteRequest,
+  parseNetworkEnableRequest,
+  parseNetworkPasswordRequest,
+  parseNetworkUpdateRequest,
+  requireSessionNonce,
+} = require(path.join(distDir, 'main', 'ipc-guards.js'));
 const { MAX_MANAGED_NETWORKS, toManagedNetwork, validateOpenApiSsid, validateOpenApiSsidDetail, validateSsidBindings } = require(
   path.join(distDir, 'main', 'wifi-network-model.js')
+);
+const { buildCreateSsidBody, checkNetworkCreate, checkNetworkEdits, isTypedPassphrase, mergeBasicConfig } = require(
+  path.join(distDir, 'main', 'wifi-network-write.js')
 );
 
 // Format guards mirrored from src/main/index.ts (keep in sync)
@@ -158,6 +171,17 @@ function defaultScenario() {
     // (e.g. { success: false, error: 'requestFailed', diagnostic: 'ssids:
     // httpError, HTTP 503' })
     networksResult: null,
+    // Wi-Fi network writes (management:network-create / -update / -password
+    // / -enable / -delete, phase 18a): applied to the fake controller's
+    // networks — the derived ones are materialized into `networks` on the
+    // first write, so the ids stay stable — and so shown on the next read.
+    // Per write channel, a reply returned verbatim once the guards, the
+    // session, the write rules, the capability and the fresh-data checks
+    // passed — the controller's answer to the write (e.g. {
+    // 'management:network-update': { success: false, error: 'nameTaken',
+    // diagnostic: 'ssid basic-config: apiError, errorCode -33219' } });
+    // nothing is applied then
+    networkResults: {},
     accessPoints: [],
     // The controllerVer the fake controller's /api/info reports (null = absent:
     // the legacy group model, like the real defensive default). OMADA_GET_WLANS
@@ -214,6 +238,12 @@ const stub = {
   // AP-group writes the fake controller applied, in order:
   // { op: 'create' | 'rename' | 'delete', apGroupId, name? }
   apGroupWrites: [],
+  // Wi-Fi network writes the fake controller applied, in order: { op:
+  // 'create' | 'update' | 'password', networkId, body } (body = exactly what
+  // the real builders produced, i.e. what main would send — a typed
+  // passphrase included, as the controller would receive it) or { op:
+  // 'enable', networkId, enabled } or { op: 'delete', networkId }
+  networkWrites: [],
   registeredChannels: [],
   environment: { home: os.homedir(), userData: app.getPath('userData'), platform: process.platform },
   // BrowserWindow options used by createWindow() (checked against the real app's)
@@ -249,6 +279,7 @@ const stub = {
       sessionNonce: this.sessionNonce,
       issuedSessionNonces: this.issuedSessionNonces,
       apGroupWrites: this.apGroupWrites,
+      networkWrites: this.networkWrites,
       registeredChannels: this.registeredChannels,
       environment: this.environment,
       windowOptions: this.windowOptions,
@@ -540,7 +571,14 @@ function fakeNetworks() {
     const groupIds = groups.filter((group) => (group.ssidList || []).some((ssid) => ssid.ssidName === name)).map((group) => group.wlanId);
     return {
       entry: { id, ssidId: id, name, description: true, chooseDevices: 1, band: 3, security: 3, broadcast: true },
-      detail: { id, name, ssidEnable: true, chooseDevices: 1, band: 3, security: 3, apGroupIds: groupIds, pskSetting: { securityKey: 'stub-passphrase-never-shown', versionPsk: 2, encryptionPsk: 3 } },
+      // The detail also reports every setting a basic-config save must carry
+      // (guest, broadcast, VLAN, MLO, PMF, 802.11r, …), so the derived
+      // networks can be edited through the real read-merge-write
+      detail: {
+        id, name, ssidEnable: true, chooseDevices: 1, band: 3, security: 3, apGroupIds: groupIds,
+        guestNetEnable: false, broadcast: true, vlanEnable: false, mloEnable: false, pmfMode: 2, enable11r: false, hidePwd: false,
+        pskSetting: { securityKey: 'stub-passphrase-never-shown', versionPsk: 2, encryptionPsk: 3, gikRekeyPskEnable: false },
+      },
       bindings: { apGroups: groupIds.map((groupId) => ({ id: groupId })) },
     };
   }); // End of the per-name mapping
@@ -586,6 +624,138 @@ function readFakeNetworks() {
   } // End of the loop that reads each network's detail and bindings
   return { success: true, networks };
 } // End of function readFakeNetworks()
+
+/**
+ * The fake controller's networks as a mutable list (see `networkResults` in
+ * the scenario): the derived networks are materialized into
+ * scenario.networks on the first write, so a write and the next read see the
+ * same ids.
+ * @returns {Array<{ entry: object; detail: object; bindings: object }>} The live list.
+ */
+function liveNetworks() {
+  if (!Array.isArray(stub.scenario.networks)) {
+    stub.scenario.networks = fakeNetworks();
+  }
+  return stub.scenario.networks;
+}
+
+/**
+ * The fresh detail of one network as ControllerSession reads it before a
+ * write (getSsidWriteDetail(): validated, it must name the network): the
+ * live record, or the session's failure when the fake controller has none.
+ * @param {string} networkId - The SSID id.
+ * @returns {{ network: object } | { failure: object }} The live record, or the failure reply.
+ */
+function freshNetwork(networkId) {
+  const network = liveNetworks().find((candidate) => {
+    const entry = validateOpenApiSsid(candidate.entry);
+    return entry !== null && entry.id === networkId;
+  });
+  if (!network || validateOpenApiSsidDetail(network.detail, networkId) === null) {
+    return { failure: { success: false, error: 'requestFailed', diagnostic: 'ssid detail: malformedResponse' } };
+  }
+  return { network };
+} // End of function freshNetwork()
+
+/**
+ * The reply of a refused Wi-Fi network write rule (the real rules of
+ * wifi-network-write.js): its stable code, plus — like
+ * ControllerSession's networkWriteFailure() — the codes-only diagnostic a
+ * refusal carries (e.g. 'conflict: enhancedIotConnectivity' with
+ * 'securityBandConflict').
+ * @param {{ error: string; diagnostic?: string }} refusal - The rule's refusal.
+ * @returns {object} The NetworkActionResult.
+ */
+function networkRuleRefusal(refusal) {
+  return refusal.diagnostic ? { success: false, error: refusal.error, diagnostic: refusal.diagnostic } : { success: false, error: refusal.error };
+}
+
+/**
+ * The session-ownership check of a Wi-Fi network write (sessionOwnedReply()).
+ * @param {string} sessionNonce - The shape-checked nonce.
+ * @returns {object | null} The failure reply, or null.
+ */
+function networkOwnership(sessionNonce) {
+  if (!stub.connected || stub.sessionNonce === null) {
+    return { success: false, error: 'notConnected' };
+  }
+  return sessionNonce === stub.sessionNonce ? null : { success: false, error: 'superseded' };
+}
+
+/**
+ * The scenario's verbatim controller answer for a Wi-Fi network write channel, if any.
+ * @param {string} channel - The IPC channel.
+ * @returns {object | null} The reply, or null.
+ */
+function scriptedNetworkResult(channel) {
+  const result = (stub.scenario.networkResults || {})[channel];
+  return result ? structuredClone(result) : null;
+}
+
+/**
+ * Renames (or drops, with `to` null) a network name in every fake group's
+ * ssidList, so the internal group data (OMADA_GET_WLANS) follows the writes.
+ * @param {string} from - The old name.
+ * @param {string | null} to - The new name, or null to remove it.
+ */
+function renameInGroups(from, to) {
+  for (const group of stub.scenario.wlanGroups) {
+    const list = group.ssidList || [];
+    group.ssidList = to === null ? list.filter((ssid) => ssid.ssidName !== from) : list.map((ssid) => (ssid.ssidName === from ? { ssidName: to } : ssid));
+  }
+}
+
+/**
+ * Applies a basic-config body to a live network like the controller would:
+ * the body's settings replace the detail's, the catalog entry follows, an
+ * open result drops the WPA-Personal settings, and a new name is renamed in
+ * the groups' ssidList.
+ * @param {{ entry: object; detail: object }} network - The live record.
+ * @param {object} body - The merged basic-config body.
+ */
+function applyBasicConfig(network, body) {
+  const oldName = network.entry.name;
+  Object.assign(network.detail, structuredClone(body));
+  if (body.security === 0) {
+    delete network.detail.pskSetting;
+  }
+  Object.assign(network.entry, { name: body.name, band: body.band, security: body.security });
+  if (oldName !== body.name) {
+    renameInGroups(oldName, body.name);
+  }
+} // End of function applyBasicConfig()
+
+/**
+ * The read-merge-write of a basic-config save in the stub, in the session's
+ * order after the rule check: the capability, the fresh detail, the real
+ * merge (mergeBasicConfig()), the scripted answer, then the fake controller
+ * applies the body and records the write.
+ * @param {'update' | 'password'} op - The write.
+ * @param {string} channel - The IPC channel.
+ * @param {string} networkId - The SSID id.
+ * @param {object} edits - The checked edits (checkNetworkEdits()).
+ * @returns {object} The NetworkActionResult.
+ */
+function saveFakeBasicConfig(op, channel, networkId, edits) {
+  if (!currentCapabilities().manageWifiNetworks) {
+    return { success: false, error: 'managementUnavailable' };
+  }
+  const fresh = freshNetwork(networkId);
+  if (fresh.failure) {
+    return fresh.failure;
+  }
+  const merged = mergeBasicConfig(fresh.network.detail, edits);
+  if (!merged.ok) {
+    return networkRuleRefusal(merged);
+  }
+  const scripted = scriptedNetworkResult(channel);
+  if (scripted) {
+    return scripted;
+  }
+  applyBasicConfig(fresh.network, merged.body);
+  stub.networkWrites.push({ op, networkId, body: structuredClone(merged.body) });
+  return { success: true };
+} // End of function saveFakeBasicConfig()
 
 /**
  * Returns a copy of a list sorted by a string field with localeCompare, like
@@ -1057,6 +1227,168 @@ const handlers = {
     }
     return readFakeNetworks();
   }, // End of the MANAGEMENT_NETWORKS handler
+
+  /**
+   * MANAGEMENT_NETWORK_CREATE: the real shape guard, the session ownership,
+   * the real create rules (checkNetworkCreate()), the capability, every bound
+   * group in the fake AP-group list (groupNotFound otherwise), the scripted
+   * answer; then a new disabled network built from the real body
+   * (buildCreateSsidBody()) joins the fake controller, bound to its groups.
+   * @param {unknown} payload - { sessionNonce, name, security, bands, apGroupIds, passphrase? }.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The NetworkActionResult (never a passphrase).
+   */
+  [IPC_CHANNELS.MANAGEMENT_NETWORK_CREATE]: (payload, ...extra) => {
+    const request = parseNetworkCreateRequest(payload, extra);
+    const owner = networkOwnership(request.sessionNonce);
+    if (owner) {
+      return owner;
+    }
+    const checked = checkNetworkCreate(request);
+    if (!checked.ok) {
+      return networkRuleRefusal(checked);
+    }
+    if (!currentCapabilities().manageWifiNetworks) {
+      return { success: false, error: 'managementUnavailable' };
+    }
+    const listed = new Set(openApiGroups().map((group) => group.id));
+    if (!checked.create.apGroupIds.every((id) => listed.has(id))) {
+      return { success: false, error: 'groupNotFound' };
+    }
+    const scripted = scriptedNetworkResult(IPC_CHANNELS.MANAGEMENT_NETWORK_CREATE);
+    if (scripted) {
+      return scripted;
+    }
+    const body = buildCreateSsidBody(checked.create);
+    const networkId = randomBytes(12).toString('hex');
+    liveNetworks().push({
+      entry: { id: networkId, ssidId: networkId, name: body.name, ssidEnable: false, chooseDevices: 1, band: body.band, security: body.security },
+      detail: { id: networkId, ...structuredClone(body) },
+      bindings: { apGroups: body.apGroupIds.map((id) => ({ id })) },
+    });
+    for (const group of stub.scenario.wlanGroups) {
+      if (body.apGroupIds.includes(group.wlanId)) {
+        group.ssidList = [...(group.ssidList || []), { ssidName: body.name }];
+      }
+    }
+    stub.networkWrites.push({ op: 'create', networkId, body: structuredClone(body) });
+    return { success: true, networkId };
+  }, // End of the MANAGEMENT_NETWORK_CREATE handler
+
+  /**
+   * MANAGEMENT_NETWORK_UPDATE: the real shape guard, the session ownership,
+   * the real edit rules (checkNetworkEdits()), then the read-merge-write of
+   * saveFakeBasicConfig().
+   * @param {unknown} payload - { sessionNonce, networkId, name?, security?, bands?, passphrase? }.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The NetworkActionResult (never a passphrase).
+   */
+  [IPC_CHANNELS.MANAGEMENT_NETWORK_UPDATE]: (payload, ...extra) => {
+    const request = parseNetworkUpdateRequest(payload, extra);
+    const owner = networkOwnership(request.sessionNonce);
+    if (owner) {
+      return owner;
+    }
+    const checked = checkNetworkEdits(request);
+    if (!checked.ok) {
+      return networkRuleRefusal(checked);
+    }
+    return saveFakeBasicConfig('update', IPC_CHANNELS.MANAGEMENT_NETWORK_UPDATE, request.networkId, checked.edits);
+  }, // End of the MANAGEMENT_NETWORK_UPDATE handler
+
+  /**
+   * MANAGEMENT_NETWORK_PASSWORD: the real shape guard, the session
+   * ownership, a blank passphrase (passphraseRequired), the real edit rules
+   * on the passphrase alone, then the read-merge-write of
+   * saveFakeBasicConfig() (an open network: passphraseNotApplicable).
+   * @param {unknown} payload - { sessionNonce, networkId, passphrase }.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The NetworkActionResult (never a passphrase).
+   */
+  [IPC_CHANNELS.MANAGEMENT_NETWORK_PASSWORD]: (payload, ...extra) => {
+    const request = parseNetworkPasswordRequest(payload, extra);
+    const owner = networkOwnership(request.sessionNonce);
+    if (owner) {
+      return owner;
+    }
+    if (!isTypedPassphrase(request.passphrase)) {
+      return { success: false, error: 'passphraseRequired' };
+    }
+    const checked = checkNetworkEdits({ passphrase: request.passphrase });
+    if (!checked.ok) {
+      return networkRuleRefusal(checked);
+    }
+    return saveFakeBasicConfig('password', IPC_CHANNELS.MANAGEMENT_NETWORK_PASSWORD, request.networkId, checked.edits);
+  }, // End of the MANAGEMENT_NETWORK_PASSWORD handler
+
+  /**
+   * MANAGEMENT_NETWORK_ENABLE: the real shape guard, the session ownership,
+   * the capability, the fresh detail, the scripted answer; then the fake
+   * network's enable state (detail and catalog) changes.
+   * @param {unknown} payload - { sessionNonce, networkId, enabled }.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The NetworkActionResult.
+   */
+  [IPC_CHANNELS.MANAGEMENT_NETWORK_ENABLE]: (payload, ...extra) => {
+    const request = parseNetworkEnableRequest(payload, extra);
+    const owner = networkOwnership(request.sessionNonce);
+    if (owner) {
+      return owner;
+    }
+    if (!currentCapabilities().manageWifiNetworks) {
+      return { success: false, error: 'managementUnavailable' };
+    }
+    const fresh = freshNetwork(request.networkId);
+    if (fresh.failure) {
+      return fresh.failure;
+    }
+    const scripted = scriptedNetworkResult(IPC_CHANNELS.MANAGEMENT_NETWORK_ENABLE);
+    if (scripted) {
+      return scripted;
+    }
+    fresh.network.detail.ssidEnable = request.enabled;
+    fresh.network.entry.ssidEnable = request.enabled;
+    if (typeof fresh.network.entry.description === 'boolean') {
+      fresh.network.entry.description = request.enabled;
+    }
+    stub.networkWrites.push({ op: 'enable', networkId: request.networkId, enabled: request.enabled });
+    return { success: true };
+  }, // End of the MANAGEMENT_NETWORK_ENABLE handler
+
+  /**
+   * MANAGEMENT_NETWORK_DELETE: the real shape guard, the session ownership,
+   * the capability, the fresh detail, the scripted answer; then the network
+   * leaves the fake controller (and its name the groups' ssidList when no
+   * other network has it).
+   * @param {unknown} payload - { sessionNonce, networkId }.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The NetworkActionResult.
+   */
+  [IPC_CHANNELS.MANAGEMENT_NETWORK_DELETE]: (payload, ...extra) => {
+    const request = parseNetworkDeleteRequest(payload, extra);
+    const owner = networkOwnership(request.sessionNonce);
+    if (owner) {
+      return owner;
+    }
+    if (!currentCapabilities().manageWifiNetworks) {
+      return { success: false, error: 'managementUnavailable' };
+    }
+    const fresh = freshNetwork(request.networkId);
+    if (fresh.failure) {
+      return fresh.failure;
+    }
+    const scripted = scriptedNetworkResult(IPC_CHANNELS.MANAGEMENT_NETWORK_DELETE);
+    if (scripted) {
+      return scripted;
+    }
+    const name = fresh.network.entry.name;
+    stub.scenario.networks = liveNetworks().filter((network) => network !== fresh.network);
+    if (!stub.scenario.networks.some((network) => network.entry.name === name)) {
+      renameInGroups(name, null);
+    }
+    stub.networkWrites.push({ op: 'delete', networkId: request.networkId });
+    return { success: true };
+  }, // End of the MANAGEMENT_NETWORK_DELETE handler
 }; // End of the fake handlers table
 
 // Every channel of the shared table must have a fake, and vice versa: a

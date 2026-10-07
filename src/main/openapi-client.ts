@@ -31,6 +31,14 @@
 //   getSsidDetail() (v1) and getSsidApGroups() (v1 bindings), each answer
 //   validated by wifi-network-model.ts, which keeps allowlisted values only
 //   (never the passphrase); a malformed answer is 'malformedResponse'.
+// - Wi-Fi network writes (todo.md 4.11): createSsid() (v2), getSsidWriteDetail()
+//   (the v1 detail as the controller sent it, for the read-merge-write — main
+//   memory only), updateSsidBasicConfig(), setSsidEnabled() and deleteSsid()
+//   (v1) send exactly the documented calls with the bodies wifi-network-write.ts
+//   builds; their only caller is ControllerSession, which checks the
+//   capabilities and the write rules on fresh data first. A body is sanity-
+//   checked here too (never an Enterprise / PPSK body), and the passphrase it
+//   carries is scrubbed by value from every diagnostic of that call.
 // - Errors: OpenApiError with a stable `code` and a sanitized diagnostic
 //   (redact.ts plus the client's own secret and tokens scrubbed by value);
 //   never a raw request or response body, the Client Secret or a token.
@@ -40,6 +48,7 @@
 import { MAX_AP_GROUP_NAME_LENGTH } from './ap-group-policy';
 import { HttpMethod, OmadaHttpRequest, OmadaHttpResponse, OmadaTransport } from './omada-transport';
 import { redactText } from './redact';
+import { buildEnableBody, isSaneSsidWriteBody, ssidBodySecrets } from './wifi-network-write';
 import {
   isSsidId,
   OpenApiSsid,
@@ -183,6 +192,10 @@ export interface OpenApiRequestOptions {
   body?: unknown;
   // Extra headers (Authorization, Cookie, Host, Content-Length are reserved)
   headers?: Record<string, string>;
+  // Secret values this call carries (e.g. a Wi-Fi passphrase in its body):
+  // scrubbed by value from every diagnostic of the call, like the client's
+  // own Client Secret and tokens
+  secrets?: readonly string[];
 }
 
 /** Options of OpenApiClient.listAll(). */
@@ -258,6 +271,18 @@ export interface OpenApiApGroupLimits {
 /** The AP groups of a site plus the SSID limits of its first page. */
 export interface OpenApiApGroupList extends PagedList<OpenApiApGroup> {
   limits: OpenApiApGroupLimits;
+}
+
+/**
+ * One SSID detail read for a write (getSsidWriteDetail()): the validated
+ * detail, and the `result` object exactly as the controller sent it — the
+ * base of the read-merge-write. `raw` may hold the passphrase: it stays in
+ * main-process memory and is never logged, returned over IPC or put into a
+ * body by the merge (wifi-network-write.ts).
+ */
+export interface OpenApiSsidWriteDetail {
+  detail: OpenApiSsidDetail;
+  raw: Record<string, unknown>;
 }
 
 /** Constructor options of OpenApiClient. */
@@ -508,6 +533,22 @@ export function validateCreatedApGroup(result: unknown): string | null {
 }
 
 /**
+ * Validates the `result` of `POST …/wireless-network/ssids` (ops doc: `{id}`,
+ * the new SSID's id). Unverified live: a missing or unusable id (not an SSID
+ * id, see isSsidId()) is reported as null — the caller then looks for the
+ * network in a fresh catalog — never guessed.
+ * @param {unknown} result - Raw `result` of the create response.
+ * @returns {string | null} The new SSID's id, or null when not usable.
+ */
+export function validateCreatedSsid(result: unknown): string | null {
+  if (result === null || typeof result !== 'object') {
+    return null;
+  }
+  const id = (result as Record<string, unknown>).id;
+  return isSsidId(id) ? id : null;
+}
+
+/**
  * Sanity check of an AP-group name handed to the client: a non-empty string
  * of at most MAX_AP_GROUP_NAME_LENGTH characters with no surrounding white
  * space. The name rules proper live in ap-group-policy.ts (applied by
@@ -655,7 +696,8 @@ export class OpenApiClient {
    * @param {OpenApiMethod} method - HTTP method.
    * @param {OpenApiVersion} version - API version of this endpoint (explicit).
    * @param {readonly string[]} segments - Path segments after the controller id.
-   * @param {OpenApiRequestOptions} [options] - Query, body and extra headers.
+   * @param {OpenApiRequestOptions} [options] - Query, body, extra headers and
+   *   the call's own secrets (scrubbed by value from its diagnostics).
    * @returns {Promise<unknown>} The response's `result` (errorCode 0).
    * @throws {OpenApiError} With a stable code (see OpenApiErrorCode).
    */
@@ -664,9 +706,10 @@ export class OpenApiClient {
     const url = `${this.baseUrl}${openApiPath(version, this.omadacId, segments)}${buildQueryString(options.query)}`;
     const body = options.body === undefined ? undefined : JSON.stringify(options.body);
     const extraHeaders = checkExtraHeaders(options.headers);
+    const secrets = (options.secrets ?? []).filter((secret) => typeof secret === 'string' && secret !== '');
 
     const firstToken = await this.#currentToken();
-    const first = await this.#call(method, url, firstToken, body, extraHeaders);
+    const first = await this.#call(method, url, firstToken, body, extraHeaders, secrets);
     this.#assertOpen();
     if (first.kind === 'ok') {
       return first.result;
@@ -675,7 +718,7 @@ export class OpenApiClient {
     // The token was rejected: re-acquire once (shared with every concurrent
     // request) and retry once; a second rejection is final
     const secondToken = await this.#tokenAfterRejection(firstToken);
-    const second = await this.#call(method, url, secondToken, body, extraHeaders);
+    const second = await this.#call(method, url, secondToken, body, extraHeaders, secrets);
     this.#assertOpen();
     if (second.kind === 'ok') {
       return second.result;
@@ -987,6 +1030,109 @@ export class OpenApiClient {
   } // End of function getSsidApGroups()
 
   /**
+   * Reads one network's detail for a write: exactly one
+   * `GET /openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}`
+   * (the same call as getSsidDetail()). The answer must pass
+   * validateOpenApiSsidDetail() (a plain object naming this SSID); besides
+   * the validated detail, the `result` object is returned as the controller
+   * sent it (see OpenApiSsidWriteDetail: main memory only).
+   * @param {string} siteId - The site id.
+   * @param {string} ssidId - The SSID id.
+   * @returns {Promise<OpenApiSsidWriteDetail>} The validated and the raw detail.
+   * @throws {OpenApiError} On any failure ('malformedResponse' for an answer
+   *   the validator rejects); Error on an unusable argument.
+   */
+  async getSsidWriteDetail(siteId: string, ssidId: string): Promise<OpenApiSsidWriteDetail> {
+    if (!isUsableId(siteId) || !isSsidId(ssidId)) {
+      throw new Error('Invalid SSID detail arguments');
+    }
+    const result = await this.request('GET', 'v1', ['sites', siteId, 'wireless-network', 'ssids', ssidId]);
+    const detail = validateOpenApiSsidDetail(result, ssidId);
+    if (detail === null) {
+      throw malformed('ssid detail');
+    }
+    return { detail, raw: result as Record<string, unknown> };
+  } // End of function getSsidWriteDetail()
+
+  /**
+   * Creates a Wi-Fi network: `POST /openapi/v2/{omadacId}/sites/{siteId}/wireless-network/ssids`
+   * with exactly the given body (buildCreateSsidBody() of
+   * wifi-network-write.ts; sanity-checked by isSaneSsidWriteBody(): open or
+   * WPA-Personal only). The body's passphrase is scrubbed by value from every
+   * diagnostic of the call. Unverified live (phase 20): the body shape and
+   * that `result.id` is the new network's id.
+   * @param {string} siteId - The site id.
+   * @param {Record<string, unknown>} body - The create body.
+   * @returns {Promise<string | null>} The new network's id, or null when the
+   *   answer carries no usable id (see validateCreatedSsid()).
+   * @throws {OpenApiError} On any failure (a documented errorCode such as
+   *   -33219 is an 'apiError' carrying it); Error on an unusable argument.
+   */
+  async createSsid(siteId: string, body: Record<string, unknown>): Promise<string | null> {
+    if (!isUsableId(siteId) || !isSaneSsidWriteBody(body)) {
+      throw new Error('Invalid SSID create arguments');
+    }
+    const result = await this.request('POST', 'v2', ['sites', siteId, 'wireless-network', 'ssids'], { body, secrets: ssidBodySecrets(body) });
+    return validateCreatedSsid(result);
+  } // End of function createSsid()
+
+  /**
+   * Saves a network's basic settings: `PATCH /openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}/basic-config`
+   * with exactly the given full body (mergeBasicConfig() of
+   * wifi-network-write.ts, sanity-checked by isSaneSsidWriteBody()). The
+   * body's passphrase is scrubbed by value from every diagnostic of the
+   * call. The answer carries no result: errorCode 0 is the confirmation.
+   * @param {string} siteId - The site id.
+   * @param {string} ssidId - The SSID id.
+   * @param {Record<string, unknown>} body - The merged basic-config body.
+   * @returns {Promise<void>} Resolves once the controller confirmed it.
+   * @throws {OpenApiError} On any failure; Error on an unusable argument.
+   */
+  async updateSsidBasicConfig(siteId: string, ssidId: string, body: Record<string, unknown>): Promise<void> {
+    if (!isUsableId(siteId) || !isSsidId(ssidId) || !isSaneSsidWriteBody(body)) {
+      throw new Error('Invalid SSID basic-config arguments');
+    }
+    await this.request('PATCH', 'v1', ['sites', siteId, 'wireless-network', 'ssids', ssidId, 'basic-config'], {
+      body,
+      secrets: ssidBodySecrets(body)
+    });
+  } // End of function updateSsidBasicConfig()
+
+  /**
+   * Enables or disables a network: `PATCH /openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}/enable`
+   * with exactly `{ssidEnable}` (no passphrase needed). The answer carries no
+   * result: errorCode 0 is the confirmation.
+   * @param {string} siteId - The site id.
+   * @param {string} ssidId - The SSID id.
+   * @param {boolean} enabled - The new enable state.
+   * @returns {Promise<void>} Resolves once the controller confirmed it.
+   * @throws {OpenApiError} On any failure; Error on an unusable argument.
+   */
+  async setSsidEnabled(siteId: string, ssidId: string, enabled: boolean): Promise<void> {
+    if (!isUsableId(siteId) || !isSsidId(ssidId) || typeof enabled !== 'boolean') {
+      throw new Error('Invalid SSID enable arguments');
+    }
+    await this.request('PATCH', 'v1', ['sites', siteId, 'wireless-network', 'ssids', ssidId, 'enable'], { body: buildEnableBody(enabled) });
+  }
+
+  /**
+   * Deletes a network: `DELETE /openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}`,
+   * no body. The answer carries no result: errorCode 0 is the confirmation.
+   * Unverified live (phase 20): what the controller does with a network
+   * still bound to AP groups.
+   * @param {string} siteId - The site id.
+   * @param {string} ssidId - The SSID id.
+   * @returns {Promise<void>} Resolves once the controller confirmed it.
+   * @throws {OpenApiError} On any failure; Error on an unusable argument.
+   */
+  async deleteSsid(siteId: string, ssidId: string): Promise<void> {
+    if (!isUsableId(siteId) || !isSsidId(ssidId)) {
+      throw new Error('Invalid SSID delete arguments');
+    }
+    await this.request('DELETE', 'v1', ['sites', siteId, 'wireless-network', 'ssids', ssidId]);
+  }
+
+  /**
    * Throws 'clientClosed' once close() was called.
    */
   #assertOpen(): void {
@@ -1088,6 +1234,7 @@ export class OpenApiClient {
    * @param {string} token - The access token to send.
    * @param {string | undefined} body - Serialized JSON body.
    * @param {Record<string, string>} extraHeaders - Checked extra headers.
+   * @param {readonly string[]} secrets - The call's own secrets (scrubbed by value).
    * @returns {Promise<CallOutcome>} The result, or a token rejection.
    * @throws {OpenApiError} On every other failure.
    */
@@ -1096,7 +1243,8 @@ export class OpenApiClient {
     url: string,
     token: string,
     body: string | undefined,
-    extraHeaders: Record<string, string>
+    extraHeaders: Record<string, string>,
+    secrets: readonly string[]
   ): Promise<CallOutcome> {
     this.#assertOpen();
     const headers: Record<string, string> = { Accept: 'application/json' };
@@ -1106,21 +1254,21 @@ export class OpenApiClient {
     Object.assign(headers, extraHeaders);
     headers.Authorization = `AccessToken=${token}`;
 
-    const response = await this.#send({ method, url, headers, body });
+    const response = await this.#send({ method, url, headers, body }, secrets);
     this.#assertOpen();
 
     if (response.statusCode === 401) {
       return { kind: 'tokenRejected', diagnostic: 'HTTP 401' };
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw this.#httpError(response);
+      throw this.#httpError(response, secrets);
     }
     const envelope = this.#parseEnvelope(response.body);
     if (TOKEN_REJECTED_ERROR_CODES.has(envelope.errorCode)) {
       return { kind: 'tokenRejected', diagnostic: `errorCode ${envelope.errorCode}` };
     }
     if (envelope.errorCode !== 0) {
-      throw new OpenApiError('apiError', this.#envelopeDiagnostic(`${method} request failed`, envelope), {
+      throw new OpenApiError('apiError', this.#envelopeDiagnostic(`${method} request failed`, envelope, secrets), {
         controllerErrorCode: envelope.errorCode
       });
     }
@@ -1134,10 +1282,11 @@ export class OpenApiClient {
    * then never surfaced (the remembered tokens it would be scrubbed against
    * are gone).
    * @param {OmadaHttpRequest} request - The request.
+   * @param {readonly string[]} [secrets] - The call's own secrets (scrubbed by value).
    * @returns {Promise<OmadaHttpResponse>} Status and raw body.
    * @throws {OpenApiError} 'timeout', 'networkError' or 'clientClosed'.
    */
-  async #send(request: OmadaHttpRequest): Promise<OmadaHttpResponse> {
+  async #send(request: OmadaHttpRequest, secrets: readonly string[] = []): Promise<OmadaHttpResponse> {
     try {
       // The Open API is token-authenticated: response cookies are ignored
       return await this.#transport.send(request, () => undefined);
@@ -1145,9 +1294,9 @@ export class OpenApiClient {
       this.#assertOpen();
       const message = error instanceof Error ? error.message : String(error);
       if (message.startsWith('Request timeout')) {
-        throw new OpenApiError('timeout', this.#scrub(message));
+        throw new OpenApiError('timeout', this.#scrub(message, secrets));
       }
-      throw new OpenApiError('networkError', this.#scrub(message));
+      throw new OpenApiError('networkError', this.#scrub(message, secrets));
     }
   } // End of function #send()
 
@@ -1177,20 +1326,25 @@ export class OpenApiClient {
    * controller's errorCode and scrubbed message when the body is an Open API
    * envelope (never the raw body).
    * @param {OmadaHttpResponse} response - The response.
+   * @param {readonly string[]} [secrets] - The call's own secrets (scrubbed by value).
    * @returns {OpenApiError} The error.
    */
-  #httpError(response: OmadaHttpResponse): OpenApiError {
+  #httpError(response: OmadaHttpResponse, secrets: readonly string[] = []): OpenApiError {
     let diagnostic = `HTTP ${response.statusCode}`;
     let controllerErrorCode: number | undefined;
     try {
       const parsed = JSON.parse(response.body) as Record<string, unknown>;
       if (parsed !== null && typeof parsed === 'object' && Number.isSafeInteger(parsed.errorCode)) {
         controllerErrorCode = parsed.errorCode as number;
-        diagnostic = this.#envelopeDiagnostic(diagnostic, {
-          errorCode: controllerErrorCode,
-          msg: typeof parsed.msg === 'string' ? parsed.msg : '',
-          result: undefined
-        });
+        diagnostic = this.#envelopeDiagnostic(
+          diagnostic,
+          {
+            errorCode: controllerErrorCode,
+            msg: typeof parsed.msg === 'string' ? parsed.msg : '',
+            result: undefined
+          },
+          secrets
+        );
       }
     } catch {
       // Not JSON (e.g. an HTML error page): the status alone
@@ -1202,21 +1356,24 @@ export class OpenApiClient {
    * Formats "<context>: errorCode <n> (<msg>)" with the message scrubbed.
    * @param {string} context - What failed.
    * @param {OpenApiEnvelope} envelope - The parsed envelope.
+   * @param {readonly string[]} [secrets] - The call's own secrets (scrubbed by value).
    * @returns {string} The diagnostic.
    */
-  #envelopeDiagnostic(context: string, envelope: OpenApiEnvelope): string {
-    const message = envelope.msg ? ` (${this.#scrub(envelope.msg)})` : '';
+  #envelopeDiagnostic(context: string, envelope: OpenApiEnvelope, secrets: readonly string[] = []): string {
+    const message = envelope.msg ? ` (${this.#scrub(envelope.msg, secrets)})` : '';
     return `${context}: errorCode ${envelope.errorCode}${message}`;
   }
 
   /**
-   * Redacts a diagnostic text, also removing this client's Client Secret and
-   * every token it received by value, and cuts it to MAX_DIAGNOSTIC_CHARS.
+   * Redacts a diagnostic text, also removing this client's Client Secret,
+   * every token it received and the call's own secrets by value, and cuts it
+   * to MAX_DIAGNOSTIC_CHARS.
    * @param {string} text - The raw text.
+   * @param {readonly string[]} [secrets] - The call's own secrets (e.g. a passphrase).
    * @returns {string} The sanitized text.
    */
-  #scrub(text: string): string {
-    return redactText(text, [this.#clientSecret, ...this.#knownTokens]).slice(0, MAX_DIAGNOSTIC_CHARS);
+  #scrub(text: string, secrets: readonly string[] = []): string {
+    return redactText(text, [this.#clientSecret, ...this.#knownTokens, ...secrets]).slice(0, MAX_DIAGNOSTIC_CHARS);
   }
 
   /**

@@ -2,17 +2,29 @@
 // session-owned channels: the session nonce (32 lowercase hex, no extra
 // arguments) and the AP-group payloads — exactly the listed keys (none
 // missing, no unknown one), plain objects only, the nonce and the 24-hex
-// AP-group id formats, a string name within the raw cap — and that the
-// parsed request is a fresh copy carrying nothing else.
+// AP-group id formats, a string name within the raw cap — and the Wi-Fi
+// network write payloads (phase 18a): the same exact-keys rule with optional
+// keys allowed only when present, SSID ids, the security / band enums, the
+// AP-group id list (cap, dedupe), a boolean enable state, raw caps on the
+// name and the passphrase, and rejection messages that never quote the
+// passphrase — and that the parsed request is a fresh copy carrying nothing else.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
+  MAX_NETWORK_AP_GROUP_IDS,
   MAX_RAW_AP_GROUP_NAME_LENGTH,
+  MAX_RAW_NETWORK_NAME_LENGTH,
+  MAX_RAW_PASSPHRASE_LENGTH,
   NONCE_REGEX,
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
   parseApGroupRenameRequest,
+  parseNetworkCreateRequest,
+  parseNetworkDeleteRequest,
+  parseNetworkEnableRequest,
+  parseNetworkPasswordRequest,
+  parseNetworkUpdateRequest,
   requireSessionNonce
 } from '../../src/main/ipc-guards';
 
@@ -92,3 +104,129 @@ describe('AP-group payload guards', () => {
     assert.equal(parseApGroupCreateRequest({ sessionNonce: NONCE, name: 'x'.repeat(MAX_RAW_AP_GROUP_NAME_LENGTH) }, []).name.length, MAX_RAW_AP_GROUP_NAME_LENGTH);
   }); // End of test "malformed nonces, AP-group ids and names are rejected"
 }); // End of the describe block for the AP-group payload guards
+
+const NETWORK_ID = '5f00c0ffee0000000000c001';
+const PASSPHRASE = 'SENTINEL-guard-passphrase';
+
+/**
+ * A valid create payload with the given overrides.
+ * @param {Record<string, unknown>} [overrides] - Fields to replace (undefined removes nothing).
+ * @returns {Record<string, unknown>} The payload.
+ */
+function createPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { sessionNonce: NONCE, name: ' Casa ', security: 'wpaPersonal', bands: ['band5g', 'band2g'], apGroupIds: [GROUP_ID], passphrase: PASSPHRASE, ...overrides };
+}
+
+/**
+ * Runs a guard expected to throw and returns the rejection message.
+ * @param {() => unknown} run - The guard call.
+ * @returns {string} The message.
+ */
+function rejection(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /^IPC call rejected: /);
+    return error.message;
+  }
+  throw new Error('expected a rejection');
+}
+
+describe('Wi-Fi network write payload guards', () => {
+  test('valid payloads parse into fresh copies: bands deduplicated in canonical order, group ids deduplicated, the passphrase only when present, as typed', () => {
+    const payload = createPayload({ bands: ['band6g', 'band2g', 'band6g'], apGroupIds: [GROUP_ID, GROUP_ID.toUpperCase(), GROUP_ID] });
+    const create = parseNetworkCreateRequest(payload, []);
+    assert.deepEqual(create, {
+      sessionNonce: NONCE,
+      name: ' Casa ',
+      security: 'wpaPersonal',
+      bands: ['band2g', 'band6g'],
+      apGroupIds: [GROUP_ID, GROUP_ID.toUpperCase()],
+      passphrase: PASSPHRASE
+    });
+    assert.notEqual(create.bands, payload.bands);
+    const { passphrase: _omitted, ...open } = createPayload({ security: 'open' });
+    assert.equal('passphrase' in parseNetworkCreateRequest(open, []), false);
+    assert.deepEqual(parseNetworkCreateRequest(createPayload({ security: 'wpaEnterprise', bands: [], apGroupIds: [], passphrase: '' }), []).security, 'wpaEnterprise', 'enum values main refuses later with a code');
+    assert.deepEqual(parseNetworkUpdateRequest({ sessionNonce: NONCE, networkId: NETWORK_ID }, []), { sessionNonce: NONCE, networkId: NETWORK_ID }, 'nothing edited is a rule code');
+    assert.deepEqual(parseNetworkUpdateRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, name: 'B', security: 'open', bands: ['band5g'], passphrase: ' x ' }, []), {
+      sessionNonce: NONCE,
+      networkId: NETWORK_ID,
+      name: 'B',
+      security: 'open',
+      bands: ['band5g'],
+      passphrase: ' x '
+    });
+    assert.deepEqual(parseNetworkPasswordRequest({ networkId: NETWORK_ID, passphrase: PASSPHRASE, sessionNonce: NONCE }, []), { sessionNonce: NONCE, networkId: NETWORK_ID, passphrase: PASSPHRASE });
+    assert.deepEqual(parseNetworkEnableRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, enabled: false }, []), { sessionNonce: NONCE, networkId: NETWORK_ID, enabled: false });
+    assert.deepEqual(parseNetworkDeleteRequest({ sessionNonce: NONCE, networkId: 'legacy_ssid-1' }, []), { sessionNonce: NONCE, networkId: 'legacy_ssid-1' });
+  }); // End of test "valid payloads parse into fresh copies..."
+
+  test('unknown or missing keys, and optional keys present but undefined, are rejected', () => {
+    const cases: Array<[(payload: unknown) => unknown, Record<string, unknown>]> = [
+      [(payload) => parseNetworkCreateRequest(payload, []), createPayload({ vlanId: 20 })],
+      [(payload) => parseNetworkCreateRequest(payload, []), createPayload({ passphrase: undefined })],
+      [(payload) => parseNetworkCreateRequest(payload, []), { sessionNonce: NONCE, name: 'A', security: 'open', bands: ['band2g'] }],
+      [(payload) => parseNetworkUpdateRequest(payload, []), { sessionNonce: NONCE, networkId: NETWORK_ID, hidden: true }],
+      [(payload) => parseNetworkUpdateRequest(payload, []), { sessionNonce: NONCE, networkId: NETWORK_ID, name: undefined }],
+      [(payload) => parseNetworkUpdateRequest(payload, []), { sessionNonce: NONCE, name: 'A' }],
+      [(payload) => parseNetworkPasswordRequest(payload, []), { sessionNonce: NONCE, networkId: NETWORK_ID }],
+      [(payload) => parseNetworkPasswordRequest(payload, []), { sessionNonce: NONCE, networkId: NETWORK_ID, passphrase: PASSPHRASE, name: 'A' }],
+      [(payload) => parseNetworkEnableRequest(payload, []), { sessionNonce: NONCE, networkId: NETWORK_ID }],
+      [(payload) => parseNetworkDeleteRequest(payload, []), { sessionNonce: NONCE, networkId: NETWORK_ID, force: true }],
+      [(payload) => parseNetworkDeleteRequest(payload, []), {}]
+    ];
+    for (const [parse, payload] of cases) {
+      assert.throws(() => parse(payload), /invalid Wi-Fi network request keys/, JSON.stringify(payload));
+    }
+    for (const payload of [undefined, null, 'x', [NONCE], new Date()]) {
+      assert.throws(() => parseNetworkDeleteRequest(payload, []), /invalid Wi-Fi network request/, String(payload));
+    }
+    assert.throws(() => parseNetworkDeleteRequest({ sessionNonce: NONCE, networkId: NETWORK_ID }, [1]), /unexpected arguments/);
+  }); // End of test "unknown or missing keys..."
+
+  test('malformed values are rejected: nonce, SSID id, security, bands, group ids (format, cap), name and passphrase caps, a non-boolean enable state', () => {
+    for (const sessionNonce of BAD_NONCES.filter((value) => value !== undefined)) {
+      assert.throws(() => parseNetworkDeleteRequest({ sessionNonce, networkId: NETWORK_ID }, []), /invalid session nonce format/);
+    }
+    for (const networkId of [null, 7, '', '..', '../x', 'a b', 'x'.repeat(129), [NETWORK_ID]]) {
+      assert.throws(() => parseNetworkDeleteRequest({ sessionNonce: NONCE, networkId }, []), /invalid Wi-Fi network id format/, JSON.stringify(networkId));
+      assert.throws(() => parseNetworkEnableRequest({ sessionNonce: NONCE, networkId, enabled: true }, []), /invalid Wi-Fi network id format/);
+    }
+    for (const security of [null, 3, 'wep', 'WPAPERSONAL', ['open']]) {
+      assert.throws(() => parseNetworkCreateRequest(createPayload({ security }), []), /invalid Wi-Fi network security/, JSON.stringify(security));
+      assert.throws(() => parseNetworkUpdateRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, security }, []), /invalid Wi-Fi network security/);
+    }
+    for (const bands of [null, 'band2g', ['band24g'], ['band2g', 'band5g', 'band6g', 'band2g'], [1]]) {
+      assert.throws(() => parseNetworkCreateRequest(createPayload({ bands }), []), /invalid Wi-Fi network bands/, JSON.stringify(bands));
+    }
+    for (const apGroupIds of [null, GROUP_ID, ['Corrupto'], [GROUP_ID, 7], Array.from({ length: MAX_NETWORK_AP_GROUP_IDS + 1 }, () => GROUP_ID)]) {
+      assert.throws(() => parseNetworkCreateRequest(createPayload({ apGroupIds }), []), /invalid AP group id format/);
+    }
+    assert.equal(parseNetworkCreateRequest(createPayload({ apGroupIds: Array.from({ length: MAX_NETWORK_AP_GROUP_IDS }, () => GROUP_ID) }), []).apGroupIds.length, 1);
+    for (const name of [null, 5, ['A'], 'x'.repeat(MAX_RAW_NETWORK_NAME_LENGTH + 1)]) {
+      assert.throws(() => parseNetworkCreateRequest(createPayload({ name }), []), /invalid Wi-Fi network name/);
+      assert.throws(() => parseNetworkUpdateRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, name }, []), /invalid Wi-Fi network name/);
+    }
+    for (const enabled of ['true', 1, null]) {
+      assert.throws(() => parseNetworkEnableRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, enabled }, []), /invalid Wi-Fi network enable state/);
+    }
+    assert.equal(parseNetworkPasswordRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, passphrase: 'x'.repeat(MAX_RAW_PASSPHRASE_LENGTH) }, []).passphrase.length, MAX_RAW_PASSPHRASE_LENGTH);
+  }); // End of test "malformed values are rejected..."
+
+  test('a rejected passphrase (not a string, over the raw cap) or any other rejection of a payload carrying one never quotes it', () => {
+    const long = `${PASSPHRASE}${'x'.repeat(MAX_RAW_PASSPHRASE_LENGTH)}`;
+    const messages = [
+      rejection(() => parseNetworkPasswordRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, passphrase: long }, [])),
+      rejection(() => parseNetworkPasswordRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, passphrase: [PASSPHRASE] }, [])),
+      rejection(() => parseNetworkCreateRequest(createPayload({ passphrase: long }), [])),
+      rejection(() => parseNetworkUpdateRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, passphrase: { value: PASSPHRASE } }, [])),
+      rejection(() => parseNetworkCreateRequest(createPayload({ extra: PASSPHRASE }), [])),
+      rejection(() => parseNetworkCreateRequest(createPayload({ security: PASSPHRASE }), [])),
+      rejection(() => parseNetworkPasswordRequest({ sessionNonce: PASSPHRASE, networkId: NETWORK_ID, passphrase: PASSPHRASE }, []))
+    ];
+    assert.equal(messages.filter((message) => /invalid Wi-Fi network passphrase/.test(message)).length, 4);
+    assert.ok(messages.every((message) => !message.includes('SENTINEL')), messages.join(' | '));
+  }); // End of test "a rejected passphrase (not a string..."
+}); // End of the describe block for the Wi-Fi network payload guards

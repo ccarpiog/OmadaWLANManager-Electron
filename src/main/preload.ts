@@ -14,6 +14,12 @@ import type {
   ManagedApGroupsResult,
   ManagedNetworksResult,
   ManagementCapabilitiesResult,
+  NetworkActionResult,
+  NetworkCreateRequest,
+  NetworkDeleteRequest,
+  NetworkEnableRequest,
+  NetworkPasswordRequest,
+  NetworkUpdateRequest,
   OmadaAPI,
   RendererConfig
 } from '../shared/types';
@@ -43,6 +49,11 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
   MANAGEMENT_AP_GROUP_RENAME: 'management:ap-group-rename',
   MANAGEMENT_AP_GROUP_DELETE: 'management:ap-group-delete',
   MANAGEMENT_NETWORKS: 'management:networks',
+  MANAGEMENT_NETWORK_CREATE: 'management:network-create',
+  MANAGEMENT_NETWORK_UPDATE: 'management:network-update',
+  MANAGEMENT_NETWORK_PASSWORD: 'management:network-password',
+  MANAGEMENT_NETWORK_ENABLE: 'management:network-enable',
+  MANAGEMENT_NETWORK_DELETE: 'management:network-delete',
 };
 
 // Expose a safe API to the renderer process. `satisfies OmadaAPI` (type-only,
@@ -153,5 +164,31 @@ contextBridge.exposeInMainWorld('omadaAPI', {
   // passphrase (only `hasPassphrase`)
   getManagedNetworks: (sessionNonce: string): Promise<ManagedNetworksResult> => {
     return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_NETWORKS, sessionNonce);
+  },
+
+  // Wi-Fi network writes (management on only): create (open / WPA-Personal,
+  // disabled), save the edited basic settings, change the passphrase,
+  // enable / disable, delete. Each sends the session nonce of the connect
+  // result (echoed back verbatim) and the request as given; main checks every
+  // rule and merges a save onto fresh controller data itself. A typed
+  // passphrase crosses here renderer → main only: no reply carries one
+  createNetwork: (request: NetworkCreateRequest): Promise<NetworkActionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_NETWORK_CREATE, request);
+  },
+
+  updateNetwork: (request: NetworkUpdateRequest): Promise<NetworkActionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_NETWORK_UPDATE, request);
+  },
+
+  changeNetworkPassword: (request: NetworkPasswordRequest): Promise<NetworkActionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_NETWORK_PASSWORD, request);
+  },
+
+  setNetworkEnabled: (request: NetworkEnableRequest): Promise<NetworkActionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_NETWORK_ENABLE, request);
+  },
+
+  deleteNetwork: (request: NetworkDeleteRequest): Promise<NetworkActionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_NETWORK_DELETE, request);
   }
 } satisfies OmadaAPI);
