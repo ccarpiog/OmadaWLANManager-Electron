@@ -1,15 +1,15 @@
 # Security, async-race and accessibility audit (phase 20a)
 
-Date: 2026-10-07. Scope: todo.md 4.13 first half — the IPC surface, redaction, async races in the renderer, destructive confirmations, and accessibility / keyboard behaviour at the three window widths. Measured against `docs/management-design.md` §3 and §4.6–§4.7. The line numbers refer to the tree at the end of phase 20a.
+Date: 2026-10-07. Scope: todo.md 4.13 first half — the IPC surface, redaction, async races in the renderer, destructive confirmations, and accessibility / keyboard behaviour at the three window widths. Measured against `docs/management-design.md` §3 and §4.6–§4.7. The line numbers refer to the tree at the end of phase 20a, except the rows marked I-1a (the TP-Link cloud channels and log lines added by inbox phase I-1a, `docs/omada-cloud-openapi.md`), which refer to the tree at the end of I-1a.
 
 Verification: `npm run build`, `npm test` (1033 tests after the review fixes), `npm run smoke` (270 checks, 10 launches, new `[a11y]`) and `npm run tls-probe` (25 checks) all pass. Every fix below was reverted on its own, and a test then failed (see "Fixed in 20a").
 
 ## 1. IPC channels
 
-All 23 channels are registered in `src/main/index.ts` through `handleTrusted()`, the registrar of `src/main/ipc-trust.ts` (built at `index.ts:213` with `isTrustedIpcSender`, `index.ts:169`).
+All 25 channels are registered in `src/main/index.ts` through `handleTrusted()`, the registrar of `src/main/ipc-trust.ts` (built at `index.ts:213` with `isTrustedIpcSender`, `index.ts:169`). The two TP-Link cloud channels came with I-1a.
 
 - **Sender check:** runs before the handler body. A call from any other frame is rejected with a fixed message.
-- **Failures:** a failure crosses back only as `new Error(redacted message)`. The redaction scrubs the stored password and Client Secret by value, as well as the call's own sensitive argument values.
+- **Failures:** a failure crosses back only as `new Error(redacted message)`. The redaction scrubs the stored password, the Client Secret, the cloud Client Secret and the live cloud account tokens by value (`storedSecrets()`, I-1a: `index.ts:238`), as well as the call's own sensitive argument values.
 - **Registration:** a channel cannot be registered twice.
 
 `tests/unit/ipc-surface.test.ts` checks the registrar's behaviour. It also reads `index.ts` and checks three things:
@@ -27,7 +27,7 @@ Column key:
 | Channel | Shape | Formats / limits | Session | Reply |
 |---|---|---|---|---|
 | `config:load` (`index.ts:414`) | no argument (`requireNoExtraArguments`) | — | n/a | `RendererConfig`: flags only, never the password or Client Secret (`config-model.ts:348`) |
-| `config:save` (`index.ts:441`) | one plain object, known keys only (`isValidConfigSavePayload`, `index.ts:228`); no extra argument | url ≤ 2048, username ≤ 256, password ≤ 512, clientId ≤ 256, clientSecret ≤ 512, language enum, `removeManagementAccess` literal `true`; value rules in `saveConfig()` | n/a (a URL change is a controller transition) | codes plus management flags |
+| `config:save` (`index.ts:441`) | one plain object, known keys only (`isValidConfigSavePayload`, `index.ts:228`; I-1a: `:282`, plus the cloud keys); no extra argument | url ≤ 2048, username ≤ 256, password ≤ 512, clientId ≤ 256, clientSecret ≤ 512, language enum, `removeManagementAccess` literal `true`; I-1a: `cloudRegion` enum, `cloudClientId` ≤ 256, `cloudClientSecret` ≤ 512, `removeCloudAccess` literal `true` and alone; value rules in `saveConfig()` | n/a (a URL change is a controller transition; a cloud-credential change drops the cloud client and its tokens) | codes plus management and cloud flags (`cloudAccess`), never a secret |
 | `omada:connect` (`:474`) | no argument | — | starts a generation (`connection-manager.ts`) | codes; `detail` redacted (fixed in 20a) |
 | `omada:select-site` (`:488`) | 2 arguments, no extra | site id `[A-Za-z0-9_-]{1,64}`, then exact-matched against the authorized list; nonce 32-hex | selection nonce of the current pending record | `ConnectionResult` |
 | `omada:get-aps` (`:513`) | no argument | — | installed controller (`requireController`) | allowlisted `AccessPoint` DTO (`omada-validators.ts:86`) |
@@ -43,8 +43,10 @@ Column key:
 | `management:network-create` (`:671`) | exact keys plus optional `passphrase` | nonce; name raw ≤ 1024, then SSID 1–32 UTF-8 bytes (`validateSsidName`, `wifi-network-write.ts:516`); security / bands enums; ≤ 256 deduplicated 24-hex group ids; passphrase raw ≤ 256, then 8–63 printable ASCII | `sessionOwnedReply` plus epoch | codes plus the new id; never the passphrase |
 | `management:network-update` / `-password` / `-enable` / `-delete` (`:677`–`:692`) | exact keys (optional edited fields) | SSID id (`isSsidId`, `wifi-network-model.ts:172`); same name, enum and passphrase rules; `enabled` boolean | `sessionOwnedReply` plus epoch; read-merge-write on fresh data | codes |
 | `management:network-bindings` (`:702`) | exact keys | SSID id; ≤ 256 deduplicated 24-hex ids | `sessionOwnedReply` plus epoch; plan on fresh data | codes plus `capacityProblems` |
+| `cloud:test` (I-1a: `:809`) | no argument (`requireNoExtraArguments`): no host, deviceId, serverHost or URL from the renderer | — (saved credentials only; `notConfigured` without them) | no nonce (see §7); a reply whose credentials were saved, removed or replaced meanwhile is `superseded` (credential generation in `CloudAccessService`, `cloud-access.ts`) | `CloudController` DTOs `{omadacId, name, online, version, connectable, reason}` (`toCloudController()`, `cloud-account-model.ts`) or a code with a codes-only diagnostic, scrubbed by value; never a deviceId, serverHost, secret or token |
+| `cloud:controllers` (I-1a: `:815`) | no argument | — (saved credentials only) | as `cloud:test` | as `cloud:test` |
 
-**Preload** (`src/main/preload.ts`). Its only runtime import is `electron`. It exposes exactly `platform` plus 23 methods, each invoking its own channel through `ipcRenderer.invoke`. No other `ipcRenderer` API is used, and its local channel table equals the shared one. `ipc-surface.test.ts` (structural) checks all of this, and the smoke checks it at runtime (`EXPECTED_BRIDGE`).
+**Preload** (`src/main/preload.ts`). Its only runtime import is `electron`. It exposes exactly `platform` plus 25 methods, each invoking its own channel through `ipcRenderer.invoke` (the two cloud methods with no argument). No other `ipcRenderer` API is used, and its local channel table equals the shared one. `ipc-surface.test.ts` (structural) checks all of this, and the smoke checks it at runtime (`EXPECTED_BRIDGE`; I-1a: the `[es]` cloud-channels check).
 
 ## 2. Redaction inventory
 
@@ -71,7 +73,10 @@ Central redactor: `src/main/redact.ts`.
 | `omada-api.ts:337`, `:424` | counts and ids only |
 | `connection-manager.ts:251`, `:500` | `redactErrorMessage()` (`:500` fixed in 20a) |
 | `controller-session.ts:865` … `:1914` (11 lines) | `redactText()` of codes-only text, with the call's secrets |
-| `openapi-client.ts:849` | counts only |
+| `openapi-client.ts:849` (I-1a: `:770`, the shared page walker) | counts only |
+| I-1a: `cloud-access.ts:218` | `redactErrorMessage()` with the live cloud secret and tokens |
+| I-1a: `cloud-access.ts:223` | the reply's codes-only diagnostic (already scrubbed by value) |
+| I-1a: `config-model.ts:494`, `:718` | error name only (cloud secret decrypt / encrypt) |
 | other `config*.ts` lines | fixed text |
 
 In the renderer, the console lines log rejection messages that main has already sanitized. The renderer only ever holds a typed passphrase or password, and none of its log lines includes one.
@@ -83,6 +88,11 @@ In the renderer, the console lines log rejection messages that main has already 
 - **Live session credentials (20a review):** once logged in, a refused site list during connect, an HTTP 500 page with the session cookie across the excerpt boundary, the data and AP-move channels, and a failed re-login after a session expiry, all echoing the bare CSRF token and session cookie. On the Open API path, a transport failure and a refusal echoing the bare access token.
 
 No sentinel may appear in any reply, rejection message or captured log line.
+
+**TP-Link cloud (I-1a).** The cloud Client Secret, the account access and refresh tokens and `AK-` API keys are covered by:
+- `redact.test.ts`: every key, header, query and bare form;
+- `cloud-account-client.test.ts`: TP-Link messages and transport failures echoing them;
+- `cloud-access.test.ts`: replies and the trusted registrar's by-value scrub of the live cloud secrets.
 
 ## 3. Async flows (renderer)
 
@@ -187,6 +197,11 @@ Each fix is listed with the check that fails when the fix alone is reverted. Eve
   - the old controller stays installed until a new connect succeeds (phase 7).
 
   The spec's ownership rule targets the management channels. Binding the moves to a nonce would change the preload API; I-1b (Open API moves) is the natural place for it.
+- **Cloud channels without a session nonce (I-1a, a decision).** The spec binds new channels to the session nonce, but `cloud:test` and `cloud:controllers` carry none:
+  - The only nonce main issues identifies a local controller session (a successful local connect). "Test cloud access" must work while disconnected from, or unable to reach, the local controller, so no nonce exists then.
+  - The calls read the TP-Link account only, target no controller, take no argument, and their replies are secret-free DTOs.
+  - Stale replies are refused in main instead: `CloudAccessService` keeps a credential generation, and a reply for credentials saved, removed or replaced while it ran answers `superseded`.
+  - Planned for I-1b: cloud controller sessions get session nonces like local ones, so every session-owned read or write on a cloud controller is nonce-bound.
 - **`refreshData()` generation.** It starts the managed reads with the current generation rather than a captured one. This is latent: no path can change the generation during a refresh today, because the exclusive flags refuse it.
 - **Late Test result.** A "Test management access" result can appear in a reopened Settings (cosmetic: it still describes the same session).
 - **URL change without confirmation.** A Settings URL change has no confirmation step. It is not in the spec's list of destructive or broad actions, and the required-password placeholders already state the consequence.

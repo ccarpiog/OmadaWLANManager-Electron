@@ -1,15 +1,35 @@
 // Config model and save rules. Pure (no Electron, no filesystem): encryption
 // is injected through the SecretBox interface (config.ts passes a safeStorage
 // implementation, unit tests a fake), so the rules — including the URL-scoped
-// credentials of todo.md 4.4 and the optional Open API management access of
-// todo.md 4.8 — are unit-tested directly (tests/unit/config-model.test.ts).
-// config.ts owns the file I/O, the in-memory cache, the session-only Client
-// Secret and the legacy-password migration.
+// credentials of todo.md 4.4, the optional Open API management access of
+// todo.md 4.8 and the optional TP-Link cloud access of inbox item I-1 — are
+// unit-tested directly (tests/unit/config-model.test.ts,
+// tests/unit/config-cloud.test.ts). config.ts owns the file I/O, the in-memory
+// cache, the session-only secrets and the legacy-password migration.
 
-import type { ConfigSaveError, ConfigSavePayload, Language, ManagementAccessStatus, RendererConfig } from '../shared/types';
+import type {
+  CloudAccessStatus,
+  CloudRegion,
+  ConfigSaveError,
+  ConfigSavePayload,
+  Language,
+  ManagementAccessStatus,
+  RendererConfig
+} from '../shared/types';
 import { CertificatePin, isValidCertificatePin, pinnedFingerprintFor } from './cert-pinning';
+import { CloudCredentials, isOmadacId } from './cloud-account-model';
+import { DEFAULT_CLOUD_REGION, isCloudRegion } from './cloud-hosts';
 import { redactErrorMessage } from './redact';
 import { isSameControllerUrl, normalizeControllerUrl } from './url';
+
+// The active controller when it is the configured one (reached directly);
+// any other value of `activeController` is a cloud controller's omadacId
+export const LOCAL_CONTROLLER = 'local';
+
+// A site id remembered per cloud controller (same format as the site ids the
+// IPC handlers accept, SITE_ID_REGEX in index.ts) and how many are kept
+const CLOUD_SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+export const MAX_CLOUD_SITES = 64;
 
 // Supported UI languages; anything else falls back to the default on load
 export const SUPPORTED_LANGUAGES: readonly Language[] = ['es', 'en'];
@@ -64,6 +84,25 @@ export interface StoredConfig {
   siteId?: string;
   // Trusted controller certificate (TOFU pin, see cert-pinning.ts)
   certificatePin?: CertificatePin;
+  // The configured controller's omadacId (learned on a local connect, inbox
+  // I-1b; used to list a cloud duplicate of it once, as local). Tied to
+  // `url` like the fields above: dropped when the URL changes
+  localOmadacId?: string;
+  // TP-Link cloud access (optional, inbox item I-1; docs/omada-cloud-openapi.md).
+  // The account is not tied to the controller URL, so a URL change keeps all
+  // of it. `cloudRegion` (absent: DEFAULT_CLOUD_REGION) and the cloud Client
+  // ID in plain text (not secrets); the cloud Client Secret ONLY as a
+  // safeStorage blob, with the management Client Secret's session-only
+  // fallback (never plaintext on disk). Changing the region or the cloud
+  // Client ID drops the stored secret
+  cloudRegion?: CloudRegion;
+  cloudClientId?: string;
+  encryptedCloudClientSecret?: string;
+  // 'local' (LOCAL_CONTROLLER; also when absent) or the omadacId of the cloud
+  // controller the app works with
+  activeController?: string;
+  // The site chosen per cloud controller: omadacId -> site id
+  cloudSites?: Record<string, string>;
 }
 
 /**
@@ -132,12 +171,22 @@ export function secureSecretStorageAvailable(platform: string, storage: SafeStor
 /**
  * Result of applyConfigSave(): the config to persist, or an error code.
  * `urlChanged` tells the caller to drop TLS state tied to the old controller.
- * `sessionClientSecret` is the session-only Client Secret the caller must hold
- * in memory after persisting the config (null = none): kept, replaced by a
- * newly typed secret when encryption is unavailable, or cleared.
+ * `sessionClientSecret` / `sessionCloudClientSecret` are the session-only
+ * Client Secret and cloud Client Secret the caller must hold in memory after
+ * persisting the config (null = none): kept, replaced by a newly typed secret
+ * when secure storage is unavailable, or cleared. `cloudCredentialsChanged`
+ * tells the caller that the cloud credential (region, Client ID, stored or
+ * session-only secret) differs after the save, so its tokens must go.
  */
 export type ConfigSaveOutcome =
-  | { ok: true; config: StoredConfig; urlChanged: boolean; sessionClientSecret: string | null }
+  | {
+      ok: true;
+      config: StoredConfig;
+      urlChanged: boolean;
+      sessionClientSecret: string | null;
+      sessionCloudClientSecret: string | null;
+      cloudCredentialsChanged: boolean;
+    }
   | { ok: false; error: ConfigSaveError };
 
 /**
@@ -145,6 +194,22 @@ export type ConfigSaveOutcome =
  */
 type ManagementSaveOutcome =
   | { ok: true; clientId?: string; encryptedClientSecret?: string; sessionClientSecret: string | null }
+  | { ok: false; error: ConfigSaveError };
+
+/**
+ * The cloud-access part of a save (see applyCloudAccessSave()). `removed`:
+ * Remove cloud access was applied (the site choices and the active cloud
+ * controller go too).
+ */
+type CloudSaveOutcome =
+  | {
+      ok: true;
+      cloudRegion?: CloudRegion;
+      cloudClientId?: string;
+      encryptedCloudClientSecret?: string;
+      sessionCloudClientSecret: string | null;
+      removed: boolean;
+    }
   | { ok: false; error: ConfigSaveError };
 
 /**
@@ -239,8 +304,91 @@ export function validateStoredConfig(parsed: unknown): StoredConfig {
     const pin = raw.certificatePin;
     config.certificatePin = { origin: pin.origin, sha256: pin.sha256, trustedAt: pin.trustedAt };
   }
+  if (isOmadacId(raw.localOmadacId)) {
+    config.localOmadacId = raw.localOmadacId;
+  }
+  // TP-Link cloud access: a non-string blob, an unusable active controller or
+  // a malformed site entry is dropped (never cast). The region, the cloud
+  // Client ID and the blob are one credential: an absent region means the
+  // default (EUW), but a region or Client ID that is present and invalid
+  // drops all three, so a secret created for another region is never sent
+  // to the default region's endpoint
+  const cloudClientId = normalizeClientId(raw.cloudClientId);
+  const cloudCredentialIntact =
+    (raw.cloudRegion === undefined || isCloudRegion(raw.cloudRegion)) &&
+    (raw.cloudClientId === undefined || cloudClientId !== null);
+  if (!cloudCredentialIntact) {
+    console.warn('Config file holds a malformed TP-Link cloud region or Client ID; the cloud credential is dropped');
+  } else {
+    if (isCloudRegion(raw.cloudRegion)) {
+      config.cloudRegion = raw.cloudRegion;
+    }
+    if (cloudClientId) {
+      config.cloudClientId = cloudClientId;
+    }
+    if (typeof raw.encryptedCloudClientSecret === 'string' && raw.encryptedCloudClientSecret) {
+      config.encryptedCloudClientSecret = raw.encryptedCloudClientSecret;
+    }
+  }
+  if (raw.activeController === LOCAL_CONTROLLER || isOmadacId(raw.activeController)) {
+    config.activeController = raw.activeController;
+  }
+  const cloudSites = normalizeCloudSites(raw.cloudSites);
+  if (cloudSites) {
+    config.cloudSites = cloudSites;
+  }
   return config;
 } // End of function validateStoredConfig()
+
+/**
+ * Validates the per-cloud-controller site choices read from the config file:
+ * a plain object whose keys are omadacIds (isOmadacId()) and whose values are
+ * site ids (CLOUD_SITE_ID_REGEX); malformed entries are dropped one by one,
+ * at most MAX_CLOUD_SITES are kept (in file order).
+ * @param {unknown} raw - The parsed `cloudSites` value.
+ * @returns {Record<string, string> | null} The valid entries, or null when none.
+ */
+export function normalizeCloudSites(raw: unknown): Record<string, string> | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null;
+  }
+  const prototype = Object.getPrototypeOf(raw);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return null;
+  }
+  const sites: Record<string, string> = {};
+  let kept = 0;
+  for (const [omadacId, siteId] of Object.entries(raw as Record<string, unknown>)) {
+    if (kept >= MAX_CLOUD_SITES) {
+      break;
+    }
+    if (isOmadacId(omadacId) && typeof siteId === 'string' && CLOUD_SITE_ID_REGEX.test(siteId)) {
+      sites[omadacId] = siteId;
+      kept++;
+    }
+  } // End of the loop over the stored site choices
+  return kept > 0 ? sites : null;
+} // End of function normalizeCloudSites()
+
+/**
+ * The active controller of a config: 'local' unless a cloud controller's
+ * omadacId is stored.
+ * @param {StoredConfig} config - The stored config.
+ * @returns {string} 'local' or an omadacId.
+ */
+export function activeControllerOf(config: StoredConfig): string {
+  return isOmadacId(config.activeController) ? config.activeController : LOCAL_CONTROLLER;
+}
+
+/**
+ * The effective cloud region of a config (DEFAULT_CLOUD_REGION when none or
+ * an unknown one is stored).
+ * @param {StoredConfig} config - The stored config.
+ * @returns {CloudRegion} The region.
+ */
+export function cloudRegionOf(config: StoredConfig): CloudRegion {
+  return isCloudRegion(config.cloudRegion) ? config.cloudRegion : DEFAULT_CLOUD_REGION;
+}
 
 /**
  * Decrypts the stored password. Main process only — this value must never be
@@ -337,15 +485,83 @@ export function managementAccessStatus(config: StoredConfig, box: SecretBox, ses
 } // End of function managementAccessStatus()
 
 /**
+ * Decrypts the stored cloud Client Secret blob (main process only), with the
+ * same trust rule as decryptStoredClientSecret(): while secure storage is
+ * unavailable a stored blob is neither decrypted nor reported (it stays on
+ * disk untouched).
+ * @param {StoredConfig} config - The config holding the blob.
+ * @param {SecretBox} box - Decryption primitives.
+ * @returns {string} The plaintext secret, or '' when none/undecryptable/untrusted.
+ */
+export function decryptStoredCloudSecret(config: StoredConfig, box: SecretBox): string {
+  if (!config.encryptedCloudClientSecret || !box.isSecureStorageAvailable()) {
+    return '';
+  }
+  try {
+    return box.decryptString(config.encryptedCloudClientSecret);
+  } catch (error) {
+    // Never log the blob or the error's details beyond the message class
+    console.error('Error decrypting the stored cloud Client Secret:', error instanceof Error ? error.name : 'unknown error');
+    return '';
+  }
+} // End of function decryptStoredCloudSecret()
+
+/**
+ * Returns the saved cloud credential of a config (main process only, never
+ * over IPC): the effective region, the stored cloud Client ID and the
+ * session-only secret when there is one, else the decrypted stored secret.
+ * @param {StoredConfig} config - The stored config.
+ * @param {SecretBox} box - Decryption primitives.
+ * @param {string | null} sessionCloudClientSecret - The session-only cloud secret, if any.
+ * @returns {CloudCredentials | null} The credential, or null when the cloud
+ *   Client ID or a usable secret is missing.
+ */
+export function cloudCredentialsOf(config: StoredConfig, box: SecretBox, sessionCloudClientSecret: string | null): CloudCredentials | null {
+  if (!config.cloudClientId) {
+    return null;
+  }
+  const clientSecret = sessionCloudClientSecret || decryptStoredCloudSecret(config, box);
+  return clientSecret ? { region: cloudRegionOf(config), clientId: config.cloudClientId, clientSecret } : null;
+} // End of function cloudCredentialsOf()
+
+/**
+ * Builds the renderer-safe cloud-access status (flags only, never the secret).
+ * `hasCloudSecret` is true only for a trusted blob that decrypts or a
+ * session-only secret; `canPersistCloudSecret` is box.isSecureStorageAvailable().
+ * @param {StoredConfig} config - The stored config.
+ * @param {SecretBox} box - Decryption primitives.
+ * @param {string | null} sessionCloudClientSecret - The session-only cloud secret, if any.
+ * @returns {CloudAccessStatus} The status.
+ */
+export function cloudAccessStatus(config: StoredConfig, box: SecretBox, sessionCloudClientSecret: string | null): CloudAccessStatus {
+  const sessionOnly = typeof sessionCloudClientSecret === 'string' && sessionCloudClientSecret.length > 0;
+  return {
+    region: cloudRegionOf(config),
+    clientId: config.cloudClientId ?? '',
+    hasCloudSecret: sessionOnly || decryptStoredCloudSecret(config, box) !== '',
+    cloudSecretSessionOnly: sessionOnly,
+    canPersistCloudSecret: box.isSecureStorageAvailable(),
+    activeController: activeControllerOf(config)
+  };
+} // End of function cloudAccessStatus()
+
+/**
  * Builds the renderer-safe view of a config: no secret material, only flags,
  * plus the pinned certificate fingerprint (public data) when the pin belongs
- * to the configured origin, and the management-access status.
+ * to the configured origin, the management-access status and the
+ * cloud-access status.
  * @param {StoredConfig} config - The stored config.
- * @param {SecretBox} box - Decryption primitives (to test the password and the Client Secret).
+ * @param {SecretBox} box - Decryption primitives (to test the password and the secrets).
  * @param {string | null} [sessionClientSecret] - The session-only Client Secret, if any.
+ * @param {string | null} [sessionCloudClientSecret] - The session-only cloud secret, if any.
  * @returns {RendererConfig} The renderer-safe view.
  */
-export function toRendererConfig(config: StoredConfig, box: SecretBox, sessionClientSecret: string | null = null): RendererConfig {
+export function toRendererConfig(
+  config: StoredConfig,
+  box: SecretBox,
+  sessionClientSecret: string | null = null,
+  sessionCloudClientSecret: string | null = null
+): RendererConfig {
   return {
     url: config.url,
     username: config.username,
@@ -354,7 +570,8 @@ export function toRendererConfig(config: StoredConfig, box: SecretBox, sessionCl
     // corrupt/undecryptable blob must make the UI ask for the password again
     hasPassword: decryptStoredPassword(config, box) !== '',
     pinnedFingerprint: pinnedFingerprintFor(config.url, config.certificatePin ?? null),
-    ...managementAccessStatus(config, box, sessionClientSecret)
+    ...managementAccessStatus(config, box, sessionClientSecret),
+    cloudAccess: cloudAccessStatus(config, box, sessionCloudClientSecret)
   };
 } // End of function toRendererConfig()
 
@@ -438,6 +655,101 @@ function applyManagementAccessSave(
 } // End of function applyManagementAccessSave()
 
 /**
+ * Applies the cloud-access part of a settings save (rules in
+ * applyConfigSave()'s documentation). The controller URL plays no part: the
+ * cloud account is not tied to it.
+ * @param {StoredConfig} current - The config currently stored.
+ * @param {ConfigSavePayload} payload - The settings sent by the renderer.
+ * @param {SecretBox} box - Encryption primitives.
+ * @param {string | null} sessionCloudClientSecret - The current session-only cloud secret.
+ * @returns {CloudSaveOutcome} The region, Client ID, blob and session secret
+ *   to keep, or an error code.
+ */
+function applyCloudAccessSave(
+  current: StoredConfig,
+  payload: ConfigSavePayload,
+  box: SecretBox,
+  sessionCloudClientSecret: string | null
+): CloudSaveOutcome {
+  const hasRegion = payload.cloudRegion !== undefined;
+  const hasClientId = payload.cloudClientId !== undefined;
+  const hasSecretField = payload.cloudClientSecret !== undefined;
+  if ((hasSecretField && typeof payload.cloudClientSecret !== 'string') || (hasRegion && !isCloudRegion(payload.cloudRegion))) {
+    return { ok: false, error: 'saveFailed' };
+  }
+  const typedSecret = typeof payload.cloudClientSecret === 'string' && payload.cloudClientSecret.length > 0 ? payload.cloudClientSecret : null;
+
+  if (payload.removeCloudAccess !== undefined) {
+    // Explicit removal: only the literal true, and never mixed with new values
+    if (payload.removeCloudAccess !== true || hasRegion || hasClientId || hasSecretField) {
+      return { ok: false, error: 'saveFailed' };
+    }
+    return { ok: true, sessionCloudClientSecret: null, removed: true };
+  }
+
+  const storedRegion = isCloudRegion(current.cloudRegion) ? current.cloudRegion : undefined;
+  const currentRegion = storedRegion ?? DEFAULT_CLOUD_REGION;
+  const region = hasRegion ? (payload.cloudRegion as CloudRegion) : currentRegion;
+  const regionChanged = region !== currentRegion;
+
+  if (!hasClientId) {
+    if (typedSecret !== null) {
+      return { ok: false, error: 'cloudClientIdRequired' };
+    }
+    if (!regionChanged) {
+      return {
+        ok: true,
+        cloudRegion: hasRegion ? region : storedRegion,
+        cloudClientId: current.cloudClientId,
+        encryptedCloudClientSecret: current.encryptedCloudClientSecret,
+        sessionCloudClientSecret,
+        removed: false
+      };
+    }
+    // Another region is another credential: the stored secret never follows
+    // it, so a stored Client ID now needs a typed secret
+    if (current.cloudClientId) {
+      return { ok: false, error: 'cloudClientSecretRequired' };
+    }
+    return { ok: true, cloudRegion: region, sessionCloudClientSecret: null, removed: false };
+  } // End of the branch without a cloud Client ID in the payload
+
+  const clientId = normalizeClientId(payload.cloudClientId);
+  if (clientId === null) {
+    return { ok: false, error: 'invalidCloudClientId' };
+  }
+
+  if (typedSecret !== null) {
+    // A new secret replaces the stored blob and any session-only secret
+    if (box.isSecureStorageAvailable()) {
+      try {
+        return { ok: true, cloudRegion: region, cloudClientId: clientId, encryptedCloudClientSecret: box.encryptString(typedSecret), sessionCloudClientSecret: null, removed: false };
+      } catch (error) {
+        console.error('Error encrypting the cloud Client Secret:', error instanceof Error ? error.name : 'unknown error');
+        return { ok: false, error: 'saveFailed' };
+      }
+    }
+    // No plaintext (nor obfuscated basic_text) fallback: session-only
+    console.warn('Secure secret storage is unavailable; the cloud Client Secret is kept in memory for this session only');
+    return { ok: true, cloudRegion: region, cloudClientId: clientId, sessionCloudClientSecret: typedSecret, removed: false };
+  } // End of the typed-secret branch
+
+  // No typed secret: the stored one (blob or session-only) is kept only for
+  // the same region AND the same cloud Client ID
+  if (!regionChanged && clientId === current.cloudClientId) {
+    return {
+      ok: true,
+      cloudRegion: region,
+      cloudClientId: clientId,
+      encryptedCloudClientSecret: current.encryptedCloudClientSecret,
+      sessionCloudClientSecret,
+      removed: false
+    };
+  }
+  return { ok: false, error: 'cloudClientSecretRequired' };
+} // End of function applyCloudAccessSave()
+
+/**
  * Applies a settings save from the renderer to the current config. Rules:
  * - the URL is normalized (normalizeControllerUrl(): HTTPS only, no
  *   credentials/fragment) — invalid → 'invalidUrl';
@@ -469,19 +781,46 @@ function applyManagementAccessSave(
  * - a blank secret keeps the stored one (blob or session-only, possibly none)
  *   only when the URL and the Client ID are both unchanged; otherwise it is
  *   'clientSecretRequired'.
+ * TP-Link cloud access (optional; NOT tied to the URL — a URL change keeps
+ * every cloud field):
+ * - `removeCloudAccess: true` deletes the region, the cloud Client ID, the
+ *   stored blob, the session-only secret, the per-controller site choices
+ *   (`cloudSites`) and the active cloud controller (the local one is active
+ *   again: `activeController` absent); any other cloud field with it:
+ *   'saveFailed';
+ * - an unknown `cloudRegion` is 'saveFailed' (a select's enum, like the
+ *   language);
+ * - no `cloudClientId`: a typed cloud secret is 'cloudClientIdRequired'; the
+ *   same region keeps everything; a different region drops the stored
+ *   secret, so a stored cloud Client ID then needs a typed secret
+ *   ('cloudClientSecretRequired'), and with none only the region is stored;
+ * - a `cloudClientId` is trimmed and validated like the management Client ID
+ *   (CLIENT_ID_REGEX) — else 'invalidCloudClientId';
+ * - a typed cloud secret is encrypted into `encryptedCloudClientSecret` when
+ *   secure storage is available (an encryption failure is 'saveFailed'),
+ *   otherwise it becomes the session-only cloud secret and is never persisted;
+ * - a blank cloud secret keeps the stored one only when the region and the
+ *   cloud Client ID are both unchanged; otherwise 'cloudClientSecretRequired';
+ * - `activeController` and `cloudSites` survive every save but a removal
+ *   (they are keyed by the controllers' omadacIds, not by a credential);
+ *   `localOmadacId` belongs to the configured controller and is dropped with
+ *   a URL change.
  * @param {StoredConfig} current - The config currently stored.
  * @param {ConfigSavePayload} payload - The settings sent by the renderer.
  * @param {SecretBox} box - Encryption primitives.
  * @param {string | null} [sessionClientSecret] - The session-only Client
  *   Secret currently held in memory (config.ts), if any.
+ * @param {string | null} [sessionCloudClientSecret] - The session-only cloud
+ *   Client Secret currently held in memory (config.ts), if any.
  * @returns {ConfigSaveOutcome} The config to persist and the session-only
- *   secret to hold, or an error code.
+ *   secrets to hold, or an error code.
  */
 export function applyConfigSave(
   current: StoredConfig,
   payload: ConfigSavePayload,
   box: SecretBox,
-  sessionClientSecret: string | null = null
+  sessionClientSecret: string | null = null,
+  sessionCloudClientSecret: string | null = null
 ): ConfigSaveOutcome {
   if (typeof payload !== 'object' || payload === null) {
     return { ok: false, error: 'saveFailed' };
@@ -530,6 +869,10 @@ export function applyConfigSave(
   if (!management.ok) {
     return { ok: false, error: management.error };
   }
+  const cloud = applyCloudAccessSave(current, payload, box, sessionCloudClientSecret);
+  if (!cloud.ok) {
+    return { ok: false, error: cloud.error };
+  }
 
   const config: StoredConfig = {
     url: normalizedUrl,
@@ -559,6 +902,39 @@ export function applyConfigSave(
     if (current.certificatePin) {
       config.certificatePin = { ...current.certificatePin };
     }
+    if (current.localOmadacId) {
+      config.localOmadacId = current.localOmadacId;
+    }
   }
-  return { ok: true, config, urlChanged, sessionClientSecret: management.sessionClientSecret };
+  // Cloud access, as decided above (independent of the URL)
+  if (cloud.cloudRegion) {
+    config.cloudRegion = cloud.cloudRegion;
+  }
+  if (cloud.cloudClientId) {
+    config.cloudClientId = cloud.cloudClientId;
+  }
+  if (cloud.encryptedCloudClientSecret) {
+    config.encryptedCloudClientSecret = cloud.encryptedCloudClientSecret;
+  }
+  if (!cloud.removed) {
+    if (current.activeController) {
+      config.activeController = current.activeController;
+    }
+    if (current.cloudSites) {
+      config.cloudSites = { ...current.cloudSites };
+    }
+  }
+  const cloudCredentialsChanged =
+    cloudRegionOf(current) !== cloudRegionOf(config) ||
+    current.cloudClientId !== config.cloudClientId ||
+    current.encryptedCloudClientSecret !== config.encryptedCloudClientSecret ||
+    (sessionCloudClientSecret ?? null) !== cloud.sessionCloudClientSecret;
+  return {
+    ok: true,
+    config,
+    urlChanged,
+    sessionClientSecret: management.sessionClientSecret,
+    sessionCloudClientSecret: cloud.sessionCloudClientSecret,
+    cloudCredentialsChanged
+  };
 } // End of function applyConfigSave()

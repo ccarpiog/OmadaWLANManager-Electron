@@ -15,8 +15,11 @@
 //   pairs, `key=value` pairs (query strings, form bodies, cookies:
 //   `client_secret=`, `access_token=`, `AccessToken=`, `TPOMADA_SESSIONID=`,
 //   …), header-style `Key: value` lines (`Authorization:`, `Cookie:`,
-//   `Csrf-Token:`, …) and `Bearer <token>`, plus any exact occurrence of the
-//   caller's known secrets.
+//   `Csrf-Token:`, …) and `Bearer <token>` (TP-Link's `Bearer AK-…` API keys
+//   included), plus any exact occurrence of the caller's known secrets, plus
+//   bare TP-Link cloud token shapes (BARE_TPLINK_TOKEN: an access token
+//   `AT-…` / `a1-AT-…`, a refresh token `RT-…` or an API key `AK-…` with at
+//   least 16 letters or digits after the prefix) wherever they appear.
 //
 // Value forms (after a sensitive key, or after `Bearer`):
 // - double- or single-quoted (`password="hunter 2"`, `AccessToken='AT'`):
@@ -90,6 +93,11 @@ const ASSIGNMENT_KEY = /(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{1,128})\s*=\s*/g;
 const HEADER_KEY = /(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{1,128})[ \t]*:[ \t]*/g;
 // `Bearer ` (the scheme itself is the "key"; its value is always sensitive)
 const BEARER_KEY = /(?<![A-Za-z0-9_-])(Bearer)\s+/gi;
+// A bare TP-Link cloud credential token (Account Level Open API guide): an
+// access token (`AT-…`, also with a short region prefix such as `a1-AT-…`),
+// a refresh token (`RT-…`) or an API key (`AK-…`), with at least 16 letters
+// or digits after the prefix (the documented ones have 32), redacted whole
+const BARE_TPLINK_TOKEN = /(?<![A-Za-z0-9_-])(?:[A-Za-z0-9]{1,4}-)?(?:AT|RT|AK)-[A-Za-z0-9]{16,}[A-Za-z0-9_-]*/g;
 
 // Value patterns (sticky: matched exactly where a key's separator ends)
 // A double-quoted string; backslash escapes (also a trailing lone backslash)
@@ -240,6 +248,8 @@ export function redactText(text: string, knownSecrets: readonly (string | null |
   redacted = redactKeyedValues(redacted, ASSIGNMENT_KEY, ASSIGNMENT_VALUE_RULES);
   redacted = redactKeyedValues(redacted, BEARER_KEY, ASSIGNMENT_VALUE_RULES, () => true);
   redacted = redactKeyedValues(redacted, HEADER_KEY, HEADER_VALUE_RULES);
+  // Bare cloud tokens without a key in front (e.g. echoed in a message)
+  redacted = redacted.replace(BARE_TPLINK_TOKEN, REDACTED);
   return redacted;
 } // End of function redactText()
 

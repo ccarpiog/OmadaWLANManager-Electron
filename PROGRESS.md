@@ -35,7 +35,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 20 | 4.13 Integration, hardening, docs, `docs/live-test-checklist.md` — split into 20a / 20b before starting (recorded in `todo.md` 4.13) | **done** (20a + 20b) |
 | 20a | 4.13 (first half) IPC + redaction audit, async-race review, destructive paths confirmed, accessibility / keyboard smoke `[a11y]` at the three widths, `docs/security-audit.md` — risk: high; worker: opus | **done** — `docs/progress-archive/phase-20a.md` |
 | 20b | 4.13 (second half) README + short user guide (es / en UI terms) + `docs/live-test-checklist.md` per spec §6 — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-20b.md` |
-| I-1a | Inbox I-1 (spec `autoclaude/processed/10-tplink-cloud-controllers.md`, part A): cloud config fields, `CloudAccountClient`, `OpenApiClient` cloud route, redactor additions, guarded IPC `cloud:test` / `cloud:controllers`, smoke-stub channels, `docs/omada-cloud-openapi.md` — risk: high; position: after phase 20 | pending |
+| I-1a | Inbox I-1 (spec `autoclaude/processed/10-tplink-cloud-controllers.md`, part A): cloud config fields, `CloudAccountClient`, `OpenApiClient` cloud route, redactor additions, guarded IPC `cloud:test` / `cloud:controllers`, smoke-stub channels, `docs/omada-cloud-openapi.md` — risk: high; worker: opus | **done** — `docs/progress-archive/phase-i-1a.md` |
 | I-1b | Inbox I-1 part B: Open-API-only `ControllerSession` + `ConnectionManager` local / cloud targets, Open API moves verified by re-read, race tests — risk: high; position: after I-1a | pending |
 | I-1c | Inbox I-1 part C: Settings cloud section, controller switcher, state reset, cloud error states, "Connect through TP-Link cloud", smoke `[cloud]` es + en, README + checklist cloud section — risk: high; position: after I-1b | pending |
 
@@ -78,18 +78,18 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 
 - Summaries are in the phase plan table above; full narratives, acceptance evidence and review resolutions are in `docs/progress-archive/phase-8.md` … `phase-20b.md` (reviews in `docs/reviews/phase8.md` … `phase20b.md`, all Codex, all ship or ship-with-fixes with every blocker fixed).
 
-### Phase 20b — README, user guide and live-test checklist (2026-10-07)
+### Phase I-1a — TP-Link cloud account groundwork in main (2026-10-07)
 
-- Risk: routine. Workers: opus (phase), opus (review fixes). Full narrative: `docs/progress-archive/phase-20b.md`; the "how" is `todo.md` 4.13 "Done (20b)" (4.13 now ✅ — section 4 of `todo.md` is complete).
-- New: `docs/live-test-checklist.md` (spec §6 order on disposable `__OWM_TEST_<TS>` resources, emergency restore, a pinned-TLS `curl` + `jq` probe kit with fail-closed guarded writes, 78-row cross-reference table with honest Coverage classes), `docs/user-guide.md` (es / en UI terms side by side), `tests/unit/docs-ui-terms.test.ts` (every quoted en / es pair matches `i18n-strings.ts`); `README.md` updated. No product code change.
-- Acceptance met: build exit 0; `npm test` 1039/1039 (after the review fixes too); smoke 270/270 and `npm run tls-probe` 25/25 (after the phase worker; the fixes changed Markdown only, `src/` untouched); no conflicted copies; no controller or `tplinkcloud.com` contact (probe kit tested offline against a mock 127.0.0.1 HTTPS server, 60/60 in zsh and bash).
-- Review: Codex, `docs/reviews/phase20b.md`, ship-with-fixes. Blockers: `curl -k` sent secrets to an unauthenticated controller (→ SPKI pin checked against the app's pinned fingerprint, secrets off argv / environment); the delete guard failed open on a `jq` error (→ fail-closed four-condition guard); an optional probe bound a network to every production group (→ removed, deferred to an isolated test site). Should-fix: overclaimed coverage table (→ Coverage column + "Not verified" list); README claimed live verification (→ reworded). All fixed by an opus worker; orchestrator re-ran build + tests, green.
+- Risk: high. Workers: opus (phase); the two review fixes were made by the orchestrator (each under 10 lines). Full narrative: `docs/progress-archive/phase-i-1a.md`; the "how" is `todo.md` §5 "Done (I-1a)" (§5 is new: the I-1 plan record).
+- New: `src/main/cloud-{hosts,throttle,account-model,account-client,access,transport}.ts` (allowlist, per-credential throttle, DTO + reasons, `get_tokens`-only account client, `CloudAccessService`, origin-locked transport in its own session), the `OpenApiClient` `cloud` route, cloud config fields with Remove as `removeCloudAccess: true` on `config:save`, guarded nonce-free `cloud:test` / `cloud:controllers` (credential generation → `superseded`), redactor additions, four-organization smoke-stub fixtures, TLS-probe step (e), `docs/omada-cloud-openapi.md`. No UI, no `ControllerSession` / `ConnectionManager` change.
+- Acceptance met: build exit 0; `npm test` 1122/1122; smoke 271/271; `npm run tls-probe` 29/29 (all re-run by the orchestrator after the review fixes); no conflicted copies; no controller or `tplinkcloud.com` API contact (the worker fetched only the public documentation guide).
+- Review: Codex, `docs/reviews/phaseI-1a.md`, ship-with-fixes. Blocker: an invalid persisted region was dropped alone, rebinding the secret to EUW (→ a present-but-invalid region or Client ID drops the whole credential, regression test). Should-fix: cloud invalidation ran after an await (→ inside the save callback). Both fixed and verified.
 
 ## Inbox
 
-- 2026-10-07 10:09: triaged `10-tplink-cloud-controllers.md` → **queued** as I-1 (split I-1a / I-1b / I-1c per the item's own suggestion), after phase 20. The user's decisions D5–D7 in it match the session memory of 2026-10-07; the TP-Link portal's Open API page is not yet enabled for the account, so I-1 builds against the documented contract and fixtures only.
+- 2026-10-07 10:09: triaged `10-tplink-cloud-controllers.md` → **queued** as I-1 (split I-1a / I-1b / I-1c per the item's own suggestion), after phase 20; I-1a done 2026-10-07. The user's decisions D5–D7 in it match the session memory of 2026-10-07; the TP-Link portal's Open API page is not yet enabled for the account, so I-1 builds against the documented contract and fixtures only.
 
-## Plan status: ACTIVE — phases 8–20 done (todo.md section 4 complete), inbox phases I-1a–I-1c next
+## Plan status: ACTIVE — phases 8–20 and I-1a done, inbox phases I-1b–I-1c next
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -189,6 +189,10 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 20b leftovers (none blocking): `docs/live-test-checklist.md` is unrun, so every live unknown of phases 12–20a stays unverified until the user runs it;
   deferred on production on purpose: entering / leaving "All access points" scope, the full-group error code, the group limit, deleting the default group or a
   group with APs, pre-6.3 controllers; the probe kit needs `jq` + `openssl`, and zsh needs `setopt interactivecomments` before pasting (stated in the checklist).
+- Phase I-1a leftovers (none blocking): the save codes `invalidCloudClientId` / `cloudClientIdRequired` / `cloudClientSecretRequired` have no es/en strings
+  yet (I-1c); the smoke stub's config load returns no cloud flags yet (I-1c); `activeController` / `cloudSites` survive a dropped credential, so I-1b must
+  fall back to local when the active cloud controller has no usable credential; the `config:save` invalidation ordering has no automated test; the live
+  unknowns are `docs/omada-cloud-openapi.md` §11.
 - **User's uncommitted files (never commit, revert or reconcile them):** `tests/smoke/window-placement.cjs` (untracked) and the edits to
   `tests/smoke/stub-main.cjs` and `tests/tls-probe/app-main.cjs` that load it appeared at 11:01 on 2026-10-07, during the 19b iteration, made
   by neither the worker nor the orchestrator — the user's concurrent change (smoke / probe windows on a secondary display, shown without focus).
@@ -196,12 +200,12 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 
 ## Next action
 
-**Phase I-1a — inbox item I-1, part A (risk: high): TP-Link cloud account groundwork in main, fixtures only.**
+**Phase I-1b — inbox item I-1, part B (risk: high): Open-API-only cloud `ControllerSession` and `ConnectionManager` targets, fixtures only.**
 
-- Read first: the inbox spec `autoclaude/processed/10-tplink-cloud-controllers.md` (user decisions D5–D7 and its part A); `docs/management-design.md` §7 (why multi-controller was dropped, now revised by D5–D7); `src/main/openapi-client.ts`, `src/main/redact.ts`, `src/main/config-model.ts`, `src/main/ipc-trust.ts`, `src/main/ipc-guards.ts` and `tests/smoke/stub-main.cjs` only as the worker needs them.
-- Deliverables (per the phase plan row): cloud config fields (secrets in secure storage only, never plaintext), an Electron-free `CloudAccountClient` (account token, controller list), the `OpenApiClient` cloud route (Account Level Open API tunnel to on-prem controllers), redactor additions for every new secret / token, guarded IPC `cloud:test` / `cloud:controllers` through `handleTrusted()`, smoke-stub channels, `docs/omada-cloud-openapi.md` (the documented contract the code follows, every unverified detail flagged). No UI (that is I-1c), no `ControllerSession` change (I-1b).
-- Acceptance: `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) all exit 0; unit tests on fixtures for the cloud client, the cloud route and the redaction of every new secret; the new IPC channels appear in `tests/unit/ipc-surface.test.ts`. **D4 extended:** no request to any `tplinkcloud.com` host, nor to the real controller, from code under test, smoke or probes; never read or write the real `~/.omada-wlan-manager/`. The TP-Link portal's Open API page is not yet enabled for the account, so everything builds against the documented contract only.
-- After I-1a: I-1b → I-1c (same spec). The user's own uncommitted test files (see Open risks) stay out of every commit.
+- Read first: the spec `autoclaude/processed/10-tplink-cloud-controllers.md` ("Architecture", part B); `todo.md` §5 (I-1a "Done" notes and the I-1b item); `docs/omada-cloud-openapi.md`; then `src/main/controller-session.ts`, `src/main/connection-manager.ts`, `src/main/cloud-access.ts`, `src/main/openapi-client.ts` (cloud route) only as the worker needs them.
+- Deliverables: a `ControllerSession` for cloud controllers with no internal client (sites, `ap-groups/aps` paged, `ap-groups` with empty groups and per-band capacity, Wi-Fi networks and the phase 16–19 writes through the cloud route; version / group model from `orgVersion`, below 6.3 not connectable; capability checks §2.2 (4)–(5) not applied; a view-only refusal shows the controller's code + message); AP moves by `PATCH …/sites/{siteId}/aps/{apMac}/wlan-group` `{"wlanGroupId"}` counted only when a re-read of `ap-groups/aps` shows the AP in the destination (else a failure with Retry); `ConnectionManager` targets `{kind: 'local'} | {kind: 'cloud', omadacId}` with the same synchronous `invalidateControllerState()` on every switch; populate `localOmadacId` on a local connect; persist `activeController` / `cloudSites`, falling back to local when the active cloud controller has no usable credential; cloud sessions bound to session nonces (including `omada:set-wlan` / `omada:get-aps` / `omada:get-wlans`, `docs/security-audit.md` §7); race tests (switch during a connect, a move, a managed read). No renderer UI (I-1c).
+- Acceptance: `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) all exit 0; local-controller behavior unchanged (existing tests green). D4 extended: no request to any `tplinkcloud.com` host or the real controller from code under test, smoke or probes; never the real `~/.omada-wlan-manager/`.
+- After I-1b: I-1c (same spec). The user's own uncommitted test files (see Open risks) stay out of every commit; if a phase must edit `tests/smoke/stub-main.cjs`, stage only its hunks (the user's patch is reversed on a temp copy, then `git update-index --cacheinfo`), never the user's.
 
 ## Key paths
 
@@ -223,6 +227,7 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - `docs/management-design.md` — approved spec for phases 8–20 (decisions, architecture, security, UI)
 - `docs/omada-6.3-api-findings.md` — live API findings on controller 6.3.0.45 (internal API + Open API summary)
 - `docs/omada-openapi-ops.md` — Open API operations (params, bodies, responses) extracted from the controller's own spec
+- `src/main/cloud-hosts.ts` (`serverHost` allowlist), `cloud-throttle.ts` (per-credential throttle), `cloud-account-model.ts` (organization validators, DTO + reasons, error codes), `cloud-account-client.ts` (`CloudAccountClient`), `cloud-access.ts` (`CloudAccessService`: credential generation, the two IPC replies), `cloud-transport.ts` (origin-locked Electron `net` in its own session); `docs/omada-cloud-openapi.md` — the Account Level Open API contract (§11 = live unknowns)
 
 ## Git state
 

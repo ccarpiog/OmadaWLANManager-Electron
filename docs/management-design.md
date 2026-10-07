@@ -251,6 +251,11 @@ production groups (e.g. `zNinguna`) as test objects.
 
 ## 7. Considered and dropped: several controllers and TP-Link cloud access (2026-10-06)
 
+> **Revised 2026-10-07 (user decisions D5–D7, inbox item I-1):** TP-Link's newer Account Level Open API (beta) does
+> reach on-prem controllers through Cloud Access, so a TP-Link cloud account now adds the remote controllers beside the
+> direct local one. Spec: `autoclaude/processed/10-tplink-cloud-controllers.md`; contract and the parts built so far:
+> `docs/omada-cloud-openapi.md`; plan: `todo.md` section 5. The text below records the 2026-10-06 decision.
+
 The user's TP-Link Cloud Access portal lists three controllers, all on 6.3.0.45: "OC200 Planta 3",
 "OC200 Planta 4" (OC200 hardware) and "Omada red antigua (Proxmox)" (the software controller this app
 uses). The two OC200s are **not on the user's local network**.

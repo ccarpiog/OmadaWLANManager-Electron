@@ -346,3 +346,98 @@ and no use of the real `~/.omada-wlan-manager/` config** (design spec §1, D4).
   - **Totals:** `npm test` 1028, smoke 268, TLS probe 25.
   - **Remaining (20b):** README and user guide, and `docs/live-test-checklist.md`.
 - ✅ **Done (20b):** `docs/live-test-checklist.md` follows spec §6 step by step (snapshot EAP Carpio's group id → empty test group `__OWM_TEST_<TS>`, plus a helper group `${T}_B` for the binding-replacement and bound-delete checks → a disabled WPA-Personal network bound only to it → edit / change password / enable and disable → the §5 unknowns → EAP Carpio into the group and back → unbind and delete the network → delete the groups → no `__OWM_TEST_` left), each step with Do / Observe / Record and a pass / fail box, the UI terms as bold English / Spanish pairs, an emergency-restore section, a terminal probe kit (`curl` + `jq` + `openssl` shell functions that read the raw Open API and internal answers the app never shows, survey every network read-only, and write only through four guarded helpers; tested offline in zsh and bash against a local mock, never against a controller), and a cross-reference table of 78 rows (every spec §5 row and every unverified-live item of phases 12–20a → the steps that observe it and its coverage: covered, partly covered or deferred, with the reason; plus a result column), then a "Not verified by this checklist" list and the leftovers that are not live unknowns. `docs/user-guide.md` (English; an "English UI | Spanish UI" table and bold pairs) covers connecting, the three views, selecting and moving access points, management access with the banner reasons, AP groups (New / Rename / Delete, refusal reasons, capacity), Wi-Fi networks (create / edit / change password / enable / disable / delete, Enterprise / PPSK limits), Broadcast on, certificate trust and the keys. README: a description, features and usage that include Broadcast on (Enterprise / PPSK networks can be bound, not edited), a Documentation section, the new pure modules and the testing notes. New `tests/unit/docs-ui-terms.test.ts`: every bold English / Spanish pair of both docs (130 + 247) and every row of the guide's term table must be one key's en and es text in `src/renderer/i18n-strings.ts` (a `{placeholder}` matches any text). No product code changed. `npm test` 1039, smoke 270, TLS probe 25. Review fixes: the probe kit pins the controller's public key on every request (`--pinnedpubkey`, derived only after the certificate's SHA-256 matches the fingerprint shown in Settings; `-k` merely skips the CA check), keeps every secret out of exported variables, command lines and files, and its delete guard fails closed (complete baselines, an id captured with its kind, absent from the baseline, a fresh read naming it as this run's test resource; any `curl` / `jq` error refuses); the "All access points" probe that bound a test network to every production group is gone (isolated test site only), the coverage table is honest about what a run cannot observe, and README and guide no longer claim live verification.
+
+## 5. Inbox I-1 — TP-Link cloud controllers (queued 2026-10-07)
+
+**Spec:** `autoclaude/processed/10-tplink-cloud-controllers.md` (user decisions D5–D7: the Account Level Open API reaches the
+remote OC200 controllers; local + cloud in one switcher; after phase 20). **API contract:** `docs/omada-cloud-openapi.md`.
+Same rules as section 4, and D4 extended: no request to any `tplinkcloud.com` API host (nor to the real controller) from code
+under test, unit tests, smoke or probes — TP-Link has not enabled the portal's Open API page for the account yet, so
+everything is built against the documented contract and fixtures.
+
+### ✅ I-1a Cloud account groundwork in main (fixtures only) — risk: high
+- **What:** cloud config fields and their persistence, an Electron-free `CloudAccountClient` (account token, organization list,
+  shared throttle), the `OpenApiClient` cloud route, the `serverHost` allowlist, the cloud transport in its own session,
+  redactor additions, guarded IPC `cloud:test` / `cloud:controllers`, smoke-stub channels, `docs/omada-cloud-openapi.md`.
+  No UI, no `ControllerSession` / `ConnectionManager` change.
+- ✅ **Done (I-1a):**
+  - **Config:**
+    - `config-model.ts` / `config.ts` gain the optional fields `cloudRegion` (`aps|euw|use`, default `euw`) and
+      `cloudClientId`.
+    - `encryptedCloudClientSecret` is a safeStorage blob only, with the management secret's session-only fallback.
+    - `localOmadacId` is dropped on a URL change; I-1b populates it.
+    - `activeController` is `'local'` or an `omadacId`, and `cloudSites` maps an `omadacId` to a site id.
+    - Malformed values are dropped on load, never cast. A different region or cloud Client ID drops the stored secret.
+      The cloud account is not tied to the controller URL.
+    - The renderer gets `cloudAccess` flags only.
+  - **Remove path:** an explicit `removeCloudAccess: true` flag on `config:save`, sent alone like
+    `removeManagementAccess`. It deletes every cloud field and the session secret, so `activeController` falls back
+    to `'local'`.
+  - **Client** (`cloud-account-client.ts`):
+    - Token: `get_tokens` only, renewed 60 s before expiry and once on HTTP 401 / `-44112` / `-44113` / `-44116`. The
+      refresh token is never sent or kept.
+    - Organizations: walked to `totalRows`, capped at 10 pages of 100 (fail-closed `truncated`), with the page walker
+      `walkPagedListing()` now shared with `OpenApiClient.listAll()`.
+    - Throttle (`cloud-throttle.ts`): one per credential, ≤ 5 requests/s FIFO, and a 1 / 2 / 4 / 8 s backoff on
+      `-7132` / 429 with 3 retries. The stable error codes are in `cloud-account-model.ts`.
+  - **Allowlist and network:**
+    - `cloud-hosts.ts`: https, the default port, no userinfo, path, query or fragment, and exactly `aps1|euw1|use1`.
+      Otherwise the organization is `unsupportedHost`.
+    - `cloud-transport.ts`: the transport refuses every other origin before sending and refuses redirects.
+    - The cloud uses its own in-memory partition with `setCertificateVerifyProc(null)`. `decideCertificate()` never
+      accepts a certificate for a cloud host.
+  - **Route:** `new OpenApiClient({route: 'cloud', target, tokenProvider, throttle, transport})` prefixes
+    `{serverHost}/v1/cloudaccess/{deviceId}`, reuses every operation and validator, and refuses a non-allowlisted
+    target in the constructor. The local route is unchanged.
+  - **DTO reason codes:** `notController`, `incompleteEntry`, `unsupportedHost`, `versionUnknown`, `versionTooOld`,
+    `offline`. The first that applies wins, permanent reasons before transient ones.
+  - **IPC:** `cloud:test` (a fresh token) and `cloud:controllers` (reuses it) go through `handleTrusted()` with no
+    argument, using the saved credentials only (`notConfigured` without them).
+  - **Nonce decision:** no session nonce, because a cloud call has no local session and must work while
+    disconnected. Main refuses stale replies by a credential generation (`superseded`) instead; the reasoning is in
+    `docs/security-audit.md` §7.
+  - **Redactor:** bare `AT-` / `a1-AT-` / `RT-` / `AK-` token shapes. The live cloud secret and tokens join
+    `storedSecrets()`.
+  - **Tests:**
+    - Unit tests 1039 → 1121: config rules, the client, the throttle, the allowlist, the DTO, the route, the access
+      service and redaction.
+    - The smoke stub answers four fixture organizations (local duplicate, offline, below 6.3, connectable): smoke
+      271 checks.
+    - `npm run tls-probe` step (e): the cloud session rejects a self-signed certificate the pin accepts on a
+      controller session, and the transport refuses 127.0.0.1. Plus an e2e `notConfigured` check: probe 29 checks.
+  - **Unverified (live checklist, `docs/omada-cloud-openapi.md` §11):**
+    - the portal page and the credential settings;
+    - `get_tokens` answers and codes for an expired, deleted, disabled or view-only credential (only `-52602` seen);
+    - `/v1/organizations` paging and `totalRows`, the OC200 `deviceType`, the `orgVersion` format, the reported
+      `serverHost`;
+    - token-error codes on the list and through the tunnel (HTTP 401 / `-44116` seen on the list);
+    - whether token requests count against the rate limit, and `-7132` versus 429;
+    - the tunnel's v1 and v2 paths, writes with full and view-only access, and `-44121`;
+    - normal TLS verification of the cloud hosts.
+  - **Review fixes** (`docs/reviews/phaseI-1a.md`):
+    - On load, a region or cloud Client ID that is present but invalid drops the whole credential (region, Client ID
+      and blob), so a secret is never rebound to the default EUW endpoint. An absent region is still the default.
+    - `config:save` runs `cloudAccess.invalidate()` inside the save callback, before `applyConfigSave()` awaits a
+      controller transition. Unit tests: 1122.
+
+### I-1b Open-API-only cloud `ControllerSession` and `ConnectionManager` targets — risk: high
+- **What (spec "Architecture"):**
+  - A `ControllerSession` for cloud controllers with no internal client: sites, `ap-groups/aps`, `ap-groups`, Wi-Fi
+    networks and the management writes through the I-1a cloud route.
+  - Version and group model from `orgVersion`.
+  - AP moves by `PATCH …/aps/{mac}/wlan-group`, verified by re-read.
+  - `ConnectionManager` targets `{kind: 'local'} | {kind: 'cloud', omadacId}`, with the URL-change invalidation on
+    every switch.
+  - Populate `localOmadacId` on a local connect; persist `activeController` / `cloudSites`.
+  - Bind cloud sessions to session nonces; race tests; `npm run tls-probe` still green.
+
+### I-1c Settings cloud section, controller switcher, docs — risk: high
+- **What (spec "UI"):**
+  - The "TP-Link cloud (optional)" Settings section: Region, Client ID, Client Secret, Test cloud access with the
+    "save first" refusal, and Remove cloud access.
+  - The controller switcher, with the local duplicate hidden and disabled entries showing their reason.
+  - The state reset, the cloud error states and "Connect through TP-Link cloud".
+  - es / en strings for the I-1a save codes (`invalidCloudClientId`, `cloudClientIdRequired`,
+    `cloudClientSecretRequired`) and the access errors.
+  - A smoke launch `[cloud]` over the I-1a stub channels.
+  - README, plus a cloud section in `docs/live-test-checklist.md` built from `docs/omada-cloud-openapi.md` §11.

@@ -1503,6 +1503,70 @@ const handlers = {
   }, // End of the MANAGEMENT_NETWORK_BINDINGS handler
 }; // End of the fake handlers table
 
+// ============================================================================
+// TP-Link cloud account (inbox item I-1a): cloud:test and cloud:controllers
+// ============================================================================
+// The real channels (src/main/index.ts, CloudAccessService in cloud-access.ts)
+// take no argument and answer a CloudAccessResult: { success: true,
+// controllers, truncated } with the controller DTOs { omadacId, name, online,
+// version, connectable, reason } (never a deviceId, serverHost or token), or {
+// success: false, error, diagnostic? }. The fakes below answer the DTOs main
+// would build for a four-organization account (I-1c's smoke uses them): one
+// whose omadacId is the stub's local controller (CLOUD_STUB_LOCAL_OMADAC_ID,
+// what /api/info would report; I-1c lists it once, as local), one offline,
+// one below 6.3 and one connectable. Knobs (stub.configure()): `cloudResult`
+// — returned verbatim by both channels (e.g. { success: false, error:
+// 'credentialInvalid', diagnostic: 'credentialInvalid, errorCode -52602' });
+// `cloudControllers` — replaces the DTO list. Nothing here sends a request
+// (D4: no tplinkcloud.com host is ever contacted).
+
+// The local controller's omadacId in the cloud fixtures
+const CLOUD_STUB_LOCAL_OMADAC_ID = 'c0ffee00c0ffee00c0ffee00c0ffee00';
+
+// The controller DTOs of the four-organization account (as toCloudController()
+// in src/main/cloud-account-model.ts builds them)
+const CLOUD_STUB_CONTROLLERS = [
+  { omadacId: CLOUD_STUB_LOCAL_OMADAC_ID, name: 'Omada red antigua (Proxmox)', online: true, version: '6.3.0.45', connectable: true, reason: null },
+  { omadacId: '3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a', name: 'OC200 Planta 3', online: false, version: '6.3.0.45', connectable: false, reason: 'offline' },
+  { omadacId: '2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b', name: 'OC200 Planta 2', online: true, version: '6.2.0.9', connectable: false, reason: 'versionTooOld' },
+  { omadacId: '4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d', name: 'OC200 Planta 4', online: true, version: '6.3.0.45', connectable: true, reason: null },
+];
+stub.cloudLocalOmadacId = CLOUD_STUB_LOCAL_OMADAC_ID;
+
+/**
+ * The fake answer of both cloud channels: the scripted `cloudResult`, else the
+ * DTO list (`cloudControllers` or the four-organization default). Mirrors the
+ * real arity guard (requireNoExtraArguments() of ipc-guards.ts): any argument
+ * is refused.
+ * @param {unknown[]} extra - The call's arguments (must be none).
+ * @returns {object} The CloudAccessResult.
+ */
+function cloudAccessReply(extra) {
+  if (extra.length > 0) {
+    throw new Error('IPC call rejected: unexpected arguments');
+  }
+  if (stub.scenario.cloudResult) {
+    return structuredClone(stub.scenario.cloudResult);
+  }
+  const controllers = stub.scenario.cloudControllers || CLOUD_STUB_CONTROLLERS;
+  return { success: true, controllers: structuredClone(controllers), truncated: false };
+} // End of function cloudAccessReply()
+
+/**
+ * CLOUD_TEST ("Test cloud access": a fresh token plus the organization list).
+ * @param {...unknown} extra - Must be none.
+ * @returns {object} The CloudAccessResult.
+ */
+handlers[IPC_CHANNELS.CLOUD_TEST] = (...extra) => cloudAccessReply(extra);
+
+/**
+ * CLOUD_CONTROLLERS (the account's controllers, reusing a valid token).
+ * @param {...unknown} extra - Must be none.
+ * @returns {object} The CloudAccessResult.
+ */
+handlers[IPC_CHANNELS.CLOUD_CONTROLLERS] = (...extra) => cloudAccessReply(extra);
+// End of the TP-Link cloud account fakes
+
 // Every channel of the shared table must have a fake, and vice versa: a
 // channel added in a later phase fails the smoke loudly until it is stubbed
 const channelValues = Object.values(IPC_CHANNELS);

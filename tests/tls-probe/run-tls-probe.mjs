@@ -14,7 +14,11 @@
 //   (c) the server switches to a different self-signed certificate -> rejected
 //       as a mismatch, also on a different port of the same host;
 //   (d) after a reset -> first use again (no stale cached acceptance or pooled
-//       connection).
+//       connection);
+//   (e) the TP-Link cloud's own session (inbox I-1a) rejects a self-signed
+//       certificate that the pin would accept on a controller session, and
+//       the cloud transport refuses a non-allowlisted origin before any
+//       connection (127.0.0.1 only; no cloud host is ever contacted).
 // Control steps (informational, not pass/fail) show what the same requests do
 // WITHOUT a controller-session reset (ControllerTlsSessions.reset()), and that
 // closing connections + re-installing the verify proc does not help, i.e. why
@@ -394,6 +398,21 @@ async function runEndToEnd(binary, certDir, fingerprintA, fingerprintB) {
       return verdict(forged.success === false && forged.error === 'trustUnavailable' && malformed === 'rejected' && !('certificatePin' in readConfig()), { forged, malformed });
     });
 
+    await check('[e2e] TP-Link cloud channels on the real main (inbox I-1a): with no cloud credential saved both answer notConfigured and send nothing; CONFIG_LOAD reports the default cloud flags (EUW, nothing stored, local active) and no cloud field is on disk', async () => {
+      const before = controller.requests.length;
+      const replies = await page.evaluate(async () => ({ test: await window.omadaAPI.testCloudAccess(), controllers: await window.omadaAPI.getCloudControllers() }));
+      const loaded = await page.evaluate(() => window.omadaAPI.loadConfig());
+      const stored = readConfig();
+      const cloudKeys = Object.keys(stored).filter((key) => /cloud|activeController|localOmadacId/i.test(key));
+      return verdict(
+        replies.test.success === false && replies.test.error === 'notConfigured' && replies.controllers.success === false && replies.controllers.error === 'notConfigured' &&
+        controller.requests.length === before && JSON.stringify(loaded.cloudAccess) === JSON.stringify({
+          region: 'euw', clientId: '', hasCloudSecret: false, cloudSecretSessionOnly: false, canPersistCloudSecret: false, activeController: 'local',
+        }) && cloudKeys.length === 0,
+        { replies, cloudAccess: loaded.cloudAccess, cloudKeys, requests: controller.requests.length - before }
+      );
+    }); // End of check "[e2e] TP-Link cloud channels on the real main"
+
     // ------------------------------------------------------------------------
     // Adversarial concurrency (phase 11 review blockers): the real IPC handlers
     // are called directly, so main must be correct without any renderer help
@@ -690,7 +709,7 @@ async function runEndToEnd(binary, certDir, fingerprintA, fingerprintB) {
  * @returns {Promise<void>}
  */
 async function main() {
-  for (const file of ['dist/main/cert-verify.js', 'dist/main/cert-pinning.js']) {
+  for (const file of ['dist/main/cert-verify.js', 'dist/main/cert-pinning.js', 'dist/main/cloud-transport.js', 'dist/main/net-transport.js']) {
     if (!existsSync(path.join(projectRoot, file))) {
       fail(`missing build output ${file}; run \`npm run build\` first (\`npm run tls-probe\` does it for you)`);
     }
@@ -731,6 +750,17 @@ async function main() {
       Boolean(beforeReset) && beforeReset.ok === true, beforeReset);
     record('(d) after reset: first use again (rejected, first-use recorded, server got no HTTP request)',
       isPinRejection(steps['d-after-reset'], 'first-use', fingerprintA), steps['d-after-reset']);
+    const pinnedControl = steps['e-control-controller-session-pinned'];
+    record('(e) control: with certificate A pinned for the configured 127.0.0.1 origin, a controller session accepts it',
+      Boolean(pinnedControl) && pinnedControl.ok === true && pinnedControl.serverHttpRequests === 1, pinnedControl);
+    const cloudSession = steps['e-cloud-session-self-signed'];
+    record('(e) the cloud session (createCloudSession(), inbox I-1a) rejects that same pinned self-signed certificate: Chromium\'s own verification, no verify proc ran (no pin rejection), no HTTP request',
+      Boolean(cloudSession) && cloudSession.ok === false && /ERR_CERT_/.test(cloudSession.error || '') && cloudSession.newRejections.length === 0 &&
+      cloudSession.serverHttpRequests === 0, cloudSession);
+    const cloudTransport = steps['e-cloud-transport-refuses-origin'];
+    record('(e) the cloud transport (createCloudNetTransport()) refuses a non-allowlisted origin before connecting: no TLS connection, no HTTP request, so no token could leave',
+      Boolean(cloudTransport) && cloudTransport.ok === false && /not an allowlisted TP-Link cloud API origin/.test(cloudTransport.error || '') &&
+      cloudTransport.serverTlsConnections === 0 && cloudTransport.serverHttpRequests === 0, cloudTransport);
 
     console.log('\nPart 2: the real app (dist/main/index.js) against a local fake controller\n');
     await runEndToEnd(binary, certDir, fingerprintA, fingerprintB);

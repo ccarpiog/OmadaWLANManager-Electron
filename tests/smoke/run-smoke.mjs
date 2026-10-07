@@ -175,10 +175,12 @@ const GROUP = Object.fromEntries(data.wlanGroups.map((group) => [group.wlanName,
 const LEGACY_GROUP = Object.fromEntries(data.legacyWlanGroups.map((group) => [group.wlanName, group]));
 const EXPECTED_BRIDGE = [
   'changeNetworkPassword', 'connect', 'createApGroup', 'createNetwork', 'deleteApGroup', 'deleteNetwork', 'disconnect', 'getAccessPoints',
-  'getManagedApGroups', 'getManagedNetworks', 'getManagementCapabilities', 'getWlanGroups', 'loadConfig', 'platform', 'renameApGroup',
-  'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup', 'setNetworkEnabled', 'testManagementAccess', 'trustCertificate',
-  'updateNetwork', 'updateNetworkBindings',
+  'getCloudControllers', 'getManagedApGroups', 'getManagedNetworks', 'getManagementCapabilities', 'getWlanGroups', 'loadConfig', 'platform',
+  'renameApGroup', 'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup', 'setNetworkEnabled', 'testCloudAccess',
+  'testManagementAccess', 'trustCertificate', 'updateNetwork', 'updateNetworkBindings',
 ];
+// The keys of a CloudController DTO (src/shared/types.ts), sorted: nothing else may cross
+const CLOUD_CONTROLLER_DTO_KEYS = ['connectable', 'name', 'omadacId', 'online', 'reason', 'version'];
 // The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
 const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
 // One launch per run*() function in main()
@@ -1519,6 +1521,35 @@ async function checkWindowLikeRealApp(session) {
 } // End of function checkWindowLikeRealApp()
 
 /**
+ * Checks the TP-Link cloud channels through the real preload bridge (inbox
+ * I-1a; no UI yet): testCloudAccess() and getCloudControllers() send no
+ * argument and answer while disconnected with the stub's four controller
+ * DTOs — exactly the DTO keys, never a deviceId, serverHost or token.
+ * @param {object} session - The launch.
+ * @returns {Promise<void>}
+ */
+async function checkCloudChannels(session) {
+  await check(`[${session.label}] cloud channels: testCloudAccess() and getCloudControllers() go through the preload with no argument and answer while disconnected with the four controller DTOs only`, async () => {
+    const replies = await session.page.evaluate(async () => ({
+      test: await window.omadaAPI.testCloudAccess(),
+      controllers: await window.omadaAPI.getCloudControllers(),
+    }));
+    const state = await stubState(session);
+    const calls = (state.calls || []).filter((call) => call.channel.startsWith('cloud:'));
+    const wellFormed = [replies.test, replies.controllers].every((reply) =>
+      reply.success === true && reply.truncated === false && Array.isArray(reply.controllers) && reply.controllers.length === 4 &&
+      reply.controllers.every((controller) => isDeepStrictEqual(Object.keys(controller).sort(), CLOUD_CONTROLLER_DTO_KEYS)));
+    const reasons = replies.controllers.controllers?.map((controller) => controller.reason);
+    return verdict(
+      wellFormed && isDeepStrictEqual(reasons, [null, 'offline', 'versionTooOld', null]) &&
+      !/deviceId|serverHost|tplinkcloud|AccessToken/.test(JSON.stringify(replies)) &&
+      isDeepStrictEqual(calls.map((call) => [call.channel, call.args.length]), [['cloud:test', 0], ['cloud:controllers', 0]]) && state.connected === false,
+      { replies, calls, connected: state.connected }
+    );
+  }); // End of check "[label] cloud channels"
+} // End of function checkCloudChannels()
+
+/**
  * Checks the language: UI revealed, lang attribute, every static string from
  * ui-strings.json, and no blank label/button/heading.
  * @param {object} session - The launch.
@@ -2755,6 +2786,7 @@ async function runSpanishFirstRun(electronInfo) {
   try {
     await checkWindowLikeRealApp(session);
     await checkTranslations(session, 'es');
+    await checkCloudChannels(session);
 
     await check('[es] first run: settings modal auto-opens with focus in the URL field and an inert background', async () => {
       await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });

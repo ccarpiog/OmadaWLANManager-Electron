@@ -5,6 +5,7 @@ import type {
   ApGroupDeleteRequest,
   ApGroupRenameRequest,
   CertificateActionResult,
+  CloudAccessResult,
   ConfigSavePayload,
   ConfigSaveResult,
   ConnectionResult,
@@ -57,6 +58,8 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
   MANAGEMENT_NETWORK_ENABLE: 'management:network-enable',
   MANAGEMENT_NETWORK_DELETE: 'management:network-delete',
   MANAGEMENT_NETWORK_BINDINGS: 'management:network-bindings',
+  CLOUD_TEST: 'cloud:test',
+  CLOUD_CONTROLLERS: 'cloud:controllers',
 };
 
 // Expose a safe API to the renderer process. `satisfies OmadaAPI` (type-only,
@@ -201,5 +204,18 @@ contextBridge.exposeInMainWorld('omadaAPI', {
   // on fresh controller data itself (scope, groups, capacity)
   updateNetworkBindings: (request: NetworkBindingsRequest): Promise<NetworkBindingsResult> => {
     return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_NETWORK_BINDINGS, request);
+  },
+
+  // TP-Link cloud account (saved credentials only): "Test cloud access" (a
+  // fresh token plus the organization list) and the account's controllers.
+  // Neither sends anything: main never takes a host, deviceId, serverHost or
+  // URL from the renderer, and the replies carry the controller DTOs only
+  // (never a deviceId, serverHost, secret or token)
+  testCloudAccess: (): Promise<CloudAccessResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.CLOUD_TEST);
+  },
+
+  getCloudControllers: (): Promise<CloudAccessResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.CLOUD_CONTROLLERS);
   }
 } satisfies OmadaAPI);

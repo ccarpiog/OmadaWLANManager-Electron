@@ -49,8 +49,36 @@
 //   never a raw request or response body, the Client Secret or a token.
 // - The Client Secret and the token are private class fields (#…): they are
 //   not enumerable, so JSON.stringify() and util.inspect() never show them.
+// - Routes (inbox item I-1, docs/omada-cloud-openapi.md §6): 'local' (the
+//   default, everything above: the configured controller reached directly,
+//   its own client-credentials token) or 'cloud' (a controller of the TP-Link
+//   cloud account, reached through the Account Level Open API tunnel). The
+//   cloud route prefixes every self-hosted path with
+//   `{serverHost}/v1/cloudaccess/{deviceId}` — e.g.
+//   `{serverHost}/v1/cloudaccess/{deviceId}/openapi/v1/{omadacId}/sites` —,
+//   takes the omadacId, deviceId and serverHost from the organization list
+//   (never /api/info), refuses a serverHost outside the allowlist in the
+//   constructor (cloud-hosts.ts: before any request), and gets its token from
+//   a CloudTokenProvider (CloudAccountClient: the account token, never the
+//   refresh token). Every cloud call takes a slot of the credential's shared
+//   CloudRequestThrottle first; a rate-limit answer (-7132 or HTTP 429) holds
+//   the credential back and is retried up to CLOUD_RATE_LIMIT_MAX_RETRIES
+//   times, then is 'rateLimited'. The operations and validators below are the
+//   same for both routes.
 
 import { MAX_AP_GROUP_NAME_LENGTH } from './ap-group-policy';
+import {
+  CLOUD_RATE_LIMIT_ERROR_CODE,
+  CLOUD_TOKEN_REJECTED_ERROR_CODES,
+  CloudAccountError,
+  CloudAccountErrorCode,
+  CloudControllerTarget,
+  CloudTokenProvider,
+  isDeviceId,
+  isOmadacId
+} from './cloud-account-model';
+import { allowlistedCloudOrigin } from './cloud-hosts';
+import { CLOUD_RATE_LIMIT_MAX_RETRIES, CloudRequestThrottle } from './cloud-throttle';
 import { buildBindingsBody, isSaneBindingIds } from './network-binding-plan';
 import { HttpMethod, OmadaHttpRequest, OmadaHttpResponse, OmadaTransport } from './omada-transport';
 import { redactText } from './redact';
@@ -82,7 +110,9 @@ export type OpenApiMethod = HttpMethod;
  *   (`controllerErrorCode` carries it);
  * - 'malformedResponse': invalid JSON, a missing errorCode, or a payload whose
  *   shape the validators reject;
- * - 'clientClosed': the client was closed (close()) before or during the call.
+ * - 'clientClosed': the client was closed (close()) before or during the call;
+ * - 'rateLimited' (cloud route only): TP-Link's rate limit (-7132 / HTTP 429)
+ *   persisted through the backoff retries.
  */
 export type OpenApiErrorCode =
   | 'invalidCredentials'
@@ -92,7 +122,22 @@ export type OpenApiErrorCode =
   | 'networkError'
   | 'apiError'
   | 'malformedResponse'
-  | 'clientClosed';
+  | 'clientClosed'
+  | 'rateLimited';
+
+// How a cloud token failure (CloudAccountError from the CloudTokenProvider)
+// surfaces from the cloud route
+const CLOUD_TOKEN_ERROR_CODES: Readonly<Record<CloudAccountErrorCode, OpenApiErrorCode>> = {
+  credentialInvalid: 'invalidCredentials',
+  tokenRejected: 'tokenRejected',
+  rateLimited: 'rateLimited',
+  httpError: 'httpError',
+  timeout: 'timeout',
+  networkError: 'networkError',
+  apiError: 'apiError',
+  malformedResponse: 'malformedResponse',
+  clientClosed: 'clientClosed'
+};
 
 // The token endpoint (client-credentials mode). Not in the controller's
 // self-hosted spec: taken from TP-Link's Open API documentation
@@ -291,8 +336,9 @@ export interface OpenApiSsidWriteDetail {
   raw: Record<string, unknown>;
 }
 
-/** Constructor options of OpenApiClient. */
+/** Constructor options of OpenApiClient on the local route (the default). */
 export interface OpenApiClientOptions {
+  route?: 'local';
   // Controller base URL (a trailing slash is removed)
   baseUrl: string;
   // The controller id from /api/info
@@ -303,6 +349,34 @@ export interface OpenApiClientOptions {
   transport: OmadaTransport;
   // Clock (epoch ms); tests inject a fake one
   now?: () => number;
+}
+
+/**
+ * Constructor options of OpenApiClient on the cloud route (see the header):
+ * the organization's target, the account's token provider and the
+ * credential's shared throttle. The transport is the cloud transport (its
+ * own Electron session, the origin allowlist enforced again there).
+ */
+export interface CloudOpenApiClientOptions {
+  route: 'cloud';
+  target: CloudControllerTarget;
+  tokenProvider: CloudTokenProvider;
+  throttle: CloudRequestThrottle;
+  transport: OmadaTransport;
+}
+
+/** Options of walkPagedListing(). */
+export interface PagedWalkOptions {
+  pageSize: number;
+  maxPages: number;
+  // Extra query parameters (page and pageSize are the walker's)
+  query?: OpenApiQuery;
+  // What is listed (e.g. 'sites'), and the subject of the incompleteness log
+  // line (e.g. 'Open API listing')
+  what: string;
+  label: string;
+  // Called with each page's raw `result` (after its shape was validated)
+  onPage?: (result: unknown, page: number) => void;
 }
 
 /**
@@ -589,6 +663,116 @@ function checkExtraHeaders(headers: Record<string, string> | undefined): Record<
 } // End of function checkExtraHeaders()
 
 /**
+ * Walks every page of a paged listing (`page` from 1, `pageSize`),
+ * validating each entry and deduplicating by id (the first occurrence is
+ * kept). Shared by OpenApiClient.listAll() and the cloud organization list
+ * (CloudAccountClient). `truncated` is false only when the walk PROVED the
+ * listing complete; otherwise it is true and the reason is logged (codes
+ * only) — never a silently shorter list:
+ * - a sane `totalRows` on the first page (see validateOpenApiPage()): the
+ *   walk goes on until the raw entries fetched (duplicates included, so a
+ *   repeated entry never costs an extra request) reach it, whatever the
+ *   page lengths — a server that caps the page size below the requested one
+ *   is still read completely. Incomplete: an empty page before the total is
+ *   reached ('emptyPage');
+ * - no sane `totalRows` on the first page: a short (or empty) page ends the
+ *   walk;
+ * - either way, incomplete: a page whose `totalRows` differs from the first
+ *   page's — absent or insane vs a sane one included — ('totalChanged': the
+ *   listing changed during the walk, or the server contradicts itself); a
+ *   non-empty page that adds no new id ('noProgress': it only repeats
+ *   entries, e.g. a server ignoring `page`); still unfinished at the page cap
+ *   ('pageCap').
+ * Every iteration either ends the walk or moves to the next page, and the
+ * page cap ends it at the latest: at most `maxPages` requests, never a loop.
+ * @param {(query: OpenApiQuery, page: number) => Promise<unknown>} fetchPage -
+ *   Fetches one page's raw `result` (throws on any failure).
+ * @param {(result: unknown) => OpenApiPage} validatePage - Validates a page's shape (throws).
+ * @param {(entry: unknown) => T} validateEntry - Validates one entry (throws).
+ * @param {(item: T) => string} idOf - The id to deduplicate by.
+ * @param {PagedWalkOptions} options - Page size, page cap, extra query, labels.
+ * @returns {Promise<PagedList<T>>} The items, in response order, and whether
+ *   the listing may be incomplete (`truncated`).
+ */
+export async function walkPagedListing<T>(
+  fetchPage: (query: OpenApiQuery, page: number) => Promise<unknown>,
+  validatePage: (result: unknown) => OpenApiPage,
+  validateEntry: (entry: unknown) => T,
+  idOf: (item: T) => string,
+  options: PagedWalkOptions
+): Promise<PagedList<T>> {
+  const { pageSize, maxPages, what } = options;
+  const items: T[] = [];
+  const seenIds = new Set<string>();
+  let fetchedEntries = 0; // Raw entries fetched (pre-deduplication)
+  let pagesFetched = 0;
+  // The first page's sane `totalRows` (null: none); every later page must
+  // report the same value
+  let expectedTotal: number | null = null;
+  let incomplete: ListIncompleteReason | null = null;
+
+  for (let page = 1; ; page++) {
+    const query: OpenApiQuery = { page, pageSize };
+    for (const [name, value] of Object.entries(options.query ?? {})) {
+      if (name !== 'page' && name !== 'pageSize') {
+        query[name] = value;
+      }
+    }
+    const result = await fetchPage(query, page);
+    const pageData = validatePage(result);
+    options.onPage?.(result, page);
+    pagesFetched = page;
+    let newItems = 0;
+    for (const entry of pageData.data) {
+      const item = validateEntry(entry);
+      const id = idOf(item);
+      if (seenIds.has(id)) {
+        continue; // Deduplicate: keep the first occurrence of each id
+      }
+      seenIds.add(id);
+      items.push(item);
+      newItems++;
+    } // End of the loop that validates the page's entries
+    fetchedEntries += pageData.data.length;
+
+    // Completeness (see the JSDoc): the first page decides whether the
+    // walk follows `totalRows` or the short-page rule
+    if (page === 1) {
+      expectedTotal = pageData.totalRows;
+    } else if (pageData.totalRows !== expectedTotal) {
+      incomplete = 'totalChanged';
+      break;
+    }
+    const totalReached = expectedTotal !== null && fetchedEntries >= expectedTotal;
+    if (pageData.data.length === 0) {
+      // The end of a short-page walk, or of an empty listing; before the
+      // reported total is reached, a gap
+      if (expectedTotal !== null && !totalReached) {
+        incomplete = 'emptyPage';
+      }
+      break;
+    }
+    if (newItems === 0) {
+      incomplete = 'noProgress';
+      break;
+    }
+    if (expectedTotal !== null ? totalReached : pageData.data.length < pageSize) {
+      break;
+    }
+    if (page >= maxPages) {
+      incomplete = 'pageCap';
+      break;
+    }
+  } // End of the loop that walks the listing's pages
+
+  if (incomplete !== null) {
+    const total = expectedTotal === null ? 'no totalRows' : `totalRows ${expectedTotal}`;
+    console.warn(`${options.label} (${what}) incomplete: ${incomplete} after ${pagesFetched} pages (${fetchedEntries} entries fetched, ${total})`);
+  }
+  return { items, truncated: incomplete !== null };
+} // End of function walkPagedListing()
+
+/**
  * Parsed Open API response envelope (`{errorCode, msg, result}`).
  */
 interface OpenApiEnvelope {
@@ -598,23 +782,37 @@ interface OpenApiEnvelope {
 }
 
 /**
- * Outcome of one authorized call: its result, or a token rejection the
- * caller may answer with one re-acquire.
+ * Outcome of one authorized call: its result, a token rejection the caller
+ * may answer with one re-acquire, or (cloud route only) a rate-limit answer
+ * the caller retries after the throttle's backoff.
  */
-type CallOutcome = { kind: 'ok'; result: unknown } | { kind: 'tokenRejected'; diagnostic: string };
+type CallOutcome =
+  | { kind: 'ok'; result: unknown }
+  | { kind: 'tokenRejected'; diagnostic: string }
+  | { kind: 'rateLimited'; httpStatus?: number; controllerErrorCode?: number };
 
 /**
  * Client for the controller's Open API (see the header). One instance per
- * controller + Open API application; close() makes it unusable.
+ * controller + Open API application (local route) or per cloud controller
+ * (cloud route); close() makes it unusable.
  */
 export class OpenApiClient {
+  readonly route: 'local' | 'cloud';
+  // Local: the controller URL. Cloud: `{serverHost}/v1/cloudaccess/{deviceId}`
   readonly baseUrl: string;
   readonly omadacId: string;
+  // Local: the Open API application's Client ID. Cloud: '' (the cloud
+  // credential's Client ID belongs to CloudAccountClient)
   readonly clientId: string;
   // Secrets and state: private fields, never enumerable or serializable
   readonly #clientSecret: string;
   readonly #transport: OmadaTransport;
   readonly #now: () => number;
+  // Cloud route only: the account's token provider and the credential's throttle
+  readonly #tokenProvider: CloudTokenProvider | null;
+  readonly #throttle: CloudRequestThrottle | null;
+  // The errorCodes that mean "token rejected" on this route
+  readonly #tokenRejectedCodes: ReadonlySet<number>;
   #token: AccessTokenState | null = null;
   // The single in-flight token acquisition shared by every request
   #acquiring: Promise<AccessTokenState> | null = null;
@@ -625,12 +823,38 @@ export class OpenApiClient {
 
   /**
    * Creates a client. Nothing is sent until the first request.
-   * @param {OpenApiClientOptions} options - Base URL, controller id,
-   *   credentials, transport and (tests) clock.
-   * @throws {Error} When a required option is missing (the message never
-   *   includes a credential).
+   * @param {OpenApiClientOptions | CloudOpenApiClientOptions} options - Local:
+   *   base URL, controller id, credentials, transport and (tests) clock.
+   *   Cloud: the organization's target, the token provider, the throttle and
+   *   the transport.
+   * @throws {Error} When a required option is missing or, on the cloud
+   *   route, the target's serverHost origin is not allowlisted (nothing is
+   *   sent then; the message never includes a credential).
    */
-  constructor(options: OpenApiClientOptions) {
+  constructor(options: OpenApiClientOptions | CloudOpenApiClientOptions) {
+    if (options.route === 'cloud') {
+      const target = options.target;
+      if (target === null || typeof target !== 'object' || allowlistedCloudOrigin(target.serverOrigin) !== target.serverOrigin) {
+        throw new Error('OpenApiClient cloud route needs an allowlisted TP-Link cloud serverHost');
+      }
+      if (!isOmadacId(target.omadacId) || !isDeviceId(target.deviceId)) {
+        throw new Error('OpenApiClient cloud route needs the organization\'s omadacId and deviceId');
+      }
+      if (!options.tokenProvider || !(options.throttle instanceof CloudRequestThrottle)) {
+        throw new Error('OpenApiClient cloud route needs a token provider and a throttle');
+      }
+      this.route = 'cloud';
+      this.baseUrl = `${target.serverOrigin}/v1/cloudaccess/${encodePathSegment(target.deviceId)}`;
+      this.omadacId = target.omadacId;
+      this.clientId = '';
+      this.#clientSecret = '';
+      this.#transport = options.transport;
+      this.#now = Date.now;
+      this.#tokenProvider = options.tokenProvider;
+      this.#throttle = options.throttle;
+      this.#tokenRejectedCodes = CLOUD_TOKEN_REJECTED_ERROR_CODES;
+      return;
+    } // End of the cloud-route branch
     if (typeof options.baseUrl !== 'string' || options.baseUrl === '') {
       throw new Error('OpenApiClient needs a base URL');
     }
@@ -643,12 +867,16 @@ export class OpenApiClient {
     if (typeof options.clientSecret !== 'string' || options.clientSecret === '') {
       throw new Error('OpenApiClient needs a Client Secret');
     }
+    this.route = 'local';
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.omadacId = options.omadacId;
     this.clientId = options.clientId;
     this.#clientSecret = options.clientSecret;
     this.#transport = options.transport;
     this.#now = options.now ?? Date.now;
+    this.#tokenProvider = null;
+    this.#throttle = null;
+    this.#tokenRejectedCodes = TOKEN_REJECTED_ERROR_CODES;
   } // End of constructor
 
   /**
@@ -715,7 +943,7 @@ export class OpenApiClient {
     const secrets = (options.secrets ?? []).filter((secret) => typeof secret === 'string' && secret !== '');
 
     const firstToken = await this.#currentToken();
-    const first = await this.#call(method, url, firstToken, body, extraHeaders, secrets);
+    const first = await this.#callWithBackoff(method, url, firstToken, body, extraHeaders, secrets);
     this.#assertOpen();
     if (first.kind === 'ok') {
       return first.result;
@@ -724,7 +952,7 @@ export class OpenApiClient {
     // The token was rejected: re-acquire once (shared with every concurrent
     // request) and retry once; a second rejection is final
     const secondToken = await this.#tokenAfterRejection(firstToken);
-    const second = await this.#call(method, url, secondToken, body, extraHeaders, secrets);
+    const second = await this.#callWithBackoff(method, url, secondToken, body, extraHeaders, secrets);
     this.#assertOpen();
     if (second.kind === 'ok') {
       return second.result;
@@ -733,27 +961,13 @@ export class OpenApiClient {
   } // End of function request()
 
   /**
-   * Walks every page of a paged Open API listing (`page` from 1, `pageSize`),
-   * validating each entry and deduplicating by id (the first occurrence is
-   * kept). `truncated` is false only when the walk PROVED the listing
-   * complete; otherwise it is true and the reason is logged (codes only) —
-   * never a silently shorter list:
-   * - a sane `totalRows` on the first page (see validateOpenApiPage()): the
-   *   walk goes on until the raw entries fetched (duplicates included, so a
-   *   repeated entry never costs an extra request) reach it, whatever the
-   *   page lengths — a controller that caps the page size below the
-   *   requested one is still read completely. Incomplete: an empty page
-   *   before the total is reached ('emptyPage');
-   * - no sane `totalRows` on the first page: a short (or empty) page ends
-   *   the walk, as before;
-   * - either way, incomplete: a page whose `totalRows` differs from the first
-   *   page's — absent or insane vs a sane one included — ('totalChanged': the
-   *   listing changed during the walk, or the controller contradicts
-   *   itself); a non-empty page that adds no new id ('noProgress': it only
-   *   repeats entries, e.g. a controller ignoring `page`); still unfinished at
-   *   the page cap ('pageCap').
-   * Every iteration either ends the walk or moves to the next page, and the
-   * page cap ends it at the latest: at most `maxPages` requests, never a loop.
+   * Walks every page of a paged Open API listing (`page` from 1, `pageSize`)
+   * with walkPagedListing(): each entry validated, deduplicated by id (the
+   * first occurrence is kept), `truncated` false only when the walk PROVED
+   * the listing complete (the completeness rules — a sane `totalRows`
+   * followed past short pages; 'emptyPage', 'totalChanged', 'noProgress',
+   * 'pageCap' — are documented there). At most `maxPages` requests, never a
+   * loop; once the client is closed, no page is used and no next one asked.
    * @param {OpenApiVersion} version - API version of this endpoint (explicit).
    * @param {readonly string[]} segments - Path segments after the controller id.
    * @param {(entry: unknown) => T} validateEntry - Validates one entry (throws OpenApiError).
@@ -779,76 +993,18 @@ export class OpenApiClient {
       throw new Error('Open API page cap must be a positive integer');
     }
     const what = segments[segments.length - 1] ?? 'list';
-    const items: T[] = [];
-    const seenIds = new Set<string>();
-    let fetchedEntries = 0; // Raw entries fetched (pre-deduplication)
-    let pagesFetched = 0;
-    // The first page's sane `totalRows` (null: none); every later page must
-    // report the same value
-    let expectedTotal: number | null = null;
-    let incomplete: ListIncompleteReason | null = null;
-
-    for (let page = 1; ; page++) {
-      const query: OpenApiQuery = { page, pageSize };
-      for (const [name, value] of Object.entries(options.query ?? {})) {
-        if (name !== 'page' && name !== 'pageSize') {
-          query[name] = value;
-        }
-      }
-      const result = await this.request('GET', version, segments, { query });
-      // Closed meanwhile: neither this page nor a next one is used
-      this.#assertOpen();
-      const pageData = validateOpenApiPage(result, what);
-      options.onPage?.(result, page);
-      pagesFetched = page;
-      let newItems = 0;
-      for (const entry of pageData.data) {
-        const item = validateEntry(entry);
-        const id = idOf(item);
-        if (seenIds.has(id)) {
-          continue; // Deduplicate: keep the first occurrence of each id
-        }
-        seenIds.add(id);
-        items.push(item);
-        newItems++;
-      } // End of the loop that validates the page's entries
-      fetchedEntries += pageData.data.length;
-
-      // Completeness (see the JSDoc): the first page decides whether the
-      // walk follows `totalRows` or the short-page rule
-      if (page === 1) {
-        expectedTotal = pageData.totalRows;
-      } else if (pageData.totalRows !== expectedTotal) {
-        incomplete = 'totalChanged';
-        break;
-      }
-      const totalReached = expectedTotal !== null && fetchedEntries >= expectedTotal;
-      if (pageData.data.length === 0) {
-        // The end of a short-page walk, or of an empty listing; before the
-        // reported total is reached, a gap
-        if (expectedTotal !== null && !totalReached) {
-          incomplete = 'emptyPage';
-        }
-        break;
-      }
-      if (newItems === 0) {
-        incomplete = 'noProgress';
-        break;
-      }
-      if (expectedTotal !== null ? totalReached : pageData.data.length < pageSize) {
-        break;
-      }
-      if (page >= maxPages) {
-        incomplete = 'pageCap';
-        break;
-      }
-    } // End of the loop that walks the listing's pages
-
-    if (incomplete !== null) {
-      const total = expectedTotal === null ? 'no totalRows' : `totalRows ${expectedTotal}`;
-      console.warn(`Open API listing (${what}) incomplete: ${incomplete} after ${pagesFetched} pages (${fetchedEntries} entries fetched, ${total})`);
-    }
-    return { items, truncated: incomplete !== null };
+    return walkPagedListing(
+      async (query) => {
+        const result = await this.request('GET', version, segments, { query });
+        // Closed meanwhile: neither this page nor a next one is used
+        this.#assertOpen();
+        return result;
+      },
+      (result) => validateOpenApiPage(result, what),
+      validateEntry,
+      idOf,
+      { pageSize, maxPages, query: options.query, what, label: 'Open API listing', onPage: options.onPage }
+    );
   } // End of function listAll()
 
   /**
@@ -1172,10 +1328,15 @@ export class OpenApiClient {
 
   /**
    * Returns a usable access token: the cached one while it is not (about to
-   * be) expired, otherwise a fresh one from the shared acquisition.
+   * be) expired, otherwise a fresh one from the shared acquisition. On the
+   * cloud route: the token provider's account token.
    * @returns {Promise<string>} The access token.
    */
   async #currentToken(): Promise<string> {
+    if (this.#tokenProvider !== null) {
+      const provider = this.#tokenProvider;
+      return this.#providerToken(() => provider.getAccessToken());
+    }
     const token = this.#token;
     if (token !== null && this.#now() < token.renewAt) {
       return token.accessToken;
@@ -1184,14 +1345,52 @@ export class OpenApiClient {
   }
 
   /**
+   * Cloud route: runs one token-provider call and checks its answer; a
+   * CloudAccountError becomes the OpenApiError of the same meaning
+   * (CLOUD_TOKEN_ERROR_CODES), anything else 'networkError' with a scrubbed
+   * message. The token is remembered for scrubbing.
+   * @param {() => Promise<string>} getToken - The provider call.
+   * @returns {Promise<string>} The token.
+   * @throws {OpenApiError} On any failure, or 'clientClosed' once closed.
+   */
+  async #providerToken(getToken: () => Promise<string>): Promise<string> {
+    this.#assertOpen();
+    let token: string;
+    try {
+      token = await getToken();
+    } catch (error) {
+      this.#assertOpen();
+      if (error instanceof CloudAccountError) {
+        throw new OpenApiError(CLOUD_TOKEN_ERROR_CODES[error.code], `cloud token: ${error.diagnostic}`, {
+          httpStatus: error.httpStatus ?? undefined,
+          controllerErrorCode: error.apiErrorCode ?? undefined
+        });
+      }
+      throw new OpenApiError('networkError', this.#scrub(`cloud token: ${error instanceof Error ? error.message : String(error)}`));
+    }
+    this.#assertOpen();
+    if (typeof token !== 'string' || token.length === 0 || token.length > MAX_TOKEN_LENGTH || !TOKEN_REGEX.test(token)) {
+      throw malformed('cloud token');
+    }
+    this.#rememberToken(token);
+    return token;
+  } // End of function #providerToken()
+
+  /**
    * Returns the token to retry with after `rejectedToken` was rejected: a
    * newer token another request already obtained, else the result of the
-   * shared acquisition (started here, or joined when one is in flight).
+   * shared acquisition (started here, or joined when one is in flight). On
+   * the cloud route the token provider decides (CloudAccountClient: the same
+   * rules over the account token).
    * @param {string} rejectedToken - The token the controller rejected.
    * @returns {Promise<string>} The token for the single retry.
    */
   async #tokenAfterRejection(rejectedToken: string): Promise<string> {
     this.#assertOpen();
+    if (this.#tokenProvider !== null) {
+      const provider = this.#tokenProvider;
+      return this.#providerToken(() => provider.renewAccessToken(rejectedToken));
+    }
     const token = this.#token;
     if (token !== null && token.accessToken !== rejectedToken && this.#now() < token.renewAt) {
       return token.accessToken;
@@ -1257,6 +1456,48 @@ export class OpenApiClient {
   } // End of function #acquire()
 
   /**
+   * Sends one authorized call through #call(); on the cloud route a
+   * rate-limit answer holds the credential's throttle back
+   * (CloudRequestThrottle.rateLimited()) and the call is sent again, at most
+   * CLOUD_RATE_LIMIT_MAX_RETRIES times, then fails as 'rateLimited'. Any other
+   * answer resets the backoff. The local route never sees a rate-limit
+   * outcome, so it sends exactly once.
+   * @param {OpenApiMethod} method - HTTP method.
+   * @param {string} url - Absolute URL.
+   * @param {string} token - The access token to send.
+   * @param {string | undefined} body - Serialized JSON body.
+   * @param {Record<string, string>} extraHeaders - Checked extra headers.
+   * @param {readonly string[]} secrets - The call's own secrets (scrubbed by value).
+   * @returns {Promise<CallOutcome>} The result or a token rejection.
+   * @throws {OpenApiError} 'rateLimited', or what #call() throws.
+   */
+  async #callWithBackoff(
+    method: OpenApiMethod,
+    url: string,
+    token: string,
+    body: string | undefined,
+    extraHeaders: Record<string, string>,
+    secrets: readonly string[]
+  ): Promise<Exclude<CallOutcome, { kind: 'rateLimited' }>> {
+    for (let attempt = 0; ; attempt++) {
+      const outcome = await this.#call(method, url, token, body, extraHeaders, secrets);
+      this.#assertOpen();
+      if (outcome.kind !== 'rateLimited') {
+        this.#throttle?.succeeded();
+        return outcome;
+      }
+      if (this.#throttle === null || attempt >= CLOUD_RATE_LIMIT_MAX_RETRIES) {
+        const status = outcome.httpStatus !== undefined ? `HTTP ${outcome.httpStatus}` : `errorCode ${outcome.controllerErrorCode}`;
+        throw new OpenApiError('rateLimited', `${method} request rate-limited (${status}) after ${attempt} retries`, {
+          httpStatus: outcome.httpStatus,
+          controllerErrorCode: outcome.controllerErrorCode
+        });
+      }
+      this.#throttle.rateLimited();
+    } // End of the loop that retries a rate-limited call
+  } // End of function #callWithBackoff()
+
+  /**
    * Sends one authorized call and classifies the response.
    * @param {OpenApiMethod} method - HTTP method.
    * @param {string} url - Absolute URL.
@@ -1289,12 +1530,19 @@ export class OpenApiClient {
     if (response.statusCode === 401) {
       return { kind: 'tokenRejected', diagnostic: 'HTTP 401' };
     }
+    const cloud = this.route === 'cloud';
+    if (cloud && response.statusCode === 429) {
+      return { kind: 'rateLimited', httpStatus: 429 };
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw this.#httpError(response, secrets);
     }
     const envelope = this.#parseEnvelope(response.body);
-    if (TOKEN_REJECTED_ERROR_CODES.has(envelope.errorCode)) {
+    if (this.#tokenRejectedCodes.has(envelope.errorCode)) {
       return { kind: 'tokenRejected', diagnostic: `errorCode ${envelope.errorCode}` };
+    }
+    if (cloud && envelope.errorCode === CLOUD_RATE_LIMIT_ERROR_CODE) {
+      return { kind: 'rateLimited', controllerErrorCode: envelope.errorCode };
     }
     if (envelope.errorCode !== 0) {
       throw new OpenApiError('apiError', this.#envelopeDiagnostic(`${method} request failed`, envelope, secrets), {
@@ -1316,6 +1564,11 @@ export class OpenApiClient {
    * @throws {OpenApiError} 'timeout', 'networkError' or 'clientClosed'.
    */
   async #send(request: OmadaHttpRequest, secrets: readonly string[] = []): Promise<OmadaHttpResponse> {
+    if (this.#throttle !== null) {
+      // Cloud route: one slot of the credential's shared rate limit per request
+      await this.#throttle.acquire();
+      this.#assertOpen();
+    }
     try {
       // The Open API is token-authenticated: response cookies are ignored
       return await this.#transport.send(request, () => undefined);
@@ -1410,6 +1663,9 @@ export class OpenApiClient {
    * @param {string} accessToken - The token.
    */
   #rememberToken(accessToken: string): void {
+    if (this.#knownTokens.includes(accessToken)) {
+      return; // The cloud route hands the same account token out repeatedly
+    }
     this.#knownTokens.push(accessToken);
     if (this.#knownTokens.length > MAX_REMEMBERED_TOKENS) {
       this.#knownTokens.shift();

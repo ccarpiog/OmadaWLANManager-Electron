@@ -28,6 +28,16 @@ import type { ConfigSavePayload } from '../../src/shared/types';
 const URL_A = 'https://192.168.1.130:8043';
 const URL_B = 'https://192.168.1.140:8043';
 const FINGERPRINT = Array.from({ length: 32 }, () => 'C3').join(':');
+// The cloud-access flags of a config without cloud access (the cloud rules
+// are tested in config-cloud.test.ts)
+const NO_CLOUD_ACCESS = {
+  region: 'euw',
+  clientId: '',
+  hasCloudSecret: false,
+  cloudSecretSessionOnly: false,
+  canPersistCloudSecret: true,
+  activeController: 'local'
+};
 
 /**
  * A reversible fake SecretBox: "encrypts" as base64 of a marked string.
@@ -233,7 +243,8 @@ describe('toRendererConfig', () => {
       clientId: 'client-A',
       hasClientSecret: true,
       clientSecretSessionOnly: false,
-      canPersistClientSecret: true
+      canPersistClientSecret: true,
+      cloudAccess: NO_CLOUD_ACCESS
     });
     const serialized = JSON.stringify(view);
     for (const secret of [
@@ -264,7 +275,8 @@ describe('toRendererConfig', () => {
       clientId: '',
       hasClientSecret: false,
       clientSecretSessionOnly: false,
-      canPersistClientSecret: true
+      canPersistClientSecret: true,
+      cloudAccess: NO_CLOUD_ACCESS
     });
   }); // End of test "a pin for another origin is not reported; an undecryptabl..."
 }); // End of the describe block for toRendererConfig

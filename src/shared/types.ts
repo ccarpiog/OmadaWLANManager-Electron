@@ -19,9 +19,32 @@ export interface ManagementAccessStatus {
   canPersistClientSecret: boolean;
 }
 
-// Sanitized configuration exposed to the renderer. The password and the Client
-// Secret never leave the main process — the renderer only learns whether they
-// are stored (plus the management-access flags above).
+// TP-Link cloud account regions (Account Level Open API base URL:
+// `https://<region>1-omada-northbound.tplinkcloud.com`, src/main/cloud-hosts.ts)
+export type CloudRegion = 'aps' | 'euw' | 'use';
+
+// The optional TP-Link cloud access (inbox item I-1, docs/omada-cloud-openapi.md)
+// as the renderer may see it — never the cloud Client Secret or a token.
+// `region` is the effective region ('euw' when none is stored); `clientId` the
+// stored cloud Client ID ('' when none). `hasCloudSecret` is true only for a
+// usable secret: a safeStorage blob that decrypts, or one kept in main-process
+// memory for this session only (`cloudSecretSessionOnly`, when secure storage
+// is unavailable). `canPersistCloudSecret` tells whether a newly typed secret
+// can be stored encrypted. `activeController` is 'local' (the configured
+// controller, reached directly) or the omadacId of a cloud controller.
+export interface CloudAccessStatus {
+  region: CloudRegion;
+  clientId: string;
+  hasCloudSecret: boolean;
+  cloudSecretSessionOnly: boolean;
+  canPersistCloudSecret: boolean;
+  activeController: string;
+}
+
+// Sanitized configuration exposed to the renderer. The password, the Client
+// Secret and the cloud Client Secret never leave the main process — the
+// renderer only learns whether they are stored (plus the management-access
+// flags above and the cloud-access flags in `cloudAccess`).
 // `pinnedFingerprint` is the SHA-256 fingerprint of the trusted controller
 // certificate (public data, shown in Settings), or null when no certificate is
 // pinned for the configured controller.
@@ -31,6 +54,7 @@ export interface RendererConfig extends ManagementAccessStatus {
   language: Language;
   hasPassword: boolean;
   pinnedFingerprint: string | null;
+  cloudAccess: CloudAccessStatus;
 }
 
 // Payload the renderer sends when saving settings. `password` is present only
@@ -45,6 +69,18 @@ export interface RendererConfig extends ManagementAccessStatus {
 //   Client ID — a new Client ID or URL requires a typed secret;
 // - `removeManagementAccess`: removes the Client ID and the Client Secret
 //   (stored and session-only); sent alone, never with the two fields above.
+// TP-Link cloud access (all optional; absent = leave it as stored — the cloud
+// account is not tied to the controller URL, so a URL change keeps it):
+// - `cloudRegion`: the account's region; a different region drops the stored
+//   cloud secret (a typed one must come with it);
+// - `cloudClientId`: the cloud Client ID (trimmed and validated by main);
+// - `cloudClientSecret`: present only when typed (needs `cloudClientId`);
+//   without it, the stored secret is kept only for the same region AND the
+//   same cloud Client ID;
+// - `removeCloudAccess`: deletes every cloud field (region, Client ID, secret
+//   — stored and session-only —, the per-controller site choices) and makes
+//   the local controller the active one; sent alone, never with the three
+//   fields above.
 export interface ConfigSavePayload {
   url: string;
   username: string;
@@ -53,6 +89,10 @@ export interface ConfigSavePayload {
   clientId?: string;
   clientSecret?: string;
   removeManagementAccess?: true;
+  cloudRegion?: CloudRegion;
+  cloudClientId?: string;
+  cloudClientSecret?: string;
+  removeCloudAccess?: true;
 }
 
 // Error codes a config save can fail with; the renderer maps them to i18n
@@ -60,26 +100,33 @@ export interface ConfigSavePayload {
 // 'clientIdRequired': a Client Secret was sent without a Client ID;
 // 'clientSecretRequired': a new Client ID, or a Client ID for a new controller
 // URL, came without a typed Client Secret (an old secret is never reused).
+// The cloud-access codes mirror them: 'invalidCloudClientId',
+// 'cloudClientIdRequired', 'cloudClientSecretRequired' (a new cloud Client ID
+// or a new region came without a typed cloud secret).
 export type ConfigSaveError =
   | 'invalidUrl'
   | 'passwordRequired'
   | 'saveFailed'
   | 'invalidClientId'
   | 'clientIdRequired'
-  | 'clientSecretRequired';
+  | 'clientSecretRequired'
+  | 'invalidCloudClientId'
+  | 'cloudClientIdRequired'
+  | 'cloudClientSecretRequired';
 
 // Result of a config save. `connectionReset` is true when the save changed the
 // controller URL: the main process then invalidated every in-flight connect
 // attempt, discarded any pending site selection / certificate trust decision
 // and logged out the installed controller, so the renderer must drop its
 // connected UI (it reconnects on its own after a successful save). On success,
-// `managementAccess` reports the management-access state after the save
-// (flags only, never the secret).
+// `managementAccess` and `cloudAccess` report the management-access and the
+// cloud-access state after the save (flags only, never a secret).
 export interface ConfigSaveResult {
   success: boolean;
   error?: ConfigSaveError;
   connectionReset?: boolean;
   managementAccess?: ManagementAccessStatus;
+  cloudAccess?: CloudAccessStatus;
 }
 
 // Access Point data from Omada API. `clientNum` (optional) is the number of
@@ -655,6 +702,73 @@ export interface NetworkBindingsResult {
   capacityProblems?: NetworkCapacityProblem[];
 }
 
+// Why a controller of the TP-Link cloud account cannot be connected (main
+// decides from the organization list; the first that applies, in this order —
+// permanent reasons before the transient 'offline', so 'offline' means "would
+// be connectable once online"):
+// 'notController' — the organization's deviceType is not an Omada controller
+//   type (`SMB.OMADA.*CONTROLLER`);
+// 'incompleteEntry' — the entry lacks a usable deviceId or deviceType;
+// 'unsupportedHost' — its serverHost is not one of the allowlisted TP-Link
+//   cloud API hosts (the app never sends the token anywhere else);
+// 'versionUnknown' — orgVersion is missing or not a dotted version;
+// 'versionTooOld' — orgVersion is below 6.3;
+// 'offline' — the organization is not online (the Open API needs it online).
+export type CloudControllerReason = 'notController' | 'incompleteEntry' | 'unsupportedHost' | 'versionUnknown' | 'versionTooOld' | 'offline';
+
+// One controller of the TP-Link cloud account as the renderer sees it. The
+// organization's deviceId, serverHost and every token stay in main.
+// `version` is the normalized orgVersion (null when not reported sanely);
+// `connectable` is true exactly when `reason` is null.
+export interface CloudController {
+  omadacId: string;
+  name: string;
+  online: boolean;
+  version: string | null;
+  connectable: boolean;
+  reason: CloudControllerReason | null;
+}
+
+// Why a cloud-access call (cloud:test / cloud:controllers) failed:
+// 'notConfigured' — no saved cloud Client ID and secret (the renderer asks to
+//   save first when its form holds unsaved cloud changes: main only ever uses
+//   the saved credentials);
+// 'superseded' — the cloud credentials were saved or removed while it ran;
+// 'credentialInvalid' — TP-Link refused the credential (invalid, expired,
+//   deleted or disabled: -52602, -90106, -90112, -90113, or HTTP 401 / 403 on
+//   the token request);
+// 'tokenRejected' — a fresh token was rejected again;
+// 'rateLimited' — still rate-limited (-7132 / HTTP 429) after the backoff;
+// 'timeout' / 'networkError' — no (complete) answer;
+// 'malformedResponse' — an answer of an unexpected shape;
+// 'httpError' — another non-2xx status;
+// 'apiError' — another errorCode (`diagnostic` carries it and the redacted
+//   message).
+export type CloudAccessError =
+  | 'notConfigured'
+  | 'superseded'
+  | 'credentialInvalid'
+  | 'tokenRejected'
+  | 'rateLimited'
+  | 'timeout'
+  | 'networkError'
+  | 'malformedResponse'
+  | 'httpError'
+  | 'apiError';
+
+// Result of cloud:test and cloud:controllers. On success, `controllers` lists
+// the account's organizations (deduplicated by omadacId, in TP-Link's order)
+// and `truncated` tells that the list may be incomplete (the page cap, or a
+// walk that could not prove completeness). `diagnostic` is built by main from
+// codes (plus TP-Link's redacted message for 'apiError'), never a secret.
+export interface CloudAccessResult {
+  success: boolean;
+  error?: CloudAccessError;
+  diagnostic?: string;
+  controllers?: CloudController[];
+  truncated?: boolean;
+}
+
 // Data loaded from controller
 export interface ControllerData {
   accessPoints: AccessPoint[];
@@ -691,6 +805,8 @@ export interface OmadaAPI {
   setNetworkEnabled(request: NetworkEnableRequest): Promise<NetworkActionResult>;
   deleteNetwork(request: NetworkDeleteRequest): Promise<NetworkActionResult>;
   updateNetworkBindings(request: NetworkBindingsRequest): Promise<NetworkBindingsResult>;
+  testCloudAccess(): Promise<CloudAccessResult>;
+  getCloudControllers(): Promise<CloudAccessResult>;
 }
 
 // IPC channel names (type-safe)
@@ -741,6 +857,13 @@ export const IPC_CHANNELS = {
   // on only): replace the set of AP groups it is broadcast on, checked in main
   // on fresh data (never for an "All access points" or unknown-scope network)
   MANAGEMENT_NETWORK_BINDINGS: 'management:network-bindings',
+
+  // TP-Link cloud account (Account Level Open API, saved credentials only):
+  // "Test cloud access" (a fresh token plus the organization list) and the
+  // account's controllers (reusing a valid token). No argument: no host,
+  // deviceId, serverHost or URL ever comes from the renderer
+  CLOUD_TEST: 'cloud:test',
+  CLOUD_CONTROLLERS: 'cloud:controllers',
 } as const;
 
 // Type for IPC channel values

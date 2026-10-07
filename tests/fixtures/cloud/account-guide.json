@@ -1,0 +1,85 @@
+{
+  "description": "TP-Link Account Level Open API examples, copied from the public 'Open API Access Guide' (omada-northbound-docs-beta.tplinkcloud.com, account-level-access-guide, read 2026-10-07) and the two live answers recorded in autoclaude/processed/10-tplink-cloud-controllers.md (EUW, dummy credentials, 2026-10-07). Used by the cloud unit tests (CloudAccountClient, the Open API cloud route, CloudAccessService). No test sends anything to a tplinkcloud.com host: the fake transport serves these bodies.",
+  "tokenSuccess": {
+    "errorCode": 0,
+    "msg": "Open API Get Access Token successfully.",
+    "result": {
+      "accessToken": "a1-AT-AucoLyP4jpuCwriaOQpGvV2pdkG7YDDB",
+      "tokenType": "bearer",
+      "expiresIn": 7200,
+      "refreshToken": "RT-gvPUG4oKc5SB6aDcsDfpE1KrohhjVZbY"
+    }
+  },
+  "tokenRefreshExample": {
+    "errorCode": 0,
+    "msg": "Open API Refresh Token successfully.",
+    "result": {
+      "accessToken": "a1-AT-w9veJNQlaK8dH08qEQZCTas6y70IRAii",
+      "tokenType": "bearer",
+      "expiresIn": 7001,
+      "refreshToken": "RT-AhzwqCenDCZ84qpBHnZhYs3j2RGw9q8E"
+    }
+  },
+  "organizationsPage": {
+    "errorCode": 0,
+    "msg": "OK",
+    "result": {
+      "totalRows": 1,
+      "currentPage": 1,
+      "currentSize": 10,
+      "data": [
+        {
+          "orgName": "Omada Controller_9E81B9",
+          "online": true,
+          "deviceId": "7B069516D97677D0BCA8E643F334A1A3F182A1",
+          "omadacId": "5ffc0460d2816b0d09b531cd27c106a8",
+          "orgVersion": "6.2.0.9",
+          "deviceType": "SMB.OMADA.SOFTWARECONTROLLER",
+          "serverHost": "https://aps1-omada-northbound.tplinkcloud.com"
+        }
+      ]
+    }
+  },
+  "cloudAccessUsersPage": {
+    "errorCode": 0,
+    "msg": "Success.",
+    "result": {
+      "totalRows": 1,
+      "currentPage": 1,
+      "currentSize": 10,
+      "data": [{ "id": "", "type": 0, "roleId": "", "roleName": "", "name": "", "email": "", "omadacId": "" }]
+    }
+  },
+  "liveCredentialExpired": {
+    "errorCode": -52602,
+    "msg": "This Open API Application has expired or does not exist."
+  },
+  "liveBadBearer": {
+    "status": 401,
+    "body": { "errorCode": -44116, "msg": "Open API authorized failed, please check whether the input parameters are legal" }
+  },
+  "rateLimited": {
+    "errorCode": -7132,
+    "msg": "Our server is receiving too many requests now. Please try again later."
+  },
+  "tokenExpired": {
+    "errorCode": -44112,
+    "msg": "The access token has expired. Please re-initiate the refreshToken process to obtain the access token"
+  },
+  "clientInvalid": {
+    "errorCode": -90106,
+    "msg": "The Client Id Or Client Secret is Invalid"
+  },
+  "applicationDisabled": {
+    "errorCode": -90113,
+    "msg": "This Open API Application has been disabled"
+  },
+  "tooManyAuthentications": {
+    "errorCode": -90114,
+    "msg": "This Open API Application has exceeded the maximum allowed authentications"
+  },
+  "noOrganizationPermission": {
+    "errorCode": -44121,
+    "msg": "This OpenAPI AccessToken has no permission to access this organization"
+  }
+}

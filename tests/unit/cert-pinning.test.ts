@@ -139,6 +139,22 @@ describe('decideCertificate', () => {
     assert.deepEqual(decide({ configuredUrl: 'https://[::1]:8043', hostname: '[::1]' }).action, 'reject-first-use');
     assert.deepEqual(decide({ configuredUrl: 'https://Omada.Example.com', hostname: 'omada.example.com' }).action, 'reject-first-use');
   });
+
+  test('a TP-Link cloud API host keeps Chromium\'s verdict even when it is the configured host with a matching pin (inbox I-1a)', () => {
+    for (const host of ['euw1-omada-northbound.tplinkcloud.com', 'APS1-omada-northbound.tplinkcloud.com', 'use1-omada-northbound.tplinkcloud.com']) {
+      const configuredUrl = `https://${host.toLowerCase()}`;
+      const pin = pinOf(FINGERPRINT_A, configuredUrl);
+      assert.deepEqual(decide({ hostname: host, configuredUrl, pin }), { action: 'default' }, host);
+      assert.deepEqual(decide({ hostname: host, configuredUrl, pin: null }), { action: 'default' }, 'no first-use dialog either');
+      assert.equal(
+        decideCertificateError({ url: `${configuredUrl}/v1/organizations`, error: SELF_SIGNED, fingerprint: FINGERPRINT_A, configuredUrl, pin }).action,
+        'default',
+        host
+      );
+    }
+    // A look-alike is just another host: still a TOFU case when configured
+    assert.equal(decide({ hostname: 'euw1-omada-northbound.tplinkcloud.com.evil.example', configuredUrl: 'https://euw1-omada-northbound.tplinkcloud.com.evil.example' }).action, 'reject-first-use');
+  }); // End of test "a TP-Link cloud API host keeps Chromium's verdict..."
 }); // End of the describe block for decideCertificate
 
 describe('decideCertificateError (webContents certificate-error)', () => {

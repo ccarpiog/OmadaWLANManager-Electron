@@ -20,8 +20,15 @@
 // The verify proc only learns the hostname (no port), so the pin is what
 // binds the bypass to one certificate: another port on the same host that
 // presents a different certificate is rejected as a mismatch.
+// - A TP-Link cloud API host (isCloudApiHostname(), cloud-hosts.ts) always
+//   keeps Chromium's verdict, even when it is (absurdly) the configured
+//   controller's hostname: no pin can ever accept a certificate for it. The
+//   cloud requests use their own session without any verify proc
+//   (cloud-transport.ts); this rule covers the other sessions and app
+//   'certificate-error'.
 
 import { X509Certificate } from 'crypto';
+import { isCloudApiHostname } from './cloud-hosts';
 
 /**
  * The trusted certificate stored in the config: one record, because the app
@@ -221,6 +228,10 @@ export function pinnedFingerprintFor(configuredUrl: string, pin: CertificatePin 
  * @returns {CertificateDecision} The decision.
  */
 export function decideCertificate(input: CertificateDecisionInput): CertificateDecision {
+  if (isCloudApiHostname(normalizeHostname(input.hostname))) {
+    // A TP-Link cloud API host: Chromium's verdict, never a TOFU exception
+    return { action: 'default' };
+  }
   const configuredOrigin = controllerOriginOf(input.configuredUrl);
   if (!configuredOrigin) {
     // Nothing configured: there is no controller to make an exception for

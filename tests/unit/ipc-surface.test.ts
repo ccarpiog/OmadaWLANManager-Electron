@@ -179,6 +179,18 @@ describe('index.ts registers every channel through the trusted registrar (struct
       );
     } // End of the loop over the registrations
   }); // End of test "every handler captures its extra arguments..."
+
+  test('the cloud channels (inbox I-1a) take no argument at all — no host, deviceId, serverHost or URL from the renderer — and answer from CloudAccessService', () => {
+    for (const [key, method] of [['CLOUD_TEST', 'test'], ['CLOUD_CONTROLLERS', 'controllers']] as const) {
+      const entry = registrations().find((registration) => registration.key === key);
+      assert.ok(entry, key);
+      assert.match(entry.text.split('\n')[0], /async \(_event, \.\.\.extra: unknown\[\]\): Promise<CloudAccessResult> =>/, key);
+      assert.match(entry.text, new RegExp(`requireNoExtraArguments\\(extra\\);\\s*return cloudAccess\\.${method}\\(\\);`), key);
+    }
+    for (const channel of ['CLOUD_TEST', 'CLOUD_CONTROLLERS']) {
+      assert.match(PRELOAD_SOURCE, new RegExp(`ipcRenderer\\.invoke\\(IPC_CHANNELS\\.${channel}\\)`), `the preload sends nothing on ${channel}`);
+    }
+  }); // End of test "the cloud channels (inbox I-1a) take no argument..."
 });
 
 /**
@@ -216,7 +228,9 @@ const EXPECTED_BRIDGE: Record<string, keyof typeof IPC_CHANNELS> = {
   changeNetworkPassword: 'MANAGEMENT_NETWORK_PASSWORD',
   setNetworkEnabled: 'MANAGEMENT_NETWORK_ENABLE',
   deleteNetwork: 'MANAGEMENT_NETWORK_DELETE',
-  updateNetworkBindings: 'MANAGEMENT_NETWORK_BINDINGS'
+  updateNetworkBindings: 'MANAGEMENT_NETWORK_BINDINGS',
+  testCloudAccess: 'CLOUD_TEST',
+  getCloudControllers: 'CLOUD_CONTROLLERS'
 };
 
 describe('preload.ts exposes only the expected bridge (structural)', () => {

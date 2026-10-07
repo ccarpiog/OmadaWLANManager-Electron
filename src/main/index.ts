@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import {
   clearCertificatePin,
   getCertificatePin,
+  getCloudCredentials,
   getConfiguredUrl,
   getConnectionCredentials,
   getManagementCredentials,
@@ -14,6 +15,9 @@ import {
   saveStoredSiteId
 } from './config';
 import { CertificateTrustSource, ControllerTlsSessions, installCertificateVerifyProc, isCertificateErrorAllowed } from './cert-verify';
+import { CloudAccessService } from './cloud-access';
+import { isCloudRegion } from './cloud-hosts';
+import { createCloudSession } from './cloud-transport';
 import { ConnectionManager } from './connection-manager';
 import {
   applyManagementAccessChange,
@@ -47,12 +51,13 @@ import {
   requireSessionNonce
 } from './ipc-guards';
 import { createTrustedIpcRegistrar } from './ipc-trust';
-import { createNetTransport } from './net-transport';
+import { createCloudNetTransport, createNetTransport } from './net-transport';
 import { redactErrorMessage } from './redact';
 import {
   AccessPoint,
   ApGroupActionResult,
   CertificateActionResult,
+  CloudAccessResult,
   ConfigSavePayload,
   ConfigSaveResult,
   IPC_CHANNELS,
@@ -118,6 +123,33 @@ const connectionManager = new ConnectionManager<ControllerSession>({
   resetControllerSession: (drain) => (controllerTls ? controllerTls.reset(drain) : Promise.resolve())
 });
 
+// ============================================================================
+// TP-Link cloud access (inbox item I-1a, docs/omada-cloud-openapi.md)
+// ============================================================================
+
+// The cloud's own session (created when the app is ready): an in-memory
+// partition with Chromium's normal certificate verification — no TOFU pin,
+// no verify proc, no certificate dialog (cloud-transport.ts). The pinned
+// controller session above never carries a cloud request, and this one never
+// a controller request
+let cloudSession: Electron.Session | null = null;
+
+/**
+ * Returns the cloud session (see cloudSession).
+ * @returns {Electron.Session} The session cloud requests must use.
+ */
+function getCloudSession(): Electron.Session {
+  if (!cloudSession) {
+    throw new Error('Cloud session requested before the app was ready');
+  }
+  return cloudSession;
+}
+
+// The cloud access: one CloudAccountClient (and throttle) per saved cloud
+// credential, over the cloud transport (its own session, the cloud origin
+// allowlist enforced before anything is sent, redirects refused)
+const cloudAccess = new CloudAccessService({ getCredentials: getCloudCredentials, transport: createCloudNetTransport(getCloudSession) });
+
 // Trust inputs of the certificate hooks: the configured URL and the pin come
 // from the in-memory config cache (the verify proc is a hot path and must
 // never touch the filesystem); rejections are recorded for OMADA_CONNECT
@@ -149,13 +181,26 @@ const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_URL_LENGTH = 2048;
 const MAX_USERNAME_LENGTH = 256;
 const MAX_PASSWORD_LENGTH = 512;
-// Open API management access: the raw Client ID field (trimmed and validated
-// against CLIENT_ID_REGEX by config-model.ts) and the Client Secret
+// Open API management access and TP-Link cloud access: the raw Client ID
+// fields (trimmed and validated against CLIENT_ID_REGEX by config-model.ts)
+// and the Client Secrets
 const MAX_CLIENT_ID_LENGTH = 256;
 const MAX_CLIENT_SECRET_LENGTH = 512;
 
 // The only keys a config-save payload may carry (ConfigSavePayload)
-const CONFIG_SAVE_KEYS = new Set(['url', 'username', 'language', 'password', 'clientId', 'clientSecret', 'removeManagementAccess']);
+const CONFIG_SAVE_KEYS = new Set([
+  'url',
+  'username',
+  'language',
+  'password',
+  'clientId',
+  'clientSecret',
+  'removeManagementAccess',
+  'cloudRegion',
+  'cloudClientId',
+  'cloudClientSecret',
+  'removeCloudAccess'
+]);
 
 /**
  * Returns true when an IPC call originates from the app's own renderer: the
@@ -184,8 +229,9 @@ function isTrustedIpcSender(event: IpcMainInvokeEvent): boolean {
 
 /**
  * The stored secrets a failing IPC handler's message is scrubbed of by value
- * (ipc-trust.ts): the controller password and the Open API Client Secret.
- * Read only on an error path; never throws.
+ * (ipc-trust.ts): the controller password, the Open API Client Secret, the
+ * cloud Client Secret, and the live cloud secret and account tokens of the
+ * cloud access. Read only on an error path; never throws.
  * @returns {string[]} The secrets configured now (none when not configured
  *   or unreadable).
  */
@@ -196,6 +242,11 @@ function storedSecrets(): string[] {
     if (management) {
       secrets.push(management.clientSecret);
     }
+    const cloud = getCloudCredentials();
+    if (cloud) {
+      secrets.push(cloud.clientSecret);
+    }
+    secrets.push(...cloudAccess.liveSecrets());
     return secrets;
   } catch {
     return [];
@@ -219,9 +270,12 @@ const handleTrusted = createTrustedIpcRegistrar<IpcMainInvokeEvent>(ipcMain, isT
  * when present — a string password, a non-empty string clientId and a
  * non-empty string clientSecret within their length caps, and
  * removeManagementAccess only as the literal true and never together with
- * clientId/clientSecret. Detailed value validation (URL normalization, the
- * password and management-access keep/require rules, the Client ID format)
- * stays in saveConfig().
+ * clientId/clientSecret; the same for the cloud fields (cloudRegion one of the
+ * regions, cloudClientId / cloudClientSecret non-empty strings within the
+ * caps, removeCloudAccess only as the literal true and never with the other
+ * three). Detailed value validation (URL normalization, the password,
+ * management-access and cloud-access keep/require rules, the Client ID
+ * formats) stays in saveConfig().
  * @param {unknown} payload - The raw IPC payload.
  * @returns {payload is ConfigSavePayload} True when the shape is valid.
  */
@@ -256,6 +310,27 @@ function isValidConfigSavePayload(payload: unknown): payload is ConfigSavePayloa
     return false;
   }
   if (raw.removeManagementAccess !== undefined && (raw.removeManagementAccess !== true || raw.clientId !== undefined || raw.clientSecret !== undefined)) {
+    return false;
+  }
+  if (raw.cloudRegion !== undefined && !isCloudRegion(raw.cloudRegion)) {
+    return false;
+  }
+  if (
+    raw.cloudClientId !== undefined &&
+    (typeof raw.cloudClientId !== 'string' || raw.cloudClientId.length === 0 || raw.cloudClientId.length > MAX_CLIENT_ID_LENGTH)
+  ) {
+    return false;
+  }
+  if (
+    raw.cloudClientSecret !== undefined &&
+    (typeof raw.cloudClientSecret !== 'string' || raw.cloudClientSecret.length === 0 || raw.cloudClientSecret.length > MAX_CLIENT_SECRET_LENGTH)
+  ) {
+    return false;
+  }
+  if (
+    raw.removeCloudAccess !== undefined &&
+    (raw.removeCloudAccess !== true || raw.cloudRegion !== undefined || raw.cloudClientId !== undefined || raw.cloudClientSecret !== undefined)
+  ) {
     return false;
   }
   return true;
@@ -326,7 +401,8 @@ function createWindow(): void {
 // goes through the verify proc instead). Same TOFU decision as the verify
 // proc (cert-verify.ts): allowed only when the URL's origin is exactly the
 // configured origin (scheme + host + port, read from the in-memory config
-// cache) AND the presented self-signed certificate matches the pin
+// cache) AND the presented self-signed certificate matches the pin — and
+// never for a TP-Link cloud API host (decideCertificate() in cert-pinning.ts)
 app.on('certificate-error', (event, _webContents, url, error, certificate, callback) => {
   if (isCertificateErrorAllowed(certificateTrustSource, url, error, certificate)) {
     event.preventDefault();
@@ -363,6 +439,9 @@ app.whenReady().then(() => {
   // file: only) gets the same proc for parity
   installCertificateVerifyProc(session.defaultSession, certificateTrustSource);
   controllerTls = new ControllerTlsSessions((partition) => session.fromPartition(partition), certificateTrustSource);
+  // The TP-Link cloud gets its own session with Chromium's own verification
+  // (no verify proc at all; see cloudSession above)
+  cloudSession = createCloudSession((partition) => session.fromPartition(partition));
 
   createWindow();
 
@@ -438,6 +517,12 @@ handleTrusted(IPC_CHANNELS.CONFIG_LOAD, async (_event, ...extra: unknown[]): Pro
 // reconnects after every successful save, so the new session's checks are
 // the single run that recomputes the capabilities with the new credentials
 // (without a reconnect, the next capabilities or Test request runs them).
+// A save that changes or removes the TP-Link cloud credential (region, cloud
+// Client ID, cloud secret) drops the cloud client and its tokens in the same
+// synchronous step as the write (CloudAccessService.invalidate(): a cloud call
+// in flight answers superseded); the reply carries the cloud-access flags,
+// never the secret.
+// The cloud account is not tied to the controller URL: a URL change keeps it.
 handleTrusted(IPC_CHANNELS.CONFIG_SAVE, async (_event, payload: unknown, ...extra: unknown[]): Promise<ConfigSaveResult> => {
   requireNoExtraArguments(extra);
   if (!isValidConfigSavePayload(payload)) {
@@ -445,15 +530,27 @@ handleTrusted(IPC_CHANNELS.CONFIG_SAVE, async (_event, payload: unknown, ...extr
   }
   let result: ReturnType<typeof saveConfig>;
   try {
-    result = await connectionManager.applyConfigSave(() => saveConfig(payload));
+    // The cloud client is invalidated in the same synchronous step as the
+    // write, before applyConfigSave() awaits a controller transition, so no
+    // cloud call can complete on the old credential after the save
+    result = await connectionManager.applyConfigSave(() => {
+      const saved = saveConfig(payload);
+      if (saved.success && saved.cloudCredentialsChanged) {
+        cloudAccess.invalidate();
+      }
+      return saved;
+    });
   } catch (error) {
-    console.error('Unexpected error saving config:', redactErrorMessage(error, [payload.password, payload.clientSecret, ...storedSecrets()]));
+    console.error(
+      'Unexpected error saving config:',
+      redactErrorMessage(error, [payload.password, payload.clientSecret, payload.cloudClientSecret, ...storedSecrets()])
+    );
     return { success: false, error: 'saveFailed' };
   }
   if (!result.success) {
     return { success: false, error: result.error };
   }
-  const reply: ConfigSaveResult = { success: true, managementAccess: result.managementAccess };
+  const reply: ConfigSaveResult = { success: true, managementAccess: result.managementAccess, cloudAccess: result.cloudAccess };
   if (result.urlChanged) {
     reply.connectionReset = true;
   } else {
@@ -702,3 +799,27 @@ handleTrusted(IPC_CHANNELS.MANAGEMENT_NETWORK_DELETE, async (_event, payload: un
 handleTrusted(IPC_CHANNELS.MANAGEMENT_NETWORK_BINDINGS, async (_event, payload: unknown, ...extra: unknown[]): Promise<NetworkBindingsResult> => {
   return updateNetworkBindingsReply(connectionManager, parseNetworkBindingsRequest(payload, extra));
 }); // End of the MANAGEMENT_NETWORK_BINDINGS handler
+
+// TP-Link cloud account (inbox item I-1a; docs/omada-cloud-openapi.md,
+// docs/security-audit.md §1). Both channels: the trusted sender, then the
+// pure arity guard (no argument at all: no host, deviceId, serverHost or URL
+// can come from the renderer), then CloudAccessService (cloud-access.ts),
+// which uses the SAVED credentials only ('notConfigured' when none; the
+// renderer asks to save first when its form holds unsaved cloud edits). No
+// session nonce: a cloud call reads the account only, targets no controller
+// and must work while disconnected from (or unable to reach) the local
+// controller; a reply for credentials saved or removed meanwhile is
+// 'superseded' instead. Replies: controller DTOs (never a deviceId,
+// serverHost or token) or codes-only diagnostics, redacted.
+
+// "Test cloud access": a fresh token plus the organization list
+handleTrusted(IPC_CHANNELS.CLOUD_TEST, async (_event, ...extra: unknown[]): Promise<CloudAccessResult> => {
+  requireNoExtraArguments(extra);
+  return cloudAccess.test();
+});
+
+// The account's controllers (reusing a valid token)
+handleTrusted(IPC_CHANNELS.CLOUD_CONTROLLERS, async (_event, ...extra: unknown[]): Promise<CloudAccessResult> => {
+  requireNoExtraArguments(extra);
+  return cloudAccess.controllers();
+});

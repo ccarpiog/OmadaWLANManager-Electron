@@ -336,3 +336,70 @@ describe('Wi-Fi network write payloads (phase 18a)', () => {
     assert.ok(!redactText('{"pskSetting":{"securityKey":"wifi pass 4","versionPsk":2}}').includes('wifi pass 4'));
   });
 }); // End of the describe block for the Wi-Fi network write payloads
+
+// TP-Link cloud credentials (inbox item I-1a; docs/omada-cloud-openapi.md
+// §10): the cloud secret, the account access / refresh tokens and API keys in
+// every form the Account Level Open API guide shows them
+describe('the TP-Link cloud secret and tokens', () => {
+  const ACCESS = 'a1-AT-AucoLyP4jpuCwriaOQpGvV2pdkG7YDDB';
+  const REFRESH = 'RT-gvPUG4oKc5SB6aDcsDfpE1KrohhjVZbY';
+  const API_KEY = 'AK-9f8e7d6c5b4a39281706f5e4d3c2b1a0';
+  const SECRET = '767372a5258a4fc1a03c57f3d071fc35';
+
+  test('client_secret / clientSecret in any casing and separator: JSON, key=value and header forms', () => {
+    for (const key of ['client_secret', 'clientSecret', 'CLIENT_SECRET', 'ClientSecret', 'client-secret', 'cloudClientSecret', 'Client_Secret']) {
+      assert.equal(isSensitiveKey(key), true, key);
+      assert.equal(redactText(`{"client_id":"185586e0df424f5ea938de13cba91e01","${key}":"${SECRET}"}`), `{"client_id":"185586e0df424f5ea938de13cba91e01","${key}":"${REDACTED}"}`, key);
+      assert.equal(redactText(`${key}=${SECRET}&type=get_tokens`), `${key}=${REDACTED}&type=get_tokens`, key);
+      assert.equal(redactText(`${key}: ${SECRET}`), `${key}: ${REDACTED}`, key);
+    }
+    // The guide's curl body, multi-line
+    const body = `-d '{\n    "client_id": "185586e0df424f5ea938de13cba91e01",\n    "client_secret": "${SECRET}"\n  }'`;
+    assert.ok(!redactText(body).includes(SECRET));
+    assert.ok(redactText(body).includes('185586e0df424f5ea938de13cba91e01'), 'the Client ID is not a secret');
+  }); // End of test "client_secret / clientSecret in any casing..."
+
+  test('AccessToken=… in the Authorization header, with and without a space, and as a pair', () => {
+    assert.equal(redactText(`Authorization: AccessToken=${ACCESS}`), `Authorization: ${REDACTED}`);
+    assert.equal(redactText(`-H 'Authorization:AccessToken=${ACCESS}'`).includes(ACCESS), false);
+    assert.equal(redactText(`AccessToken=${ACCESS}`), `AccessToken=${REDACTED}`);
+    assert.equal(redactText(`header AccessToken=${ACCESS}, next`), `header AccessToken=${REDACTED}, next`);
+  });
+
+  test('Bearer AK-… (the API key mode) and Bearer with a token', () => {
+    assert.equal(redactText(`Authorization: Bearer ${API_KEY}`), `Authorization: ${REDACTED}`);
+    assert.equal(redactText(`sent Bearer ${API_KEY} to the host`), `sent Bearer ${REDACTED} to the host`);
+    assert.equal(redactText(`sent bearer AK-xxxxxxxx... to the host`), `sent bearer ${REDACTED} to the host`);
+  });
+
+  test('accessToken / refreshToken / refresh_token keys and query parameters', () => {
+    const json = JSON.stringify({ errorCode: 0, result: { accessToken: ACCESS, tokenType: 'bearer', expiresIn: 7200, refreshToken: REFRESH } });
+    const redacted = redactText(json);
+    assert.ok(!redacted.includes(ACCESS) && !redacted.includes(REFRESH), redacted);
+    assert.ok(redacted.includes('"tokenType"') && redacted.includes('"expiresIn":7200'));
+    assert.equal(redactText(`POST /authorize/account/token?type=refresh&refresh_token=${REFRESH}`), `POST /authorize/account/token?type=refresh&refresh_token=${REDACTED}`);
+    assert.equal(redactText(`?accessToken=${ACCESS}&page=1`), `?accessToken=${REDACTED}&page=1`);
+    assert.deepEqual(redactValue({ accessToken: ACCESS, refreshToken: REFRESH, refresh_token: REFRESH, expiresIn: 7200 }), {
+      accessToken: REDACTED,
+      refreshToken: REDACTED,
+      refresh_token: REDACTED,
+      expiresIn: 7200
+    });
+  });
+
+  test('bare token shapes (no key in front) are redacted whole; short look-alikes and ids are not', () => {
+    for (const token of [ACCESS, REFRESH, API_KEY, 'AT-xyz0123456789ABCDEFGH', 'a1-AT-w9veJNQlaK8dH08qEQZCTas6y70IRAii']) {
+      assert.equal(redactText(`the server said ${token}.`), `the server said ${REDACTED}.`, token);
+    }
+    for (const text of ['AT-1', 'AT-fixture-0001', 'EAP-AT-room', 'omadacId 5ffc0460d2816b0d09b531cd27c106a8', 'deviceId 7B069516D97677D0BCA8E643F334A1A3F182A1', 'MAT-0123456789abcdefghij']) {
+      assert.equal(redactText(text), text, text);
+    }
+    assert.equal(redactText(redactText(`x ${ACCESS}`)), `x ${REDACTED}`, 'idempotent');
+  });
+
+  test('live values are scrubbed by value when no pattern names them (the stored-secrets mechanism)', () => {
+    const live = ['opaque-cloud-secret', 'opaqueTokenWithoutPrefix'];
+    assert.equal(redactText('echo opaque-cloud-secret and opaqueTokenWithoutPrefix', live), `echo ${REDACTED} and ${REDACTED}`);
+    assert.equal(redactErrorMessage(new Error('failed: opaqueTokenWithoutPrefix'), live), `failed: ${REDACTED}`);
+  });
+}); // End of the describe block for the TP-Link cloud secret and tokens

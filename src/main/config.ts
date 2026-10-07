@@ -4,8 +4,11 @@ import * as os from 'os';
 import { safeStorage } from 'electron';
 import { ConfigSavePayload, ConfigSaveResult, RendererConfig } from '../shared/types';
 import { CertificatePin } from './cert-pinning';
+import { CloudCredentials } from './cloud-account-model';
 import {
   applyConfigSave,
+  cloudAccessStatus,
+  cloudCredentialsOf,
   decryptStoredPassword,
   defaultConfig,
   managementAccessStatus,
@@ -38,6 +41,12 @@ let cachedConfig: StoredConfig | null = null;
 // removed (applyConfigSave() decides; see config-model.ts). Never sent to the
 // renderer.
 let sessionClientSecret: string | null = null;
+
+// The TP-Link cloud Client Secret under the same condition (secure storage
+// unavailable): main-process memory only, until the app quits, the cloud
+// region or Client ID changes or cloud access is removed (applyConfigSave()
+// decides). Never written to disk, never sent to the renderer.
+let sessionCloudClientSecret: string | null = null;
 
 /**
  * Reports whether safeStorage encryption can be used, never throwing
@@ -194,14 +203,26 @@ function persistConfig(newConfig: StoredConfig, what: string): boolean {
 } // End of function persistConfig()
 
 /**
- * Returns the sanitized config for the renderer: no password or Client Secret
- * material, only the hasPassword / hasClientSecret flags and the Client ID,
- * plus the pinned certificate fingerprint (not a secret) for the Settings
- * display.
+ * Returns the sanitized config for the renderer: no password, Client Secret
+ * or cloud secret material, only the hasPassword / hasClientSecret /
+ * hasCloudSecret flags and the Client IDs, plus the pinned certificate
+ * fingerprint (not a secret) for the Settings display.
  * @returns {RendererConfig} The renderer-safe view of the config.
  */
 export function getRendererConfig(): RendererConfig {
-  return toRendererConfig(getCachedConfig(), safeStorageBox, sessionClientSecret);
+  return toRendererConfig(getCachedConfig(), safeStorageBox, sessionClientSecret, sessionCloudClientSecret);
+}
+
+/**
+ * Returns the saved TP-Link cloud credential (the effective region, the
+ * cloud Client ID and the session-only or decrypted cloud secret), for the
+ * cloud account client. Main process only — never expose this result to the
+ * renderer or a log.
+ * @returns {CloudCredentials | null} The credential, or null when cloud
+ *   access is not (fully) configured.
+ */
+export function getCloudCredentials(): CloudCredentials | null {
+  return cloudCredentialsOf(getCachedConfig(), safeStorageBox, sessionCloudClientSecret);
 }
 
 /**
@@ -297,18 +318,22 @@ export function saveStoredSiteId(siteId: string): void {
  * session-only —, the site id and the certificate pin, and requires a typed
  * password) and the management-access rules (the Client Secret is stored only
  * as a safeStorage blob, or held in memory for this session when secure
- * storage is unavailable — see secureStorageAvailable()). The file is
- * written atomically; the in-memory cache and the session-only secret are
- * updated only after a successful write. Errors are returned as codes, never
- * thrown.
+ * storage is unavailable — see secureStorageAvailable()) and the cloud-access
+ * rules (the same storage rule for the cloud secret; a region or cloud
+ * Client ID change drops it; Remove cloud access deletes every cloud field).
+ * The file is written atomically; the in-memory cache and the session-only
+ * secrets are updated only after a successful write. Errors are returned as
+ * codes, never thrown.
  * @param {ConfigSavePayload} payload - The settings sent by the renderer.
- * @returns {ConfigSaveResult & { urlChanged?: boolean }} Success flag plus an
- *   error code on failure; on success, the management-access status (flags
- *   only) and whether the controller URL changed (main-process only — the IPC
- *   handler turns it into `connectionReset`).
+ * @returns {ConfigSaveResult & { urlChanged?: boolean; cloudCredentialsChanged?: boolean }}
+ *   Success flag plus an error code on failure; on success, the
+ *   management-access and cloud-access status (flags only), whether the
+ *   controller URL changed (main-process only — the IPC handler turns it into
+ *   `connectionReset`) and whether the cloud credential changed (main-process
+ *   only — the handler then drops the cloud client and its tokens).
  */
-export function saveConfig(payload: ConfigSavePayload): ConfigSaveResult & { urlChanged?: boolean } {
-  const outcome = applyConfigSave(getCachedConfig(), payload, safeStorageBox, sessionClientSecret);
+export function saveConfig(payload: ConfigSavePayload): ConfigSaveResult & { urlChanged?: boolean; cloudCredentialsChanged?: boolean } {
+  const outcome = applyConfigSave(getCachedConfig(), payload, safeStorageBox, sessionClientSecret, sessionCloudClientSecret);
   if (!outcome.ok) {
     return { success: false, error: outcome.error };
   }
@@ -316,9 +341,12 @@ export function saveConfig(payload: ConfigSavePayload): ConfigSaveResult & { url
     return { success: false, error: 'saveFailed' };
   }
   sessionClientSecret = outcome.sessionClientSecret;
+  sessionCloudClientSecret = outcome.sessionCloudClientSecret;
   return {
     success: true,
     urlChanged: outcome.urlChanged,
-    managementAccess: managementAccessStatus(outcome.config, safeStorageBox, sessionClientSecret)
+    cloudCredentialsChanged: outcome.cloudCredentialsChanged,
+    managementAccess: managementAccessStatus(outcome.config, safeStorageBox, sessionClientSecret),
+    cloudAccess: cloudAccessStatus(outcome.config, safeStorageBox, sessionCloudClientSecret)
   };
 } // End of function saveConfig()

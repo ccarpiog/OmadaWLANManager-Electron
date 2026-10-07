@@ -1,0 +1,56 @@
+{
+  "description": "A four-organization account shaped like the user's TP-Link cloud portal (spec 10-tplink-cloud-controllers.md: one controller that is also the local one, one offline, one below 6.3, one connectable), as GET /v1/organizations would answer it per the Open API Access Guide. The OC200 deviceType value is UNVERIFIED (the guide documents SMB.OMADA.*CONTROLLER). `expected` is the renderer DTO list toCloudController() must build: never a deviceId, serverHost or deviceType.",
+  "page": {
+    "errorCode": 0,
+    "msg": "OK",
+    "result": {
+      "totalRows": 4,
+      "currentPage": 1,
+      "currentSize": 100,
+      "data": [
+        {
+          "orgName": "Omada red antigua (Proxmox)",
+          "online": true,
+          "deviceId": "0A1B2C3D4E5F60718293A4B5C6D7E8F901234A",
+          "omadacId": "c0ffee00c0ffee00c0ffee00c0ffee00",
+          "orgVersion": "6.3.0.45",
+          "deviceType": "SMB.OMADA.SOFTWARECONTROLLER",
+          "serverHost": "https://euw1-omada-northbound.tplinkcloud.com"
+        },
+        {
+          "orgName": "OC200 Planta 3",
+          "online": false,
+          "deviceId": "1A1B2C3D4E5F60718293A4B5C6D7E8F901234B",
+          "omadacId": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
+          "orgVersion": "6.3.0.45",
+          "deviceType": "SMB.OMADA.HARDWARECONTROLLER",
+          "serverHost": "https://euw1-omada-northbound.tplinkcloud.com"
+        },
+        {
+          "orgName": "OC200 Planta 2",
+          "online": true,
+          "deviceId": "2A1B2C3D4E5F60718293A4B5C6D7E8F901234C",
+          "omadacId": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+          "orgVersion": "6.2.0.9",
+          "deviceType": "SMB.OMADA.HARDWARECONTROLLER",
+          "serverHost": "https://euw1-omada-northbound.tplinkcloud.com"
+        },
+        {
+          "orgName": "OC200 Planta 4",
+          "online": true,
+          "deviceId": "4A1B2C3D4E5F60718293A4B5C6D7E8F901234D",
+          "omadacId": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+          "orgVersion": "6.3.0.45",
+          "deviceType": "SMB.OMADA.HARDWARECONTROLLER",
+          "serverHost": "https://euw1-omada-northbound.tplinkcloud.com"
+        }
+      ]
+    }
+  },
+  "expected": [
+    { "omadacId": "c0ffee00c0ffee00c0ffee00c0ffee00", "name": "Omada red antigua (Proxmox)", "online": true, "version": "6.3.0.45", "connectable": true, "reason": null },
+    { "omadacId": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a", "name": "OC200 Planta 3", "online": false, "version": "6.3.0.45", "connectable": false, "reason": "offline" },
+    { "omadacId": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b", "name": "OC200 Planta 2", "online": true, "version": "6.2.0.9", "connectable": false, "reason": "versionTooOld" },
+    { "omadacId": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d", "name": "OC200 Planta 4", "online": true, "version": "6.3.0.45", "connectable": true, "reason": null }
+  ]
+}
