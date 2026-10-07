@@ -7,7 +7,9 @@
 // keys allowed only when present, SSID ids, the security / band enums, the
 // AP-group id list (cap, dedupe), a boolean enable state, raw caps on the
 // name and the passphrase, and rejection messages that never quote the
-// passphrase — and that the parsed request is a fresh copy carrying nothing else.
+// passphrase — and the binding payload (phase 19a): exactly {sessionNonce,
+// networkId, apGroupIds}, at most 256 deduplicated 24-hex ids — and that the
+// parsed request is a fresh copy carrying nothing else.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -20,6 +22,7 @@ import {
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
   parseApGroupRenameRequest,
+  parseNetworkBindingsRequest,
   parseNetworkCreateRequest,
   parseNetworkDeleteRequest,
   parseNetworkEnableRequest,
@@ -30,6 +33,7 @@ import {
 
 const NONCE = '0123456789abcdef0123456789abcdef';
 const GROUP_ID = '6512a0e1f3b2c41d2e3f4a5b';
+const OTHER_GROUP_ID = '6512a0e1f3b2c41d2e3f4a5c';
 const BAD_NONCES: unknown[] = [undefined, null, 42, '', '0123456789ABCDEF0123456789ABCDEF', `${NONCE}0`, NONCE.slice(1), ` ${NONCE.slice(1)}`, [NONCE], { nonce: NONCE }];
 const BAD_IDS: unknown[] = [undefined, null, 7, '', 'bad id!', `${GROUP_ID}0`, GROUP_ID.slice(1), '../6512a0e1f3b2c41d2e3f4', [GROUP_ID]];
 
@@ -230,3 +234,49 @@ describe('Wi-Fi network write payload guards', () => {
     assert.ok(messages.every((message) => !message.includes('SENTINEL')), messages.join(' | '));
   }); // End of test "a rejected passphrase (not a string..."
 }); // End of the describe block for the Wi-Fi network payload guards
+
+describe('Wi-Fi network binding payload guard (phase 19a)', () => {
+  test('a valid payload parses into a fresh copy with exactly {sessionNonce, networkId, apGroupIds}, the ids deduplicated in their order', () => {
+    const payload = { apGroupIds: [OTHER_GROUP_ID, GROUP_ID, OTHER_GROUP_ID], networkId: NETWORK_ID, sessionNonce: NONCE };
+    const request = parseNetworkBindingsRequest(payload, []);
+    assert.deepEqual(request, { sessionNonce: NONCE, networkId: NETWORK_ID, apGroupIds: [OTHER_GROUP_ID, GROUP_ID] });
+    assert.notEqual(request.apGroupIds, payload.apGroupIds);
+    assert.deepEqual(Object.keys(request).sort(), ['apGroupIds', 'networkId', 'sessionNonce']);
+    assert.deepEqual(parseNetworkBindingsRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, apGroupIds: [] }, []).apGroupIds, [], 'no group is a rule code (groupsRequired), not a shape error');
+    const nullPrototype = Object.assign(Object.create(null) as Record<string, unknown>, { sessionNonce: NONCE, networkId: NETWORK_ID, apGroupIds: [GROUP_ID] });
+    assert.deepEqual(parseNetworkBindingsRequest(nullPrototype, []), { sessionNonce: NONCE, networkId: NETWORK_ID, apGroupIds: [GROUP_ID] });
+  });
+
+  test('unknown or missing keys, a non-object payload and extra arguments are rejected', () => {
+    const cases: Record<string, unknown>[] = [
+      { sessionNonce: NONCE, networkId: NETWORK_ID, apGroupIds: [GROUP_ID], chooseDevices: 0 },
+      { sessionNonce: NONCE, networkId: NETWORK_ID, apGroupIds: [GROUP_ID], allAccessPoints: true },
+      { sessionNonce: NONCE, networkId: NETWORK_ID },
+      { sessionNonce: NONCE, apGroupIds: [GROUP_ID] },
+      { networkId: NETWORK_ID, apGroupIds: [GROUP_ID] },
+      {}
+    ];
+    for (const payload of cases) {
+      assert.throws(() => parseNetworkBindingsRequest(payload, []), /invalid Wi-Fi network bindings request keys/, JSON.stringify(payload));
+    }
+    for (const payload of [undefined, null, 'x', [NONCE], new Date()]) {
+      assert.throws(() => parseNetworkBindingsRequest(payload, []), /invalid Wi-Fi network bindings request/, String(payload));
+    }
+    assert.throws(() => parseNetworkBindingsRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, apGroupIds: [GROUP_ID] }, [1]), /unexpected arguments/);
+  }); // End of test "unknown or missing keys…"
+
+  test('malformed values are rejected: the nonce, the SSID id, the group ids (format, type, more than 256)', () => {
+    for (const sessionNonce of BAD_NONCES.filter((value) => value !== undefined)) {
+      assert.throws(() => parseNetworkBindingsRequest({ sessionNonce, networkId: NETWORK_ID, apGroupIds: [GROUP_ID] }, []), /invalid session nonce format/);
+    }
+    for (const networkId of [null, 7, '', '..', '../x', 'a b', 'x'.repeat(129), [NETWORK_ID]]) {
+      assert.throws(() => parseNetworkBindingsRequest({ sessionNonce: NONCE, networkId, apGroupIds: [GROUP_ID] }, []), /invalid Wi-Fi network id format/, JSON.stringify(networkId));
+    }
+    const tooMany = Array.from({ length: MAX_NETWORK_AP_GROUP_IDS + 1 }, () => GROUP_ID);
+    for (const apGroupIds of [null, GROUP_ID, { 0: GROUP_ID }, ['Corrupto'], [GROUP_ID, 7], [GROUP_ID, null], [`${GROUP_ID} `], tooMany]) {
+      assert.throws(() => parseNetworkBindingsRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, apGroupIds }, []), /invalid AP group id format/, JSON.stringify(apGroupIds).slice(0, 60));
+    }
+    const atCap = Array.from({ length: MAX_NETWORK_AP_GROUP_IDS }, () => GROUP_ID);
+    assert.deepEqual(parseNetworkBindingsRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, apGroupIds: atCap }, []).apGroupIds, [GROUP_ID]);
+  }); // End of test "malformed values are rejected…"
+}); // End of the describe block for the binding payload guard

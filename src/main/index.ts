@@ -29,6 +29,7 @@ import {
   renameApGroupReply,
   setNetworkEnabledReply,
   testManagementAccess,
+  updateNetworkBindingsReply,
   updateNetworkReply
 } from './controller-session';
 import {
@@ -36,6 +37,7 @@ import {
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
   parseApGroupRenameRequest,
+  parseNetworkBindingsRequest,
   parseNetworkCreateRequest,
   parseNetworkDeleteRequest,
   parseNetworkEnableRequest,
@@ -56,6 +58,7 @@ import {
   ManagedNetworksResult,
   ManagementCapabilitiesResult,
   NetworkActionResult,
+  NetworkBindingsResult,
   RendererConfig
 } from '../shared/types';
 
@@ -679,3 +682,14 @@ ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_DELETE, async (event, payload: un
   assertTrustedIpcSender(event);
   return deleteNetworkReply(connectionManager, parseNetworkDeleteRequest(payload, extra));
 }); // End of the MANAGEMENT_NETWORK_DELETE handler
+
+// Replace the AP groups a network is broadcast on ({sessionNonce, networkId,
+// apGroupIds}: the complete new set; todo.md 4.12, spec §4.5). Same chain as
+// the writes above: the trusted sender, the strict shape guard (an SSID id, at
+// most 256 deduplicated 24-hex ids, no other key), then the installed session
+// named by the nonce, which plans the change on fresh data — never a binding
+// PATCH for an "All access points" or unknown-scope network
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_BINDINGS, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkBindingsResult> => {
+  assertTrustedIpcSender(event);
+  return updateNetworkBindingsReply(connectionManager, parseNetworkBindingsRequest(payload, extra));
+}); // End of the MANAGEMENT_NETWORK_BINDINGS handler

@@ -10,7 +10,7 @@
 //
 // Invariant D4 (docs/management-design.md §1): this file never loads
 // dist/main/index.js, config.js, net-transport.js or anything else that does
-// network or touches the user's config. It only requires seven pure compiled
+// network or touches the user's config. It only requires eight pure compiled
 // modules (shared/types.js for the channel table, main/url.js for URL
 // normalization and the same-controller check, main/controller-version.js for
 // the version -> group-model rule, main/ap-group-policy.js and
@@ -18,7 +18,8 @@
 // shape guards, main/wifi-network-model.js for the Wi-Fi network validators
 // and DTO, main/wifi-network-write.js for the Wi-Fi network write rules,
 // bodies and the security / band derivation, incl. its 'securityBandConflict'
-// refusals with their diagnostic), refuses to start unless HOME points away from the real
+// refusals with their diagnostic, main/network-binding-plan.js for the
+// binding write's scope, diff and capacity rules and its body), refuses to start unless HOME points away from the real
 // home directory, keeps Electron's userData under that temp HOME, writes no
 // files, and cancels every non-file: request the window makes.
 
@@ -46,6 +47,7 @@ const {
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
   parseApGroupRenameRequest,
+  parseNetworkBindingsRequest,
   parseNetworkCreateRequest,
   parseNetworkDeleteRequest,
   parseNetworkEnableRequest,
@@ -58,6 +60,9 @@ const { MAX_MANAGED_NETWORKS, toManagedNetwork, validateOpenApiSsid, validateOpe
 );
 const { buildCreateSsidBody, checkNetworkCreate, checkNetworkEdits, isTypedPassphrase, mergeBasicConfig } = require(
   path.join(distDir, 'main', 'wifi-network-write.js')
+);
+const { bindingRefusalReply, buildBindingsBody, checkBindingRequest, checkBindingScope, networkBindingFacts, planNetworkBindings } = require(
+  path.join(distDir, 'main', 'network-binding-plan.js')
 );
 
 // Format guards mirrored from src/main/index.ts (keep in sync)
@@ -180,7 +185,15 @@ function defaultScenario() {
     // passed — the controller's answer to the write (e.g. {
     // 'management:network-update': { success: false, error: 'nameTaken',
     // diagnostic: 'ssid basic-config: apiError, errorCode -33219' } });
-    // nothing is applied then
+    // nothing is applied then. The binding write (management:network-bindings,
+    // phase 19a) uses the same knob: its scripted answer comes once the guard,
+    // the session, the request rules, the capability, the fresh detail and
+    // bindings, the scope and the plan (groups listed, a change, the capacity
+    // of the added groups, from the groups' derived remainingBinding or
+    // apGroupOverrides) passed. Applied, it rebinds the network (detail
+    // apGroupIds + bindings) and adds / removes one entry with its name in
+    // each added / removed group's ssidList — so that group's derived
+    // remainingBinding and ssidNameList follow
     networkResults: {},
     accessPoints: [],
     // The controllerVer the fake controller's /api/info reports (null = absent:
@@ -242,7 +255,9 @@ const stub = {
   // 'create' | 'update' | 'password', networkId, body } (body = exactly what
   // the real builders produced, i.e. what main would send — a typed
   // passphrase included, as the controller would receive it) or { op:
-  // 'enable', networkId, enabled } or { op: 'delete', networkId }
+  // 'enable', networkId, enabled } or { op: 'delete', networkId } or { op:
+  // 'bindings', networkId, body } (body = exactly { apGroupIds }, the complete
+  // new set, as buildBindingsBody() produced it)
   networkWrites: [],
   registeredChannels: [],
   environment: { home: os.homedir(), userData: app.getPath('userData'), platform: process.platform },
@@ -756,6 +771,30 @@ function saveFakeBasicConfig(op, channel, networkId, edits) {
   stub.networkWrites.push({ op, networkId, body: structuredClone(merged.body) });
   return { success: true };
 } // End of function saveFakeBasicConfig()
+
+/**
+ * Applies a planned binding change to a live network like the controller
+ * would: the detail's apGroupIds and the bindings become the new set, and
+ * each added / removed group's ssidList gains / loses one entry with the
+ * network's name (one entry per bound network: the group's derived
+ * remainingBinding and ssidNameList follow, see openApiGroups()).
+ * @param {{ entry: object; detail: object; bindings: object }} network - The live record.
+ * @param {{ apGroupIds: string[]; added: string[]; removed: string[] }} plan - The plan (planNetworkBindings()).
+ */
+function applyFakeBindings(network, plan) {
+  const name = network.entry.name;
+  network.detail.apGroupIds = [...plan.apGroupIds];
+  network.bindings = { apGroups: plan.apGroupIds.map((id) => ({ id })) };
+  for (const group of stub.scenario.wlanGroups) {
+    const list = group.ssidList || [];
+    if (plan.added.includes(group.wlanId)) {
+      group.ssidList = [...list, { ssidName: name }];
+    } else if (plan.removed.includes(group.wlanId)) {
+      const index = list.findIndex((ssid) => ssid.ssidName === name);
+      group.ssidList = index < 0 ? list : [...list.slice(0, index), ...list.slice(index + 1)];
+    }
+  } // End of the loop over the fake groups
+} // End of function applyFakeBindings()
 
 /**
  * Returns a copy of a list sorted by a string field with localeCompare, like
@@ -1389,6 +1428,79 @@ const handlers = {
     stub.networkWrites.push({ op: 'delete', networkId: request.networkId });
     return { success: true };
   }, // End of the MANAGEMENT_NETWORK_DELETE handler
+
+  /**
+   * MANAGEMENT_NETWORK_BINDINGS: in ControllerSession.updateNetworkBindings()'s
+   * order — the real shape guard, the session ownership, the real request
+   * rules (checkBindingRequest()), the capability, the fresh catalog
+   * (validated, within the cap, listing the network: else
+   * 'networkListIncomplete' / 'networkNotFound'), the fresh detail and
+   * bindings (validated), the real scope rule over catalog entry, detail and
+   * bindings (an "All access points" or unknown-scope network — a catalog /
+   * detail disagreement included — refused: never applied), the real plan
+   * over the fake AP-group list (groups listed, a change, the bands and MLO
+   * state, the capacity of the added groups — every failing group + band),
+   * the scripted answer; then the fake controller applies the new set
+   * (applyFakeBindings()) and records the exact body.
+   * @param {unknown} payload - { sessionNonce, networkId, apGroupIds }.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The NetworkBindingsResult.
+   */
+  [IPC_CHANNELS.MANAGEMENT_NETWORK_BINDINGS]: (payload, ...extra) => {
+    const request = parseNetworkBindingsRequest(payload, extra);
+    const owner = networkOwnership(request.sessionNonce);
+    if (owner) {
+      return owner;
+    }
+    const checked = checkBindingRequest(request.apGroupIds);
+    if (!checked.ok) {
+      return bindingRefusalReply(checked);
+    }
+    if (!currentCapabilities().manageWifiNetworks) {
+      return { success: false, error: 'managementUnavailable' };
+    }
+    const entries = [];
+    for (const candidate of liveNetworks()) {
+      const validated = validateOpenApiSsid(candidate.entry);
+      if (validated === null) {
+        return { success: false, error: 'requestFailed', diagnostic: 'ssids: malformedResponse' };
+      }
+      entries.push(validated);
+    } // End of the loop that validates the fresh catalog
+    const listedIds = new Set(entries.map((candidate) => candidate.id));
+    if (listedIds.size > MAX_MANAGED_NETWORKS) {
+      return { success: false, error: 'networkListIncomplete', diagnostic: `ssids ${listedIds.size}, over ${MAX_MANAGED_NETWORKS}` };
+    }
+    const entry = entries.find((candidate) => candidate.id === request.networkId);
+    if (!entry) {
+      return { success: false, error: 'networkNotFound' };
+    }
+    const fresh = freshNetwork(request.networkId);
+    if (fresh.failure) {
+      return fresh.failure;
+    }
+    const detail = validateOpenApiSsidDetail(fresh.network.detail, request.networkId);
+    const bindings = validateSsidBindings(fresh.network.bindings);
+    if (bindings === null) {
+      return { success: false, error: 'requestFailed', diagnostic: 'ssid ap-groups: malformedResponse' };
+    }
+    const facts = networkBindingFacts(entry, detail, bindings, fresh.network.detail.mloEnable);
+    const scope = checkBindingScope(facts);
+    if (scope) {
+      return bindingRefusalReply(scope);
+    }
+    const planned = planNetworkBindings(checked.apGroupIds, facts, openApiGroups());
+    if (!planned.ok) {
+      return bindingRefusalReply(planned);
+    }
+    const scripted = scriptedNetworkResult(IPC_CHANNELS.MANAGEMENT_NETWORK_BINDINGS);
+    if (scripted) {
+      return scripted;
+    }
+    applyFakeBindings(fresh.network, planned.plan);
+    stub.networkWrites.push({ op: 'bindings', networkId: request.networkId, body: buildBindingsBody(planned.plan.apGroupIds) });
+    return { success: true };
+  }, // End of the MANAGEMENT_NETWORK_BINDINGS handler
 }; // End of the fake handlers table
 
 // Every channel of the shared table must have a fake, and vice versa: a

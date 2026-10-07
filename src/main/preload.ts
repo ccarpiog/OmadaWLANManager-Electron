@@ -15,6 +15,8 @@ import type {
   ManagedNetworksResult,
   ManagementCapabilitiesResult,
   NetworkActionResult,
+  NetworkBindingsRequest,
+  NetworkBindingsResult,
   NetworkCreateRequest,
   NetworkDeleteRequest,
   NetworkEnableRequest,
@@ -54,6 +56,7 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
   MANAGEMENT_NETWORK_PASSWORD: 'management:network-password',
   MANAGEMENT_NETWORK_ENABLE: 'management:network-enable',
   MANAGEMENT_NETWORK_DELETE: 'management:network-delete',
+  MANAGEMENT_NETWORK_BINDINGS: 'management:network-bindings',
 };
 
 // Expose a safe API to the renderer process. `satisfies OmadaAPI` (type-only,
@@ -190,5 +193,13 @@ contextBridge.exposeInMainWorld('omadaAPI', {
 
   deleteNetwork: (request: NetworkDeleteRequest): Promise<NetworkActionResult> => {
     return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_NETWORK_DELETE, request);
+  },
+
+  // A network's AP-group bindings ("Broadcast on", management on only):
+  // sends the session nonce of the connect result (echoed back verbatim), the
+  // network id and the complete new set of AP-group ids; main plans the change
+  // on fresh controller data itself (scope, groups, capacity)
+  updateNetworkBindings: (request: NetworkBindingsRequest): Promise<NetworkBindingsResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_NETWORK_BINDINGS, request);
   }
 } satisfies OmadaAPI);

@@ -39,6 +39,11 @@
 //   capabilities and the write rules on fresh data first. A body is sanity-
 //   checked here too (never an Enterprise / PPSK body), and the passphrase it
 //   carries is scrubbed by value from every diagnostic of that call.
+// - Wi-Fi network bindings (todo.md 4.12): updateSsidApGroups() (v1) sends
+//   exactly `{apGroupIds}` (network-binding-plan.ts), the complete new set of
+//   bound AP groups; its only caller is ControllerSession, which plans the
+//   change on fresh data first (never for an "All access points" or
+//   unknown-scope network). The ids are sanity-checked here too.
 // - Errors: OpenApiError with a stable `code` and a sanitized diagnostic
 //   (redact.ts plus the client's own secret and tokens scrubbed by value);
 //   never a raw request or response body, the Client Secret or a token.
@@ -46,6 +51,7 @@
 //   not enumerable, so JSON.stringify() and util.inspect() never show them.
 
 import { MAX_AP_GROUP_NAME_LENGTH } from './ap-group-policy';
+import { buildBindingsBody, isSaneBindingIds } from './network-binding-plan';
 import { HttpMethod, OmadaHttpRequest, OmadaHttpResponse, OmadaTransport } from './omada-transport';
 import { redactText } from './redact';
 import { buildEnableBody, isSaneSsidWriteBody, ssidBodySecrets } from './wifi-network-write';
@@ -1130,6 +1136,29 @@ export class OpenApiClient {
       throw new Error('Invalid SSID delete arguments');
     }
     await this.request('DELETE', 'v1', ['sites', siteId, 'wireless-network', 'ssids', ssidId]);
+  }
+
+  /**
+   * Replaces the AP groups a network is bound to: `PATCH /openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}/ap-groups`
+   * with exactly `{apGroupIds}` (buildBindingsBody() of network-binding-plan.ts;
+   * the ops doc's only, required field) — the complete new set, never empty.
+   * The answer carries no result: errorCode 0 is the confirmation. Callers
+   * (ControllerSession) plan the change on fresh data first. Unverified live
+   * (phase 20): that the set replaces the bindings (not merged), that
+   * `chooseDevices` stays 1, and which errorCode a group without room answers
+   * (the ops doc lists only -33000).
+   * @param {string} siteId - The site id.
+   * @param {string} ssidId - The SSID id.
+   * @param {readonly string[]} apGroupIds - The planned ids (distinct, 24 hex digits, at least one).
+   * @returns {Promise<void>} Resolves once the controller confirmed it.
+   * @throws {OpenApiError} On any failure (-33000 is an 'apiError' carrying it);
+   *   Error on an unusable argument.
+   */
+  async updateSsidApGroups(siteId: string, ssidId: string, apGroupIds: readonly string[]): Promise<void> {
+    if (!isUsableId(siteId) || !isSsidId(ssidId) || !isSaneBindingIds(apGroupIds)) {
+      throw new Error('Invalid SSID bindings update arguments');
+    }
+    await this.request('PATCH', 'v1', ['sites', siteId, 'wireless-network', 'ssids', ssidId, 'ap-groups'], { body: buildBindingsBody(apGroupIds) });
   }
 
   /**

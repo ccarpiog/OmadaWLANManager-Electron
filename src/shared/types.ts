@@ -577,6 +577,84 @@ export interface NetworkActionResult {
   networkId?: string;
 }
 
+// Why a Wi-Fi network's AP-group binding write ("Broadcast on", todo.md 4.12)
+// failed. Main decides every one of them, on FRESH controller data where the
+// rule depends on it (the SSID catalog, the network's detail and bindings and
+// the AP-group list, re-read right before the write); the renderer maps them
+// to text.
+// Session: 'notConnected' / 'superseded' as for the capabilities (a late
+//   result is discarded); 'managementUnavailable' — the capabilities say Wi-Fi
+//   network management is off;
+// Request: 'groupsRequired' (no AP group: this write never leaves a network
+//   bound to nothing, nor sets "All access points"), 'nothingToChange' (the
+//   requested groups are exactly the current bindings: nothing is sent);
+// Network: 'networkListIncomplete' (the SSID catalog could not be read
+//   completely, or lists more networks than one read handles — as for
+//   getManagedNetworks(): the network's scope cannot be judged as the list
+//   judges it), 'networkNotFound' (the catalog does not list the network);
+// Scope: 'scopeAllAccessPoints' (the network broadcasts on all access points:
+//   its binding stays read-only and is never converted into a group list —
+//   spec §4.5, §5), 'scopeUnknown' (its device selection or its bindings are
+//   unknown or contradictory — the catalog and the detail disagreeing
+//   included —, so the change cannot be judged);
+// Fresh data: 'groupNotFound' (a requested group is not in the controller's
+//   AP-group list, or its id is not 24 hex digits), 'groupListIncomplete' (that
+//   list could not be read completely), 'networkStateUnknown' (groups would be
+//   added but the network's bands or its MLO state are unknown, so their
+//   capacity cannot be checked), 'capacityInsufficient' (an added group has no
+//   room left on a band the network uses — or for MLO, on an MLO network —,
+//   or does not report it — `capacityProblems` names EVERY such group and
+//   band);
+// 'requestFailed' — the controller could not be asked, refused or answered
+//   something malformed (`diagnostic` carries the failed call and error codes only).
+export type NetworkBindingsError =
+  | ManagementCheckError
+  | 'managementUnavailable'
+  | 'groupsRequired'
+  | 'nothingToChange'
+  | 'networkListIncomplete'
+  | 'networkNotFound'
+  | 'scopeAllAccessPoints'
+  | 'scopeUnknown'
+  | 'groupNotFound'
+  | 'groupListIncomplete'
+  | 'networkStateUnknown'
+  | 'capacityInsufficient'
+  | 'requestFailed';
+
+// What a binding's capacity is checked on: a radio band, or 'mlo' — the MLO
+// capacity an MLO-enabled network needs as well (no `remainingBinding` key for
+// it is documented, so it is reported 'unknown' until one is verified live)
+export type NetworkCapacityBand = NetworkBand | 'mlo';
+
+// One group + band an added binding lacks capacity on: 'full' — the group
+// reports no remaining binding on that band; 'unknown' — it reports none for
+// that band (never read as "room left")
+export interface NetworkCapacityProblem {
+  apGroupId: string;
+  band: NetworkCapacityBand;
+  reason: 'full' | 'unknown';
+}
+
+// Replace the AP groups a network is bound to (24-hex ids, at least one). The
+// list is the complete new binding set, not a delta; main computes the
+// added / removed groups against the fresh bindings itself.
+export interface NetworkBindingsRequest {
+  sessionNonce: string;
+  networkId: string;
+  apGroupIds: string[];
+}
+
+// Result of updateNetworkBindings(). A 'capacityInsufficient' refusal carries
+// `capacityProblems` (every failing group + band, in request and band order,
+// 'mlo' after the radio bands).
+export interface NetworkBindingsResult {
+  success: boolean;
+  error?: NetworkBindingsError;
+  diagnostic?: string;
+  capacityProblems?: NetworkCapacityProblem[];
+}
+
 // Data loaded from controller
 export interface ControllerData {
   accessPoints: AccessPoint[];
@@ -612,6 +690,7 @@ export interface OmadaAPI {
   changeNetworkPassword(request: NetworkPasswordRequest): Promise<NetworkActionResult>;
   setNetworkEnabled(request: NetworkEnableRequest): Promise<NetworkActionResult>;
   deleteNetwork(request: NetworkDeleteRequest): Promise<NetworkActionResult>;
+  updateNetworkBindings(request: NetworkBindingsRequest): Promise<NetworkBindingsResult>;
 }
 
 // IPC channel names (type-safe)
@@ -657,6 +736,11 @@ export const IPC_CHANNELS = {
   MANAGEMENT_NETWORK_PASSWORD: 'management:network-password',
   MANAGEMENT_NETWORK_ENABLE: 'management:network-enable',
   MANAGEMENT_NETWORK_DELETE: 'management:network-delete',
+
+  // A Wi-Fi network's AP-group bindings ("Broadcast on"; Open API, management
+  // on only): replace the set of AP groups it is broadcast on, checked in main
+  // on fresh data (never for an "All access points" or unknown-scope network)
+  MANAGEMENT_NETWORK_BINDINGS: 'management:network-bindings',
 } as const;
 
 // Type for IPC channel values

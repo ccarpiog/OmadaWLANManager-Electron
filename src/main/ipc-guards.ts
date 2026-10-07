@@ -1,7 +1,7 @@
 // Pure shape guards for the session-owned IPC channels (docs/management-design.md
 // §3): the management-access channels of phase 15b, the AP-group channels of
-// phase 16a, the Wi-Fi network read of phase 17a (requireSessionNonce()) and
-// the Wi-Fi network writes of phase 18a.
+// phase 16a, the Wi-Fi network read of phase 17a (requireSessionNonce()), the
+// Wi-Fi network writes of phase 18a and the binding write of phase 19a.
 // index.ts calls them right after assertTrustedIpcSender(); the
 // unit tests (tests/unit/ipc-guards.test.ts) and the smoke stub
 // (tests/smoke/stub-main.cjs, which requires the compiled module) use the very
@@ -17,6 +17,7 @@ import type {
   ApGroupDeleteRequest,
   ApGroupRenameRequest,
   NetworkBand,
+  NetworkBindingsRequest,
   NetworkCreateRequest,
   NetworkDeleteRequest,
   NetworkEnableRequest,
@@ -40,7 +41,8 @@ export const MAX_RAW_AP_GROUP_NAME_LENGTH = 1024;
 // Upper bounds for the Wi-Fi network write payloads as they arrive: the raw
 // name (the SSID rules proper — trimmed, 1–32 bytes of UTF-8 — are applied by
 // validateSsidName()), the raw passphrase (validatePassphrase(): 8–63
-// printable ASCII characters) and the number of AP-group ids of a create
+// printable ASCII characters) and the number of AP-group ids of a create or
+// a binding change
 export const MAX_RAW_NETWORK_NAME_LENGTH = 1024;
 export const MAX_RAW_PASSPHRASE_LENGTH = 256;
 export const MAX_NETWORK_AP_GROUP_IDS = 256;
@@ -269,7 +271,7 @@ function bandsField(raw: Record<string, unknown>): NetworkBand[] {
 }
 
 /**
- * Reads the AP-group ids of a create payload: an array of at most
+ * Reads the AP-group ids of a create or binding payload: an array of at most
  * MAX_NETWORK_AP_GROUP_IDS 24-hex ids, copied deduplicated in their order (an
  * empty list is answered with 'groupsRequired' by the rules).
  * @param {Record<string, unknown>} raw - The payload.
@@ -377,4 +379,19 @@ export function parseNetworkEnableRequest(payload: unknown, extra: unknown[]): N
 export function parseNetworkDeleteRequest(payload: unknown, extra: unknown[]): NetworkDeleteRequest {
   const raw = requireExactPayload(payload, extra, ['sessionNonce', 'networkId'], [], 'Wi-Fi network');
   return { sessionNonce: nonceField(raw), networkId: networkIdField(raw) };
+}
+
+/**
+ * Shape guard of MANAGEMENT_NETWORK_BINDINGS: one argument `{sessionNonce,
+ * networkId, apGroupIds}` — an SSID id and at most MAX_NETWORK_AP_GROUP_IDS
+ * 24-hex AP-group ids, copied deduplicated (an empty list is answered with
+ * 'groupsRequired' by the rules).
+ * @param {unknown} payload - The first argument.
+ * @param {unknown[]} extra - Any further arguments (must be none).
+ * @returns {NetworkBindingsRequest} A fresh copy with exactly these keys.
+ * @throws {Error} On any other shape.
+ */
+export function parseNetworkBindingsRequest(payload: unknown, extra: unknown[]): NetworkBindingsRequest {
+  const raw = requireExactPayload(payload, extra, ['sessionNonce', 'networkId', 'apGroupIds'], [], 'Wi-Fi network bindings');
+  return { sessionNonce: nonceField(raw), networkId: networkIdField(raw), apGroupIds: apGroupIdsField(raw) };
 }

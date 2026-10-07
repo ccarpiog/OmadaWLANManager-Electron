@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T09:08:36Z",
+ "updated": "2026-10-07T09:58:06Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -246,16 +246,18 @@
   {
    "id": "19",
    "title": "Broadcast on binding editor",
-   "status": "queued",
+   "status": "in_progress",
    "risk": "high",
-   "summary": "Split into 19a (main-side Open API binding write, capacity checks, guarded IPC) and 19b (editor UI, smoke)."
+   "summary": "Split into 19a (main-side Open API binding write, capacity checks, guarded IPC; done) and 19b (editor UI, smoke; queued)."
   },
   {
    "id": "19a",
    "title": "Network binding write in main",
-   "status": "queued",
+   "status": "done",
    "risk": "high",
-   "summary": "Adds the Open API write that sets which AP groups broadcast a network, with per-band capacity checks on fresh data, behind guarded IPC."
+   "summary": "Adds the Open API write that sets which AP groups broadcast a network, with scope and per-band capacity checks on fresh data, behind guarded IPC.",
+   "review": "docs/reviews/phase19a.md",
+   "narrative": "docs/progress-archive/phase-19a.md"
   },
   {
    "id": "19b",
@@ -270,6 +272,34 @@
    "status": "queued",
    "risk": "routine",
    "summary": "Integrates the features, hardens edge cases and writes the live-test checklist."
+  },
+  {
+   "id": "I-1",
+   "title": "TP-Link cloud controllers",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Inbox item: adds remote controllers through the TP-Link Account Level Open API; split into I-1a, I-1b and I-1c, after phase 20."
+  },
+  {
+   "id": "I-1a",
+   "title": "Cloud account client and config",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Adds cloud credentials, a cloud account client listing controllers, the Open API cloud route and guarded IPC, tested on fixtures only."
+  },
+  {
+   "id": "I-1b",
+   "title": "Cloud controller session",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Adds an Open-API-only controller session with local and cloud targets and AP moves verified by a re-read."
+  },
+  {
+   "id": "I-1c",
+   "title": "Cloud UI and docs",
+   "status": "queued",
+   "risk": "high",
+   "summary": "Adds the cloud Settings section, a controller switcher, cloud error states, a smoke launch and README and checklist sections."
   }
  ]
 }

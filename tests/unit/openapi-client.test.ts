@@ -31,6 +31,7 @@ import {
 } from '../../src/main/openapi-client';
 import apGroupWriteFixtures from '../fixtures/openapi/ap-group-writes.json';
 import ssidWriteFixtures from '../fixtures/openapi/ssid-writes.json';
+import ssidBindingFixtures from '../fixtures/openapi/ssid-bindings.json';
 import apGroupFixtures from '../fixtures/openapi/ap-groups.json';
 import siteFixtures from '../fixtures/openapi/sites.json';
 import ssidFixtures from '../fixtures/openapi/ssids.json';
@@ -1338,3 +1339,75 @@ describe('OpenApiClient: Wi-Fi network write contract (fixtures: tests/fixtures/
     assert.deepEqual(transport.requests, []);
   }); // End of test "unusable arguments are refused..."
 }); // End of the describe block for the Wi-Fi network write contract
+
+/**
+ * Resolves the binding write contract path of tests/fixtures/openapi/ssid-bindings.json.
+ * @returns {string} The path.
+ */
+function bindingsPath(): string {
+  return ssidBindingFixtures.path.replace('{omadacId}', OMADAC_ID).replace('{siteId}', ssidBindingFixtures.siteId).replace('{ssidId}', ssidBindingFixtures.ssidId);
+}
+
+describe('OpenApiClient: Wi-Fi network binding write contract (fixtures: tests/fixtures/openapi/ssid-bindings.json)', () => {
+  const { siteId, ssidId, apGroupIds } = ssidBindingFixtures;
+
+  test('updateSsidApGroups(): PATCH /openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}/ap-groups with exactly {apGroupIds}; errorCode 0 is the confirmation', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('PATCH', bindingsPath(), { body: ssidBindingFixtures.success });
+    assert.equal(await client.updateSsidApGroups(siteId, ssidId, apGroupIds), undefined);
+    assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `PATCH ${bindingsPath()}`]);
+    const [, request] = transport.requests;
+    assert.equal(request.method, ssidBindingFixtures.method);
+    assert.equal(request.path, bindingsPath());
+    assert.ok(request.path.startsWith(`/openapi/v1/${OMADAC_ID}/sites/`), 'explicit v1 path, no query');
+    assert.equal(request.headers.Authorization, 'AccessToken=AT-1');
+    assert.equal(request.headers['Content-Type'], 'application/json');
+    assert.deepEqual(request.body, ssidBindingFixtures.body, 'exactly the documented body');
+    assert.deepEqual(Object.keys(request.body as object), ['apGroupIds'], 'no other key');
+  }); // End of test "updateSsidApGroups(): PATCH …"
+
+  test('updateSsidApGroups(): the body is a copy of the ids in the given order (the complete new set, never a delta)', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('PATCH', bindingsPath(), { body: ssidBindingFixtures.success });
+    const ids = [apGroupIds[1], apGroupIds[0]];
+    await client.updateSsidApGroups(siteId, ssidId, ids);
+    ids.push('6512a0e1f3b2c41d2e3f4a00');
+    assert.deepEqual(transport.requests[1].body, { apGroupIds: [apGroupIds[1], apGroupIds[0]] });
+  });
+
+  test('the documented errorCode surfaces as apiError carrying it; HTTP 500 is httpError; a refused write is never retried; a rejected token re-acquires once and resends the same body', async () => {
+    for (const answer of ssidBindingFixtures.errors) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('PATCH', bindingsPath(), { body: answer });
+      const error = await expectOpenApiError(client.updateSsidApGroups(siteId, ssidId, apGroupIds), 'apiError');
+      assert.equal(error.controllerErrorCode, answer.errorCode);
+      assert.equal(transport.requestsTo('PATCH', bindingsPath()).length, 1, 'no retry of a refused write');
+    }
+    const failing = setup();
+    failing.transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('PATCH', bindingsPath(), { status: 500, body: '<html>oops</html>' });
+    assert.equal((await expectOpenApiError(failing.client.updateSsidApGroups(siteId, ssidId, apGroupIds), 'httpError')).httpStatus, 500);
+    const retried = setup();
+    let token = 0;
+    retried.transport.on('POST', TOKEN_PATH, () => tokenReply(`AT-${++token}`)).on('PATCH', bindingsPath(), [EXPIRED, { body: ssidBindingFixtures.success }]);
+    await retried.client.updateSsidApGroups(siteId, ssidId, apGroupIds);
+    const sent = retried.transport.requestsTo('PATCH', bindingsPath());
+    assert.deepEqual(sent.map((request) => request.headers.Authorization), ['AccessToken=AT-1', 'AccessToken=AT-2']);
+    assert.deepEqual(sent[1].body, sent[0].body);
+  }); // End of test "the documented errorCode surfaces as apiError…"
+
+  test('unusable arguments are refused before anything is sent: site / SSID ids, an empty, duplicated, non-24-hex or non-array id list; a closed client sends nothing', async () => {
+    const { client, transport } = setup();
+    await assert.rejects(client.updateSsidApGroups('', ssidId, apGroupIds), /Invalid SSID bindings update arguments/);
+    for (const badId of ['', '..', '../sites', 'a b', 'x'.repeat(129)]) {
+      await assert.rejects(client.updateSsidApGroups(siteId, badId, apGroupIds), /Invalid SSID bindings update arguments/, badId);
+    }
+    const badLists: unknown[] = [[], [apGroupIds[0], apGroupIds[0]], ['bad id!'], [apGroupIds[0], 7], `${apGroupIds[0]}`, null, [`${apGroupIds[0]}0`]];
+    for (const ids of badLists) {
+      await assert.rejects(client.updateSsidApGroups(siteId, ssidId, ids as string[]), /Invalid SSID bindings update arguments/, JSON.stringify(ids));
+    }
+    assert.deepEqual(transport.requests, []);
+    client.close();
+    await expectOpenApiError(client.updateSsidApGroups(siteId, ssidId, apGroupIds), 'clientClosed');
+    assert.deepEqual(transport.requests, []);
+  }); // End of test "unusable arguments are refused…"
+}); // End of the describe block for the binding write contract

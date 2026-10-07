@@ -175,7 +175,7 @@ const EXPECTED_BRIDGE = [
   'changeNetworkPassword', 'connect', 'createApGroup', 'createNetwork', 'deleteApGroup', 'deleteNetwork', 'disconnect', 'getAccessPoints',
   'getManagedApGroups', 'getManagedNetworks', 'getManagementCapabilities', 'getWlanGroups', 'loadConfig', 'platform', 'renameApGroup',
   'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup', 'setNetworkEnabled', 'testManagementAccess', 'trustCertificate',
-  'updateNetwork',
+  'updateNetwork', 'updateNetworkBindings',
 ];
 // The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
 const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
@@ -4940,6 +4940,10 @@ async function runManagementCapabilities(electronInfo) {
     await check('[caps] Wi-Fi network write bridge (phase 18a, no UI yet): the five new preload methods reach their channels with the session nonce, and the stub answers through the real guards, write rules, read-merge-write and DTO — create (trimmed, disabled, WPA-Personal, bound to 2 groups; the exact body) shows on the next read and in the groups; Enterprise / no passphrase / a 34-byte name / an unknown group refused; a rename without the re-typed passphrase refused, with it saved (every reported setting kept); to open (a passphrase refused), back to WPA-Personal, Change password (too short refused, then saved; refused on an open network), enabled; a scripted nameTaken; fresh data turning the network Enterprise refuses edits but not disable or delete; management off, a stale nonce, malformed payloads and an unknown network refused; no passphrase in any reply', async () => {
       return networkWriteBridgeVerdict(session);
     });
+
+    await check('[caps] Wi-Fi network binding bridge (phase 19a, no UI yet): updateNetworkBindings() reaches management:network-bindings with the session nonce, and the stub answers through the real guard, request rules, scope rule and plan — Casa bound to a second group (the exact {apGroupIds} body; the network, the group\'s networks and its per-band capacity follow on the next reads), the same set again = nothingToChange, no group / an unknown group refused, two added groups lacking capacity refused naming every group + band (full and not reported), a scripted controller answer, the group removed again; an "All access points" and an unknown-scope network refused with nothing written; management off, a stale nonce, malformed payloads and an unknown network refused', async () => {
+      return networkBindingsBridgeVerdict(session);
+    });
   } finally {
     session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
     await session.app.close().catch(() => {});
@@ -5308,6 +5312,149 @@ async function networkWriteBridgeVerdict(session) {
     isDeepStrictEqual(after.scenario.wlanGroups, groupsBefore) && after.scenario.networks === null;
   return verdict(ok, { outcome, writes });
 } // End of function networkWriteBridgeVerdict()
+
+/**
+ * The phase 19a binding bridge check of the [caps] launch: drives the new
+ * preload method against the stub (no UI involved) — "Casa" (derived, bound
+ * to Default) gains zNinguna, is refused a no-op, an empty and an unknown
+ * group set and two added groups lacking capacity (every group + band named),
+ * gets a scripted controller answer, and loses zNinguna again; an "All access
+ * points" and an unknown-scope network (turned so by "fresh data") are
+ * refused — and restores the stub's networks, groups and knobs afterwards.
+ * @param {object} session - The launch.
+ * @returns {Promise<{ ok: boolean; detail: unknown }>} The verdict.
+ */
+async function networkBindingsBridgeVerdict(session) {
+  const { page } = session;
+  const before = await stubState(session);
+  const nonce = before.sessionNonce;
+  const groupsBefore = before.scenario.wlanGroups;
+  const writesBefore = before.networkWrites.length;
+  const [defaultId, groupB, ninguna, exterior] = ['Default', 'zGrupo B', 'zNinguna', 'Exterior'].map((name) => GROUP[name].wlanId);
+  const outcome = {};
+  let casa = null;
+  /**
+   * Calls updateNetworkBindings() with this launch's session nonce.
+   * @param {object} fields - The request without the nonce.
+   * @returns {Promise<{ value?: unknown; rejected?: string }>} The outcome.
+   */
+  const bind = (fields) => callBridge(page, 'updateNetworkBindings', { sessionNonce: nonce, ...fields });
+  /**
+   * The managed network with this name in one recorded read.
+   * @param {string} key - The outcome's key.
+   * @param {string} name - The network's name.
+   * @returns {object | undefined} The DTO.
+   */
+  const network = (key, name) => ((outcome[key].value && outcome[key].value.networks) || []).find((candidate) => candidate.name === name);
+  /**
+   * The managed AP group with this id in one recorded read.
+   * @param {string} key - The outcome's key.
+   * @param {string} id - The group id.
+   * @returns {object | undefined} The DTO.
+   */
+  const group = (key, id) => ((outcome[key].value && outcome[key].value.groups) || []).find((candidate) => candidate.id === id);
+  let groupsAfterBind = null;
+  let groupsAfterRefusals = null;
+  try {
+    outcome.read = await callBridge(page, 'getManagedNetworks', nonce);
+    casa = network('read', 'Casa');
+    outcome.bound = await bind({ networkId: casa.id, apGroupIds: [defaultId, ninguna] });
+    groupsAfterBind = (await stubState(session)).scenario.wlanGroups;
+    outcome.afterBind = await callBridge(page, 'getManagedNetworks', nonce);
+    outcome.groupsAfterBind = await callBridge(page, 'getManagedApGroups', nonce);
+    outcome.same = await bind({ networkId: casa.id, apGroupIds: [ninguna, defaultId, ninguna] });
+    outcome.none = await bind({ networkId: casa.id, apGroupIds: [] });
+    outcome.unknownGroup = await bind({ networkId: casa.id, apGroupIds: [defaultId, '6512a0e1f3b2c41d2e3f4a00'] });
+    // Fresh capacity the renderer has not seen: Exterior reports 2.4 GHz full
+    // and nothing for 5 GHz; zGrupo B reports no remaining binding at all
+    await configureStub(session, { apGroupOverrides: { [exterior]: { remainingBinding: { 0: 0 } }, [groupB]: { remainingBinding: null } } });
+    outcome.capacity = await bind({ networkId: casa.id, apGroupIds: [defaultId, ninguna, exterior, groupB] });
+    await configureStub(session, { apGroupOverrides: {} });
+    await configureStub(session, { networkResults: { 'management:network-bindings': { success: false, error: 'requestFailed', diagnostic: 'ssid bindings: apiError, errorCode -33000' } } });
+    outcome.scripted = await bind({ networkId: casa.id, apGroupIds: [defaultId] });
+    await configureStub(session, { networkResults: {} });
+    groupsAfterRefusals = (await stubState(session)).scenario.wlanGroups;
+    outcome.unbound = await bind({ networkId: casa.id, apGroupIds: [defaultId] });
+    outcome.afterUnbind = await callBridge(page, 'getManagedNetworks', nonce);
+    // Fresh data the renderer has not seen: Invitados broadcasts on all access
+    // points, and Oficina's device selection is unrecognized
+    const live = (await stubState(session)).scenario.networks.map((candidate) => {
+      if (candidate.entry.name === 'Invitados') {
+        return { ...candidate, entry: { ...candidate.entry, chooseDevices: 0 }, detail: { ...candidate.detail, chooseDevices: 0 } };
+      }
+      return candidate.entry.name === 'Oficina' ? { ...candidate, detail: { ...candidate.detail, chooseDevices: 7 } } : candidate;
+    });
+    await configureStub(session, { networks: live });
+    const invitados = network('read', 'Invitados');
+    const oficina = network('read', 'Oficina');
+    outcome.allAps = await bind({ networkId: invitados.id, apGroupIds: [defaultId, ninguna] });
+    outcome.unknownScope = await bind({ networkId: oficina.id, apGroupIds: [groupB, ninguna] });
+    await configureStub(session, { managementReason: 'apGroupsMismatch' });
+    outcome.off = await bind({ networkId: casa.id, apGroupIds: [defaultId, ninguna] });
+    await configureStub(session, { managementReason: null });
+    outcome.stale = await callBridge(page, 'updateNetworkBindings', { sessionNonce: 'f'.repeat(32), networkId: casa.id, apGroupIds: [defaultId] });
+    outcome.extraKey = await bind({ networkId: casa.id, apGroupIds: [defaultId], chooseDevices: 0 });
+    outcome.badId = await bind({ networkId: '../x', apGroupIds: [defaultId] });
+    outcome.badGroup = await bind({ networkId: casa.id, apGroupIds: ['bad id!'] });
+    outcome.unknownNetwork = await bind({ networkId: 'no-such-network', apGroupIds: [defaultId] });
+  } finally {
+    await configureStub(session, { networks: null, networkResults: {}, managementReason: null, apGroupOverrides: {}, wlanGroups: groupsBefore });
+  }
+  const after = await stubState(session);
+  const writes = after.networkWrites.slice(writesBefore);
+  /**
+   * The reply of one recorded bridge outcome.
+   * @param {string} key - The outcome's key.
+   * @returns {unknown} The reply.
+   */
+  const reply = (key) => outcome[key].value;
+  /**
+   * Whether a fake group's ssidList lists Casa in one snapshot of the groups.
+   * @param {object[]} groups - The fake groups.
+   * @param {string} id - The group id.
+   * @returns {number} How many entries named "Casa" the group has.
+   */
+  const casaEntries = (groups, id) => groups.find((candidate) => candidate.wlanId === id).ssidList.filter((ssid) => ssid.ssidName === 'Casa').length;
+  const ninguna2 = group('groupsAfterBind', ninguna);
+  const ok =
+    casa !== undefined && isDeepStrictEqual(casa.apGroupIds, [defaultId]) && casa.scope === 'apGroups' &&
+    isDeepStrictEqual(reply('bound'), { success: true }) &&
+    isDeepStrictEqual(network('afterBind', 'Casa').apGroupIds, [defaultId, ninguna]) &&
+    casaEntries(groupsAfterBind, ninguna) === 1 && casaEntries(groupsAfterBind, defaultId) === 1 &&
+    ninguna2 !== undefined && isDeepStrictEqual(ninguna2.networkNames, ['Casa']) &&
+    isDeepStrictEqual(ninguna2.remainingBinding, { band2g: DEFAULT_SSID_LIMITS.band2g - 1, band5g: DEFAULT_SSID_LIMITS.band5g - 1, band6g: DEFAULT_SSID_LIMITS.band6g - 1 }) &&
+    isDeepStrictEqual(reply('same'), { success: false, error: 'nothingToChange' }) &&
+    isDeepStrictEqual(reply('none'), { success: false, error: 'groupsRequired' }) &&
+    isDeepStrictEqual(reply('unknownGroup'), { success: false, error: 'groupNotFound' }) &&
+    isDeepStrictEqual(reply('capacity'), {
+      success: false,
+      error: 'capacityInsufficient',
+      diagnostic: 'capacity: 1 full, 3 unknown',
+      capacityProblems: [
+        { apGroupId: exterior, band: 'band2g', reason: 'full' },
+        { apGroupId: exterior, band: 'band5g', reason: 'unknown' },
+        { apGroupId: groupB, band: 'band2g', reason: 'unknown' },
+        { apGroupId: groupB, band: 'band5g', reason: 'unknown' },
+      ],
+    }) &&
+    isDeepStrictEqual(reply('scripted'), { success: false, error: 'requestFailed', diagnostic: 'ssid bindings: apiError, errorCode -33000' }) &&
+    isDeepStrictEqual(groupsAfterRefusals, groupsAfterBind) &&
+    isDeepStrictEqual(reply('unbound'), { success: true }) && isDeepStrictEqual(network('afterUnbind', 'Casa').apGroupIds, [defaultId]) &&
+    isDeepStrictEqual(reply('allAps'), { success: false, error: 'scopeAllAccessPoints' }) &&
+    isDeepStrictEqual(reply('unknownScope'), { success: false, error: 'scopeUnknown' }) &&
+    isDeepStrictEqual(reply('off'), { success: false, error: 'managementUnavailable' }) &&
+    isDeepStrictEqual(reply('stale'), { success: false, error: 'superseded' }) &&
+    /invalid Wi-Fi network bindings request keys/.test(outcome.extraKey.rejected || '') &&
+    /invalid Wi-Fi network id format/.test(outcome.badId.rejected || '') && /invalid AP group id format/.test(outcome.badGroup.rejected || '') &&
+    isDeepStrictEqual(reply('unknownNetwork'), { success: false, error: 'networkNotFound' }) &&
+    isDeepStrictEqual(writes, [
+      { op: 'bindings', networkId: casa.id, body: { apGroupIds: [defaultId, ninguna] } },
+      { op: 'bindings', networkId: casa.id, body: { apGroupIds: [defaultId] } },
+    ]) &&
+    callsTo(after, 'management:network-bindings')[0].args[0].sessionNonce === nonce &&
+    isDeepStrictEqual(after.scenario.wlanGroups, groupsBefore) && after.scenario.networks === null;
+  return verdict(ok, { outcome, writes });
+} // End of function networkBindingsBridgeVerdict()
 
 // ============================================================================
 // Launch 6: AP group management (phase 16b) — New group, Rename, Delete with

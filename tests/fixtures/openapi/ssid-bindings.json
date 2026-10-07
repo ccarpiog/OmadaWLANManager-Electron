@@ -1,0 +1,21 @@
+{
+  "description": "The documented contract of the Open API Wi-Fi network (SSID) binding write, \"Update SSID binding ap groups\" (docs/omada-openapi-ops.md, controller 6.3.0.45 spec), used by the OpenApiClient contract tests (src/main/openapi-client.ts updateSsidApGroups()): method, versioned path ({omadacId}, {siteId}, {ssidId} placeholders), the exact request body (only the required apGroupIds: the complete new set of bound AP groups), the documented success answer (no result) and the documented operation-specific errorCode. Every id is made up.",
+  "siteId": "64f0c0ffee0000000000a001",
+  "ssidId": "5f00c0ffee0000000000c001",
+  "method": "PATCH",
+  "path": "/openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}/ap-groups",
+  "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5b", "6512a0e1f3b2c41d2e3f4a5c"],
+  "body": {
+    "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5b", "6512a0e1f3b2c41d2e3f4a5c"]
+  },
+  "success": {
+    "errorCode": 0,
+    "msg": "Success."
+  },
+  "errors": [
+    {
+      "errorCode": -33000,
+      "msg": "This site does not exist."
+    }
+  ]
+}

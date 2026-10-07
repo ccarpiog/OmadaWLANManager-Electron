@@ -95,6 +95,30 @@
 // Enterprise / PPSK / unknown security is refused for an edit on the fresh
 // detail, whatever the renderer believed. A typed passphrase is scrubbed by
 // value from every log line; replies and diagnostics carry codes only.
+//
+// Wi-Fi network bindings ("Broadcast on", todo.md 4.12; spec §3, §4.5, §5):
+// updateNetworkBindings() is the only caller of the Open API client's binding
+// write, under the same binding ('managementUnavailable' unless Wi-Fi network
+// management is on, the client of the latest successful check run,
+// 'superseded' after any await once the session is closed or replaced or its
+// client dropped) and on the same write queue and epoch as the other writes.
+// The requested groups are checked first (network-binding-plan.ts: at least
+// one, 24-hex ids — nothing is sent for a refused request); then, inside the
+// serialized operation, the FRESH SSID catalog is read — it must be complete
+// and within MAX_MANAGED_NETWORKS ('networkListIncomplete') and list the
+// network ('networkNotFound'), like the network list —, then the network's
+// FRESH detail and bindings; the scope is decided from catalog entry, detail
+// and bindings by the read model's own rules (toManagedNetwork(): a
+// catalog / detail disagreement is an unknown scope), and an "All access
+// points" or unknown-scope network is refused right there (no further read,
+// never a PATCH); then the FRESH AP-group list; the change is planned on that
+// fresh data only — every requested group listed, the diff against the fresh
+// bindings ('nothingToChange' sends nothing), the network's bands and MLO
+// state known before groups are added, the remaining capacity of every ADDED
+// group on every band the network uses and on MLO for an MLO network (every
+// failing group + band named) — and the PATCH …/ap-groups carries the
+// complete new set. Replies carry codes, codes-only diagnostics and the
+// capacity problems only.
 
 import type {
   AccessPoint,
@@ -115,6 +139,9 @@ import type {
   ManagementCheckError,
   ManagementReason,
   NetworkActionResult,
+  NetworkBindingsError,
+  NetworkBindingsRequest,
+  NetworkBindingsResult,
   NetworkCreateRequest,
   NetworkDeleteRequest,
   NetworkEnableRequest,
@@ -132,6 +159,7 @@ import {
   validateApGroupName
 } from './ap-group-policy';
 import { ConnectionManager, createNonce, InstalledDetails, ManagedController } from './connection-manager';
+import { bindingRefusalReply, checkBindingRequest, checkBindingScope, networkBindingFacts, planNetworkBindings } from './network-binding-plan';
 import { ConnectOutcome, OmadaController } from './omada-api';
 import type { OmadaTransport } from './omada-transport';
 import { OpenApiApGroupList, OpenApiClient, OpenApiClientOptions, OpenApiError, OpenApiSsidWriteDetail, PagedList } from './openapi-client';
@@ -460,6 +488,44 @@ export function describeNetworkWriteFailure(operation: NetworkWriteOperation, ca
   }
   return networkWriteFailure('requestFailed', diagnostic);
 } // End of function describeNetworkWriteFailure()
+
+/** The Open API calls of the binding write (the prefix of its diagnostics). */
+export type NetworkBindingsCall = 'ap-groups' | 'ssids' | 'ssid detail' | 'ssid ap-groups' | 'ssid bindings';
+
+/** A failed binding write reply. */
+export interface NetworkBindingsFailure {
+  success: false;
+  error: NetworkBindingsError;
+  diagnostic?: string;
+}
+
+/**
+ * Builds a failed binding write reply.
+ * @param {NetworkBindingsError} error - The stable error code.
+ * @param {string} [diagnostic] - Codes-only technical detail.
+ * @returns {NetworkBindingsFailure} The reply.
+ */
+export function networkBindingsFailure(error: NetworkBindingsError, diagnostic?: string): NetworkBindingsFailure {
+  return diagnostic ? { success: false, error, diagnostic } : { success: false, error };
+}
+
+/**
+ * Maps a failed Open API call of the binding write to its reply: a closed
+ * client is 'superseded' (the session moved on), anything else
+ * 'requestFailed' with "<call>: <codes>" (e.g. "ssid bindings: apiError,
+ * errorCode -33000", "ssid ap-groups: malformedResponse") — the ops doc
+ * documents no operation-specific errorCode worth its own code (only -33000,
+ * "This site does not exist"), and controller text is never passed on.
+ * @param {NetworkBindingsCall} call - The failed call.
+ * @param {unknown} error - The thrown value.
+ * @returns {NetworkBindingsFailure} The failed reply.
+ */
+export function describeNetworkBindingsFailure(call: NetworkBindingsCall, error: unknown): NetworkBindingsFailure {
+  if (error instanceof OpenApiError && error.code === 'clientClosed') {
+    return networkBindingsFailure('superseded');
+  }
+  return networkBindingsFailure('requestFailed', `${call}: ${describeOpenApiFailure(error)}`);
+}
 
 /**
  * The secrets of one write to scrub from its log lines: the typed
@@ -929,6 +995,36 @@ export class ControllerSession implements ManagedController {
         this.#writeAfterFreshDetail('delete', networkId, isCurrent, (context) => context.client.deleteSsid(context.siteId, networkId))
       )
     );
+  }
+
+  /**
+   * Replaces the AP groups a Wi-Fi network is broadcast on ("Broadcast on";
+   * any security mode, user decision D3). The requested groups are checked
+   * first (checkBindingRequest(): nothing is sent for a refused request);
+   * then, in the serialized operation, the FRESH SSID catalog is read (an
+   * incomplete or over-cap one is 'networkListIncomplete', one without the
+   * network 'networkNotFound', nothing more read), then the network's FRESH
+   * detail and bindings — the scope is the read model's (catalog entry,
+   * detail and bindings through toManagedNetwork(): a disagreement is
+   * unknown), and an "All access points" or unknown-scope network is refused
+   * right there, before any other request and never with a PATCH —, then the
+   * FRESH AP-group list (a truncated one is 'groupListIncomplete'); the change
+   * is planned on that fresh data only (planNetworkBindings(): every
+   * requested group listed, the diff against the fresh bindings —
+   * 'nothingToChange' sends nothing —, the bands and the MLO state known
+   * before groups are added, the remaining capacity of every ADDED group on
+   * every band the network uses and on MLO for an MLO network, every failing
+   * group + band named in `capacityProblems`), whatever the renderer
+   * believed; then the PATCH …/ap-groups carries the complete new set. Queued
+   * behind another write, it is 'superseded' (nothing sent) when an
+   * invalidation came after this call (#serializeWrite()).
+   * @param {string} networkId - The SSID id (format-checked by the IPC guard).
+   * @param {readonly string[]} apGroupIds - The complete new set of AP-group ids (shape-checked by the IPC guard).
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<NetworkBindingsResult>} The reply.
+   */
+  updateNetworkBindings(networkId: string, apGroupIds: readonly string[], isInstalled: () => boolean): Promise<NetworkBindingsResult> {
+    return this.#serializeWrite(isInstalled, (isCurrent) => this.#guardedBindings(() => this.#updateBindings(networkId, apGroupIds, isCurrent)));
   }
 
   /**
@@ -1748,6 +1844,143 @@ export class ControllerSession implements ManagedController {
     }
     return { success: true };
   } // End of function #writeAfterFreshDetail()
+
+  /**
+   * Runs the binding write, turning an unexpected exception into
+   * 'requestFailed' (logged by its name only, through the redactor).
+   * @param {() => Promise<T>} body - The write.
+   * @returns {Promise<T | NetworkBindingsFailure>} Its reply, or the failure.
+   */
+  async #guardedBindings<T>(body: () => Promise<T>): Promise<T | NetworkBindingsFailure> {
+    try {
+      return await body();
+    } catch (error) {
+      console.warn(redactText(`Wi-Fi network bindings failed unexpectedly: ${error instanceof Error ? error.name : 'unknown error'}`));
+      return networkBindingsFailure('requestFailed', 'unexpected');
+    }
+  } // End of function #guardedBindings()
+
+  /**
+   * Turns the failure of one Open API call of the binding write into its
+   * reply: 'superseded' when the operation is no longer current (a late
+   * answer is discarded), otherwise the mapped failure, logged (stable code +
+   * codes-only diagnostic, through the redactor).
+   * @param {ManagementContext} context - The operation's context.
+   * @param {NetworkBindingsCall} call - The failed call.
+   * @param {unknown} error - The thrown value.
+   * @returns {NetworkBindingsFailure} The failure.
+   */
+  #bindingsCallFailed(context: ManagementContext, call: NetworkBindingsCall, error: unknown): NetworkBindingsFailure {
+    if (!context.isCurrent()) {
+      return networkBindingsFailure('superseded');
+    }
+    return this.#logBindingsFailure(describeNetworkBindingsFailure(call, error));
+  } // End of function #bindingsCallFailed()
+
+  /**
+   * Logs a failed binding write (stable code + codes-only diagnostic, through
+   * the redactor; 'superseded' is not logged) and returns the failure.
+   * @param {NetworkBindingsFailure} failure - The failure.
+   * @returns {NetworkBindingsFailure} The same failure.
+   */
+  #logBindingsFailure(failure: NetworkBindingsFailure): NetworkBindingsFailure {
+    if (failure.error !== 'superseded') {
+      console.warn(redactText(`Wi-Fi network bindings failed: ${failure.error}${failure.diagnostic ? ` (${failure.diagnostic})` : ''}`));
+    }
+    return failure;
+  }
+
+  /**
+   * The binding write (see updateNetworkBindings()): the request rules, the
+   * fresh catalog (complete, listing the network), the fresh detail and
+   * bindings (the scope rule right after them), the fresh AP-group list, the
+   * plan, the PATCH.
+   * @param {string} networkId - The SSID id.
+   * @param {readonly string[]} apGroupIds - The requested ids.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<NetworkBindingsResult>} The reply.
+   */
+  async #updateBindings(networkId: string, apGroupIds: readonly string[], isInstalled: () => boolean): Promise<NetworkBindingsResult> {
+    const request = checkBindingRequest(apGroupIds);
+    if (!request.ok) {
+      return bindingRefusalReply(request);
+    }
+    const context = await this.#managementContext(isInstalled, 'manageWifiNetworks');
+    if (isContextFailure(context)) {
+      return context;
+    }
+    // The catalog NOW, as the network list reads it (#readNetworks()): the
+    // scope is judged exactly as the list shows it, so it must be complete,
+    // within the cap and list the network — else nothing more is read
+    let catalog: PagedList<OpenApiSsid>;
+    try {
+      catalog = await context.client.listSsids(context.siteId);
+    } catch (error) {
+      return this.#bindingsCallFailed(context, 'ssids', error);
+    }
+    if (!context.isCurrent()) {
+      return networkBindingsFailure('superseded');
+    }
+    if (catalog.truncated) {
+      return this.#logBindingsFailure(networkBindingsFailure('networkListIncomplete', 'ssids truncated'));
+    }
+    if (catalog.items.length > MAX_MANAGED_NETWORKS) {
+      return this.#logBindingsFailure(networkBindingsFailure('networkListIncomplete', `ssids ${catalog.items.length}, over ${MAX_MANAGED_NETWORKS}`));
+    }
+    const entry = catalog.items.find((candidate) => candidate.id === networkId);
+    if (entry === undefined) {
+      return networkBindingsFailure('networkNotFound');
+    }
+    // The network as the controller reports it NOW (never the renderer's view):
+    // its device selection, bindings, bands and MLO state decide the scope and
+    // the capacity. The raw detail stays in this function (main memory only)
+    let fresh: OpenApiSsidWriteDetail;
+    try {
+      fresh = await context.client.getSsidWriteDetail(context.siteId, networkId);
+    } catch (error) {
+      return this.#bindingsCallFailed(context, 'ssid detail', error);
+    }
+    if (!context.isCurrent()) {
+      return networkBindingsFailure('superseded');
+    }
+    let bindings: OpenApiSsidBindings;
+    try {
+      bindings = await context.client.getSsidApGroups(context.siteId, networkId);
+    } catch (error) {
+      return this.#bindingsCallFailed(context, 'ssid ap-groups', error);
+    }
+    if (!context.isCurrent()) {
+      return networkBindingsFailure('superseded');
+    }
+    const facts = networkBindingFacts(entry, fresh.detail, bindings, fresh.raw.mloEnable);
+    // "All access points" and unknown scopes (a catalog / detail disagreement
+    // included): refused before anything else is read or sent — never a
+    // binding PATCH for them (spec §4.5, §5)
+    const scope = checkBindingScope(facts);
+    if (scope !== null) {
+      return bindingRefusalReply(scope);
+    }
+    // The fresh AP-group list: every requested group must exist, and the
+    // added ones must have room on the network's bands
+    const groups = await this.#readApGroups(context);
+    if (isApGroupFailure(groups)) {
+      const passed = groups.error === 'superseded' || groups.error === 'groupListIncomplete' ? groups.error : 'requestFailed';
+      return networkBindingsFailure(passed, groups.diagnostic);
+    }
+    const planned = planNetworkBindings(request.apGroupIds, facts, groups.items);
+    if (!planned.ok) {
+      return bindingRefusalReply(planned);
+    }
+    try {
+      await context.client.updateSsidApGroups(context.siteId, networkId, planned.plan.apGroupIds);
+    } catch (error) {
+      return this.#bindingsCallFailed(context, 'ssid bindings', error);
+    }
+    if (!context.isCurrent()) {
+      return networkBindingsFailure('superseded');
+    }
+    return { success: true };
+  } // End of function #updateBindings()
 } // End of class ControllerSession
 
 /**
@@ -1975,4 +2208,14 @@ export function setNetworkEnabledReply(manager: ConnectionManager<ControllerSess
  */
 export function deleteNetworkReply(manager: ConnectionManager<ControllerSession>, request: NetworkDeleteRequest): Promise<NetworkActionResult> {
   return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) => session.deleteNetwork(request.networkId, isInstalled));
+}
+
+/**
+ * MANAGEMENT_NETWORK_BINDINGS (ControllerSession.updateNetworkBindings()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {NetworkBindingsRequest} request - The shape-checked request.
+ * @returns {Promise<NetworkBindingsResult>} The reply.
+ */
+export function updateNetworkBindingsReply(manager: ConnectionManager<ControllerSession>, request: NetworkBindingsRequest): Promise<NetworkBindingsResult> {
+  return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) => session.updateNetworkBindings(request.networkId, request.apGroupIds, isInstalled));
 }
