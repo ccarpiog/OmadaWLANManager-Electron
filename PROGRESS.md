@@ -346,3 +346,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 13a: `0a7f7d1` ("Add the sidebar shell and checkbox multi-select for access points"), pushed to origin/main (`7bf0e6b..0a7f7d1`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 13b: `b3ecb65` ("Add the destination pane, move review and sequential bulk moves"), pushed to origin/main (`17dcba5..b3ecb65`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 14a: `33bcb34` ("Add read-only AP group and Wi-Fi network views with cross-navigation"), pushed to origin/main (`cf2db68..33bcb34`). A follow-up commit records this SHA. Tree clean after it.
+- Phase 14b: `b68ea14` ("Add view states, the read-only banner and the responsive layout"), pushed to origin/main (`9567098..b68ea14`). A follow-up commit records this SHA. Tree clean after it.

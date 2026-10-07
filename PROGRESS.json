@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T01:10:38Z",
+ "updated": "2026-10-07T01:10:56Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -132,7 +132,8 @@
    "risk": "routine",
    "summary": "Adds loading, empty, error and read-only states, responsive breakpoints with single-pane drill-in, and the Cmd/Ctrl+F and Escape keys.",
    "review": "docs/reviews/phase14b.md",
-   "narrative": "docs/progress-archive/phase-14b.md"
+   "narrative": "docs/progress-archive/phase-14b.md",
+   "commit": "b68ea14"
   },
   {
    "id": "15",
