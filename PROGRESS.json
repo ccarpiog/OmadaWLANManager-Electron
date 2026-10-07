@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T07:36:08Z",
+ "updated": "2026-10-07T07:36:24Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -230,7 +230,8 @@
    "risk": "high",
    "summary": "Creates, edits, enables, disables and deletes Open and WPA-Personal networks in main with read-merge-write, consistent security settings and guarded IPC.",
    "review": "docs/reviews/phase18a.md",
-   "narrative": "docs/progress-archive/phase-18a.md"
+   "narrative": "docs/progress-archive/phase-18a.md",
+   "commit": "985f6e2"
   },
   {
    "id": "18b",

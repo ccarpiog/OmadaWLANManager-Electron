@@ -317,3 +317,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 16b: `b98365f` ("Add AP group management actions and per-band capacity to the AP groups view"), pushed to origin/main (`ea83c4f..b98365f`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 17a: `619d18f` ("Read Wi-Fi networks through the Open API with secrets stripped behind guarded IPC"), pushed to origin/main (`dbf07af..619d18f`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 17b: `9f52776` ("Show the managed Wi-Fi network list when management is on"), pushed to origin/main (`7b1e177..9f52776`). A follow-up commit records this SHA. Tree clean after it.
+- Phase 18a: `985f6e2` ("Add Wi-Fi network create, edit, enable and delete behind guarded IPC"), pushed to origin/main (`fec4a4f..985f6e2`). A follow-up commit records this SHA. Tree clean after it.
