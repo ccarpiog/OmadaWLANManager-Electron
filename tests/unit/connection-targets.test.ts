@@ -33,7 +33,7 @@ import { CloudAccessService } from '../../src/main/cloud-access';
 import type { CloudCredentials } from '../../src/main/cloud-account-model';
 import { createCloudControllerLookup } from '../../src/main/cloud-connect';
 import { CloudSessionError, describeCloudSessionError } from '../../src/main/cloud-controller-session';
-import { cloudCredentialsOf, type SecretBox, type StoredConfig } from '../../src/main/config-model';
+import { activeControllerOf, applyConfigSave as applyStoredConfigSave, cloudCredentialsOf, type SecretBox, type StoredConfig } from '../../src/main/config-model';
 import {
   cloudRefusalDetail,
   connectFailureDetail,
@@ -264,6 +264,8 @@ class TargetHarness {
   // What the next local controller reports as its omadacId
   learnedId: string | null = OMADAC_LOCAL;
   activeWriteFails = false;
+  // Whether the cloud credential is usable now (CloudConnectionDeps.hasUsableCredential())
+  cloudUsable: () => boolean = () => true;
   readonly writes: string[] = [];
   readonly controllers: TargetController[] = [];
   readonly lookups: Array<{ omadacId: string; reply: Deferred<CloudControllerLookup<TargetController>> }> = [];
@@ -312,7 +314,8 @@ class TargetHarness {
               saveCloudSiteId: (omadacId, siteId) => {
                 this.cloudSites[omadacId] = siteId;
                 this.writes.push(`cloudSites[${omadacId}]=${siteId}`);
-              }
+              },
+              hasUsableCredential: () => this.cloudUsable()
             }
     });
   } // End of constructor()
@@ -838,7 +841,8 @@ class LiveHarness {
         saveCloudSiteId: (omadacId, siteId) => {
           this.config.cloudSites[omadacId] = siteId;
           this.saved.cloudSites.push(`${omadacId}=${siteId}`);
-        }
+        },
+        hasUsableCredential: () => this.cloudCredentials !== null
       }
     });
   } // End of constructor()
@@ -1297,6 +1301,252 @@ describe('CONFIG_SAVE connectionReset (inbox I-1b2b2)', () => {
     assert.equal(session.openApiClient, null, 'the old Open API client and capabilities are dropped');
   }); // End of test "finishConfigSave(): a save that kept the URL..."
 }); // End of describe 'CONFIG_SAVE connectionReset (inbox I-1b2b2)'
+
+// ---------------------------------------------------------------------------
+// Inbox I-1c2b review: a save that leaves a cloud target without a usable
+// cloud credential returns the target to local in the save's own step
+// ---------------------------------------------------------------------------
+
+const NO_CLOUD_FLAGS: CloudAccessStatus = {
+  region: 'euw',
+  clientId: '',
+  hasCloudSecret: false,
+  cloudSecretSessionOnly: false,
+  canPersistCloudSecret: true,
+  activeController: 'local'
+};
+
+/**
+ * The secret box of the config-model saves below (reversible, never real
+ * encryption).
+ */
+const TEST_BOX: SecretBox = {
+  isEncryptionAvailable: () => true,
+  isSecureStorageAvailable: () => true,
+  encryptString: (plainText) => `enc:${plainText}`,
+  decryptString: (blob) => blob.slice(4)
+};
+
+/**
+ * A stored config over the real save rules (config-model.ts applyConfigSave()),
+ * as config.ts saveConfig() applies them: `save(payload)` gives the function
+ * ConnectionManager.applyConfigSave() runs, and `usable()` the production
+ * credential test (getCloudCredentials() !== null).
+ */
+class StoredConfigFake {
+  stored: StoredConfig;
+
+  /**
+   * Starts from a stored config.
+   * @param {StoredConfig} initial - The config on disk.
+   */
+  constructor(initial: StoredConfig) {
+    this.stored = initial;
+  }
+
+  /**
+   * The save step of CONFIG_SAVE for one payload.
+   * @param {ConfigSavePayload} payload - The settings sent by the renderer.
+   * @returns {() => { success: boolean; error?: string; urlChanged?: boolean; cloudCredentialsChanged?: boolean }} The step.
+   */
+  save(payload: ConfigSavePayload): () => { success: boolean; error?: string; urlChanged?: boolean; cloudCredentialsChanged?: boolean } {
+    return () => {
+      const outcome = applyStoredConfigSave(this.stored, payload, TEST_BOX);
+      if (!outcome.ok) {
+        return { success: false, error: outcome.error };
+      }
+      this.stored = outcome.config;
+      return { success: true, urlChanged: outcome.urlChanged, cloudCredentialsChanged: outcome.cloudCredentialsChanged };
+    };
+  }
+
+  /**
+   * Whether the stored cloud credential is usable now.
+   * @returns {boolean} True with a cloud Client ID and a secret that decrypts.
+   */
+  usable(): boolean {
+    return cloudCredentialsOf(this.stored, TEST_BOX, null) !== null;
+  }
+} // End of class StoredConfigFake
+
+describe('a save that leaves a cloud target without a usable credential (inbox I-1c2b review)', () => {
+  test('applyConfigSave(): the target returns to local in the save\'s synchronous step, with the transition; the next connect is local; no activeController write of its own', async () => {
+    const harness = new TargetHarness();
+    let usable = true;
+    harness.cloudUsable = () => usable;
+    const { controller: cloud } = await harness.switchToCloud(OMADAC_CLOUD);
+    const writes = harness.writes.length;
+    const session = harness.sessionId;
+    const saving = harness.manager.applyConfigSave(() => {
+      usable = false;
+      return { success: true, urlChanged: false, cloudCredentialsChanged: true };
+    });
+    // Before any await: the target, the installed session and the controller session
+    assert.deepEqual(harness.manager.target, { kind: 'local' });
+    assert.equal(activeControllerValue(harness.manager.target), 'local', 'CONFIG_LOAD\'s connectionTarget');
+    assert.equal(harness.manager.controller, null);
+    assert.ok(cloud.events.includes('close') && cloud.events.includes('logout'));
+    assert.equal(harness.sessionId, session + 1);
+    assert.equal((await saving).connectionReset, true);
+    assert.deepEqual(harness.writes.slice(writes), [], 'the run\'s target only: the save stores activeController itself');
+    const lookups = harness.lookups.length;
+    const local = await harness.connectLocal();
+    assert.equal(local.kind, 'local');
+    assert.equal(harness.lookups.length, lookups, 'no cloud lookup after the reset');
+  }); // End of test "applyConfigSave(): the target returns to local..."
+
+  test('a cloud connect, a lookup or a site choice in flight is superseded; any successful save with an unusable credential counts, a failed one changes nothing', async () => {
+    const harness = new TargetHarness();
+    let usable = true;
+    harness.cloudUsable = () => usable;
+    // A lookup in flight
+    await harness.switchToCloud(OMADAC_CLOUD);
+    const pending = harness.manager.connect();
+    await flush();
+    usable = false;
+    assert.equal((await harness.manager.applyConfigSave(() => ({ success: true, urlChanged: false }))).connectionReset, true, 'a save that did not touch the cloud fields');
+    harness.lookups[harness.lookups.length - 1].reply.resolve(harness.found(OMADAC_CLOUD));
+    assert.deepEqual(await pending, SUPERSEDED);
+    assert.equal(harness.controllers.filter((controller) => controller.kind === 'cloud').length, 1, 'no session built for the stale lookup');
+    assert.deepEqual(harness.manager.target, { kind: 'local' });
+    // A parked site choice
+    usable = true;
+    const parked = await harness.switchToCloud(OMADAC_CLOUD, { siteSelected: false, sites: SITES });
+    assert.equal(parked.result.needsSiteSelection, true);
+    usable = false;
+    await harness.manager.applyConfigSave(() => ({ success: true, cloudCredentialsChanged: true }));
+    assert.deepEqual(harness.manager.selectSite('site-a', parked.result.selectionNonce as string), { success: false, error: 'siteUnavailable' });
+    assert.ok(parked.controller.events.includes('logout'));
+    assert.equal(harness.cloudSites[OMADAC_CLOUD], undefined, 'no cloud site persisted');
+    // A failed save changes nothing
+    usable = true;
+    const { controller: kept } = await harness.switchToCloud(OMADAC_CLOUD);
+    usable = false;
+    assert.equal((await harness.manager.applyConfigSave(() => ({ success: false, cloudCredentialsChanged: true }))).connectionReset, false);
+    assert.deepEqual(harness.manager.target, { kind: 'cloud', omadacId: OMADAC_CLOUD });
+    assert.equal(harness.manager.controller, kept);
+    // A usability check that throws, or no cloud side at all: fails closed
+    harness.cloudUsable = () => {
+      throw new Error('safeStorage unavailable');
+    };
+    assert.equal((await harness.manager.applyConfigSave(() => ({ success: true }))).connectionReset, true);
+    assert.deepEqual(harness.manager.target, { kind: 'local' });
+    const bare = new TargetHarness({ cloud: false });
+    await bare.manager.switchTarget({ kind: 'cloud', omadacId: OMADAC_CLOUD });
+    assert.equal((await bare.manager.applyConfigSave(() => ({ success: true }))).connectionReset, true);
+    assert.deepEqual(bare.manager.target, { kind: 'local' });
+  }); // End of test "a cloud connect, a lookup or a site choice in flight is superseded..."
+
+  test('over the real save rules: Remove cloud access on a cloud target → local at once, activeController stored as local; on the local target nothing changes; a credential change that keeps one stays on the cloud target', async () => {
+    const withLocal: StoredConfig = {
+      url: URL_A,
+      username: 'admin',
+      language: 'en',
+      encryptedPassword: TEST_BOX.encryptString('s3cret'),
+      cloudRegion: 'euw',
+      cloudClientId: 'cloud-client-1',
+      encryptedCloudClientSecret: TEST_BOX.encryptString('cloud-secret-1'),
+      activeController: OMADAC_CLOUD
+    };
+    const removal: ConfigSavePayload = { url: URL_A, username: 'admin', language: 'en', removeCloudAccess: true };
+
+    // On a cloud target
+    const config = new StoredConfigFake(withLocal);
+    const harness = new TargetHarness();
+    harness.cloudUsable = () => config.usable();
+    await harness.switchToCloud(OMADAC_CLOUD);
+    const saving = harness.manager.applyConfigSave(config.save(removal));
+    assert.deepEqual(harness.manager.target, { kind: 'local' }, 'synchronously');
+    assert.equal(harness.manager.controller, null);
+    assert.equal(activeControllerOf(config.stored), 'local');
+    assert.equal(config.stored.activeController, undefined, 'the removal dropped the stored choice');
+    assert.deepEqual(await saving, { success: true, urlChanged: false, cloudCredentialsChanged: true, connectionReset: true });
+    assert.equal((await harness.connectLocal()).kind, 'local');
+
+    // On the local target: the local session stays
+    const onLocal = new StoredConfigFake({ ...withLocal, activeController: undefined });
+    const localHarness = new TargetHarness();
+    localHarness.cloudUsable = () => onLocal.usable();
+    const local = await localHarness.connectLocal();
+    const session = localHarness.sessionId;
+    assert.equal((await localHarness.manager.applyConfigSave(onLocal.save(removal))).connectionReset, false);
+    assert.equal(localHarness.manager.controller, local);
+    assert.deepEqual(localHarness.manager.target, { kind: 'local' });
+    assert.equal(localHarness.sessionId, session, 'no transition');
+
+    // A new credential on a cloud target: the transition runs, the target stays
+    const changing = new StoredConfigFake(withLocal);
+    const cloudHarness = new TargetHarness();
+    cloudHarness.cloudUsable = () => changing.usable();
+    await cloudHarness.switchToCloud(OMADAC_CLOUD);
+    const changed = await cloudHarness.manager.applyConfigSave(
+      changing.save({ url: URL_A, username: 'admin', language: 'en', cloudRegion: 'euw', cloudClientId: 'cloud-client-2', cloudClientSecret: 'cloud-secret-2' })
+    );
+    assert.equal(changed.connectionReset, true);
+    assert.deepEqual(cloudHarness.manager.target, { kind: 'cloud', omadacId: OMADAC_CLOUD }, 'still the cloud controller');
+    assert.equal(activeControllerOf(changing.stored), OMADAC_CLOUD);
+  }); // End of test "over the real save rules: Remove cloud access..."
+
+  test('over the real save rules, cloud-only: Remove cloud access on a cloud target leaves nothing to connect to — local at once, and the next connect is configIncomplete without a controller', async () => {
+    const config = new StoredConfigFake({
+      url: '',
+      username: '',
+      language: 'es',
+      cloudClientId: 'cloud-client-1',
+      encryptedCloudClientSecret: TEST_BOX.encryptString('cloud-secret-1'),
+      activeController: OMADAC_CLOUD
+    });
+    const harness = new TargetHarness();
+    harness.url = '';
+    harness.cloudUsable = () => config.usable();
+    assert.equal(harness.manager.startOn({ kind: 'cloud', omadacId: OMADAC_CLOUD }), true);
+    const pending = harness.manager.connect();
+    await flush();
+    harness.lookups[0].reply.resolve(harness.found(OMADAC_CLOUD));
+    await flush();
+    harness.latest.connectResult.resolve({ siteSelected: true, sites: [SITES[0]] });
+    assert.equal((await pending).success, true);
+    const saving = harness.manager.applyConfigSave(config.save({ url: '', username: '', language: 'es', removeCloudAccess: true }));
+    assert.deepEqual(harness.manager.target, { kind: 'local' });
+    assert.equal(harness.manager.controller, null);
+    assert.equal((await saving).connectionReset, true);
+    assert.equal(activeControllerOf(config.stored), 'local');
+    const created = harness.controllers.length;
+    assert.deepEqual(await harness.manager.connect(), { success: false, error: 'configIncomplete' });
+    assert.equal(harness.controllers.length, created, 'nothing was created, nothing was sent');
+  }); // End of test "over the real save rules, cloud-only..."
+
+  test('end to end (real sessions): the removed cloud session\'s nonce is refused at once on every data channel — nothing reaches the cloud —, CONFIG_SAVE replies connectionReset, and the next connect is the local controller', async () => {
+    const harness = new LiveHarness();
+    const nonce = await harness.switchCloudManaged();
+    const cloudSession = harness.installed;
+    const saving = harness.manager.applyConfigSave(() => {
+      harness.cloudCredentials = null;
+      harness.access.invalidate();
+      return { success: true, urlChanged: false, cloudCredentialsChanged: true, managementAccess: MANAGEMENT_FLAGS, cloudAccess: NO_CLOUD_FLAGS };
+    });
+    assert.equal(activeControllerValue(harness.manager.target), 'local', 'CONFIG_LOAD\'s connectionTarget, before the reply');
+    assert.equal(harness.manager.controller, null);
+    assert.ok(cloudSession.isClosed);
+    const removed = await saving;
+    assert.deepEqual(finishConfigSave(harness.manager, { url: BASE_URL, username: 'admin', language: 'en', removeCloudAccess: true }, removed), {
+      success: true,
+      managementAccess: MANAGEMENT_FLAGS,
+      cloudAccess: NO_CLOUD_FLAGS,
+      connectionReset: true
+    });
+    const mark = harness.cloudTransport.requests.length;
+    await assert.rejects(accessPointsReply(harness.manager, nonce), { message: /^notConnected \(/ });
+    await assert.rejects(wlanGroupsReply(harness.manager, nonce), { message: /^notConnected \(/ });
+    await assert.rejects(apMoveReply(harness.manager, { sessionNonce: nonce, mac: MAC_1, wlanId: SILENCIO_ID }), { message: /^notConnected \(/ });
+    const local = await harness.manager.connect();
+    assert.equal(local.success, true);
+    assert.equal(harness.installed.kind, 'local');
+    await assert.rejects(accessPointsReply(harness.manager, nonce), { message: /^superseded \(/ });
+    assert.equal(harness.cloudTransport.requests.length, mark, 'nothing reached the cloud after the removal');
+    assert.deepEqual(harness.saved.activeController, [CLOUD_ID], 'only the switch persisted a choice');
+  }); // End of test "end to end (real sessions)..."
+}); // End of describe 'a save that leaves a cloud target without a usable credential'
 
 describe('session-bound controller data channels (inbox I-1b2b2)', () => {
   test('local: the connect result\'s nonce is served (and carries no controller name); a stale or foreign nonce is refused before any controller request; a disconnect leaves notConnected', async () => {

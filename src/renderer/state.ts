@@ -7,6 +7,7 @@ import type {
   AccessPoint,
   ApGroupSsidLimits,
   CloudRegion,
+  ControllerTarget,
   GroupModel,
   Language,
   ManagedApGroup,
@@ -15,6 +16,7 @@ import type {
   WlanGroup,
 } from '../shared/types';
 import { GROUP_FILTER_ALL, STATUS_FILTER_ALL } from './ap-selection';
+import type { ParsedCloudResult } from './cloud-form';
 import { apDetailsContent, apList, destinationList, groupDetail, groupList, networkDetail, networkList, refreshBtn } from './elements';
 import type { GroupFailure, ManagedGroupsStatus } from './group-management';
 import type { AppView, NavLocation } from './nav-history';
@@ -158,9 +160,12 @@ export interface RendererState {
   managedNetworksRequest: number;
   // True while loadData() is fetching (drives the Refresh button/spinners)
   isLoadingData: boolean;
-  // True when a controller URL is stored; before first configuration the
-  // views show the first-run state ("Configure connection") instead of the
-  // disconnected one ("Connect to controller") — see view-state.ts
+  // True when connect() reaches a controller: a controller URL is stored or
+  // — inbox I-1c2b, a cloud-only configuration — main's target is a TP-Link
+  // cloud controller (canConnect() in controller-switcher-model.ts); before
+  // first configuration the views show the first-run state ("Configure
+  // connection", or "Choose controller" with a cloud credential) instead of
+  // the disconnected one ("Connect to controller") — see view-state.ts
   hasStoredConfig: boolean;
   // Localized message of the last failed connection or first data load, shown
   // by every view as a persistent inline error with Retry and Settings; null
@@ -239,6 +244,26 @@ export interface RendererState {
   // removal is staged, so a late reply never paints a stale result
   isTestingCloud: boolean;
   cloudTestRun: number;
+
+  // The controller switcher at the top of the sidebar (inbox I-1c2b;
+  // controller-switcher.ts), from the last config read (config:load) and the
+  // last TP-Link cloud controller list: the configured local URL ('' when
+  // none), whether a cloud credential is stored (the list is asked for only
+  // then), main's current connection target (null when unknown), the parsed
+  // cloud:controllers reply (null while none is held: no credential, or not
+  // read yet) and the number of the latest list read (a reply that is not
+  // the latest read's is discarded), and whether its panel is open
+  switcherLocalUrl: string;
+  switcherCredentialStored: boolean;
+  connectionTarget: ControllerTarget | null;
+  cloudControllers: ParsedCloudResult | null;
+  cloudListRequest: number;
+  switcherOpen: boolean;
+  // "Connect through TP-Link cloud" (inbox I-1c2b): the cloud duplicate of
+  // the local controller, offered in the error state of a failed local
+  // connect whose controller did not answer (cloudFallbackTarget()); null
+  // otherwise. Cleared by a new attempt, a disconnect and the data reset
+  cloudFallback: ControllerTarget | null;
 
   // The element that opened the settings modal (focus returns there on close)
   settingsOpener: HTMLElement | null;
@@ -320,6 +345,13 @@ export const state: RendererState = {
   settingsRemoveCloud: false,
   isTestingCloud: false,
   cloudTestRun: 0,
+  switcherLocalUrl: '',
+  switcherCredentialStored: false,
+  connectionTarget: null,
+  cloudControllers: null,
+  cloudListRequest: 0,
+  switcherOpen: false,
+  cloudFallback: null,
   settingsOpener: null,
   isSettingsOpening: false,
 };
@@ -366,7 +398,7 @@ export function setListsRefreshing(refreshing: boolean): void {
  * Invalidates the current session: bumps the generation token (so any
  * in-flight load or move discards its result when it completes) and resets
  * the loading indicators that a discarded operation will no longer clean up.
- * Called at the start of connect() and disconnect().
+ * Called at the start of connect(), a controller switch and disconnect().
  */
 export function invalidateSession(): void {
   state.sessionGeneration++;

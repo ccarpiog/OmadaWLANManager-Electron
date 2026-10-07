@@ -343,7 +343,8 @@ export function touchesManagementAccess(payload: ConfigSavePayload): boolean {
  * What CONFIG_SAVE got back from ConnectionManager.applyConfigSave() over
  * config.ts saveConfig(): the save result plus whether the controller
  * transition ran (`connectionReset`: a controller URL change, or a cloud
- * credential change while the target is a cloud controller).
+ * credential change — or a cloud credential left unusable, which also
+ * returns the target to local — while the target is a cloud controller).
  */
 export interface AppliedConfigSave extends ConfigSaveResult {
   urlChanged?: boolean;

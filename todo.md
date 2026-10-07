@@ -740,7 +740,7 @@ everything is built against the documented contract and fixtures.
         - The stub's cloud channels ignore the `cloudAccess` flags (script `cloudResult`, e.g. `notConfigured`), and
           `cloudConnectResult` is unchanged.
         - The cloud certificate note in Settings is not done (I-1c2).
-  - **I-1c2 (high):** the controller switcher at the top of the sidebar over `switchController()` (local first as "This
+  - ✅ **I-1c2 (high):** the controller switcher at the top of the sidebar over `switchController()` (local first as "This
     network", cloud entries with a "Cloud" tag, the local duplicate hidden via `localOmadacId`, disabled entries with their
     reason, disabled while a move or write runs, the renderer session invalidated before the call), the state reset, the
     header controller name, the cloud error states, "Connect through TP-Link cloud" and a cloud-only start, the cloud
@@ -752,7 +752,7 @@ everything is built against the documented contract and fixtures.
         switcher model with the "Connect through TP-Link cloud" decision and the busy predicate, es / en strings, the
         Settings cloud certificate note, unknown AP groups shown as unknown, the smoke stub honoring the `cloudAccess`
         flags. No switcher UI.
-      - **I-1c2b (high):** the switcher UI at the top of the sidebar, the state reset on a switch, the header controller
+      - ✅ **I-1c2b (high):** the switcher UI at the top of the sidebar, the state reset on a switch, the header controller
         name, the cloud error states, "Connect through TP-Link cloud", the renderer `init()` cloud-only start, smoke
         `[cloud]` es + en.
     - **Done (I-1c2a)** (main, renderer models and Settings, smoke stub; no switcher UI):
@@ -774,8 +774,8 @@ everything is built against the documented contract and fixtures.
         section keeps today's codes. The shape guard moved to `ipc-guards.ts` (`isValidConfigSavePayload()`, used by
         `index.ts`, the unit tests and the smoke stub): it accepts the cloud-only shape whole and still refuses a partial
         local section (`saveFailed`). Renderer mirror: `isCloudOnlyForm()` / `planCloudOnlySave()` (`cloud-form.ts`) in
-        `saveSettings()`; a cloud-only save neither sets `hasStoredConfig` nor auto-connects (main's target may be the
-        unconfigured local controller — I-1c2b decides).
+        `saveSettings()`; a cloud-only save does not mark a local configuration as stored, and connects only when main's
+        target is a cloud controller (I-1c2b, `saveFollowUp()`).
       - **Startup:** no code change needed — `resolveStartupTarget()` already gives the stored cloud controller with a
         usable credential and local otherwise (whose connect answers `configIncomplete`); tests and doc comment added.
       - **Unreachable local controller:** a failed local connect whose controller never answered carries
@@ -843,5 +843,118 @@ everything is built against the documented contract and fixtures.
         - The state reset on a switch, the header name (`state.controllerName` already labels cloud sessions), and smoke
           `[cloud]` es + en over the stub (`cloudAccess` flags with a credential, `localOmadacId:
           'c0ffee00c0ffee00c0ffee00c0ffee00'`, `cloudConnectResult`, a scripted connect with `unreachable: true`).
+    - **Done (I-1c2b)** (renderer and smoke; main only for the review fix):
+      - **Where:** `#controllerSwitcher` is the first child of the sidebar (`<nav id="viewNav">`), above the views'
+        navigation. The app has no site switcher in the sidebar (a site is picked in the site dialog on connect), so "above
+        the site switcher" reads "above the views' navigation".
+      - **Switcher DOM:** new `src/renderer/controller-switcher.ts` over the I-1c2a model.
+        - The toggle (`#controllerSwitcherBtn`, a `nav-item` with a server icon) shows the label "Controlador" and the
+          active controller ("Esta red", the cloud name, or "Ninguno elegido"), with the tooltip "Controlador: {name}",
+          `aria-expanded` and `aria-controls`.
+        - The panel lists `buildControllerSwitcher()`'s entries as native buttons: "Esta red" with its host, then the cloud
+          controllers by name with the "Nube" tag and "Omada x.y". The active entry has `aria-current="true"`; an
+          unusable one stays focusable, `aria-disabled`, described by its reason (shown under it).
+        - A notice under the entries (`switcherNotice()`): a failed list's text plus main's diagnostic, "Cargando..."
+          for the first read, an empty account (`cloudTestOkNone`) or an incomplete list (`cloudTestTruncated`).
+        - Keyboard: the toggle opens the panel with focus on the active entry (else the first usable one); arrows, Home
+          and End move between the entries (`handleListArrowKeydown()`); Escape closes it with focus back on the toggle
+          and is marked handled, so it never clears a search. Focus or a pointer press elsewhere closes it.
+        - Busy: while `isSwitcherBusy(state)` the toggle is `aria-disabled`, described and titled by "Espera a que
+          termine…", and the panel closes. It is re-rendered at the start and end of every flow that sets one of the flags
+          (connect / switch, disconnect, save, certificate reset, move, AP-group, network and binding flows), and every
+          activation checks the predicate again.
+      - **Choice (visibility):** shown exactly while a cloud credential (Client ID + usable secret) is stored, a failed or
+        empty list included, so the user learns why nothing can be chosen. Without one nothing in the cloud is reachable
+        (main refuses a cloud connect, and a save that removes it returns a cloud target to local), so the app looks as
+        before. The model's unlisted active entry never shows it alone.
+      - **Choice (layout):** the panel is never in the layout flow: a dropdown over the full sidebar, a popover beside
+        the compact sidebar (fixed, 300 px) and below the top view switcher. An in-flow panel moved the sidebar entry
+        being pressed when an outside press closed it (found by the smoke). The compact and top forms show the toggle's
+        icon only; its texts stay the accessible name and the tooltip names the controller.
+      - **Switch:** `switchToController(target)` (`connection.ts`) is a no-op while busy; a data load or refresh does not
+        block it (it is superseded). It shares `runConnectionAttempt()` with `connect()`:
+        - `invalidateSession()` (generation) and the session nonce dropped first;
+        - for a switch, the controller on screen dropped at once through the disconnect path's `clearData()`: data, AP
+          selection, destination, filters, the three searches, managed groups / networks / capabilities, the AP details
+          and drill-ins, the Back history, the site and controller name; the views show the skeletons;
+        - `switchController(target)`, its result handled by `handleConnectResult()` like a connect (site selection,
+          certificate trust, errors);
+        - main's target read back afterwards (`syncSwitcherConfig()`; it changes even when the connect fails), and
+          `commitConnectedUi()` applies the config it already reads.
+        Choosing the active entry does nothing while connected, except the local entry reached through its cloud
+        duplicate (`viaCloud`), which connects directly (`isEntryActivatable()`).
+      - **Header:** no change needed: `state.controllerName` already labels a cloud session (the smoke checks it).
+      - **Cloud error states:** `connectionErrorMessage(result, cloudTarget)` — for a cloud target (the switch's target,
+        else main's `connectionTarget`) `cloudConnectFailureKey()`'s text with main's detail in parentheses, otherwise
+        the existing texts.
+      - **"Connect through TP-Link cloud":** after a failed LOCAL connect whose result is `unreachable`, with a credential
+        stored, `offerCloudFallback()` reads the list again (fresh). When `cloudFallbackTarget()` returns the duplicate,
+        the views' error state gets a third action between Retry and Settings (`data-state-action="connectThroughCloud"`,
+        `state.cloudFallback`, cleared by a new attempt, a disconnect and `clearData()`) that switches to it. A refused
+        login or any other failure reads no list. **Choice:** the error state rather than a toast, so the offer stays
+        with the error it answers.
+      - **Startup:** `applySwitcherConfig()` reads `loadConfig()` (`readSwitcherConfig()`: local URL, credential,
+        `parseConnectionTarget(connectionTarget)`) and sets `state.hasStoredConfig = canConnect()` (a local URL, or a
+        cloud target with a credential). `init()` follows `startupAction()`: connect, let the user choose, or open
+        Settings; the list is read in the background whenever a credential is stored. New content state
+        `chooseController` (`view-state.ts`, input `canChooseController`): "Elige un controlador de la nube de TP-Link
+        para empezar" with "Elegir controlador", which opens the panel.
+      - **Saves:** after every successful save `saveSettings()` reads the config back and follows `saveFollowUp()`
+        (`'connect'` or `'none'`):
+        - a local save reconnects main's target as before;
+        - a cloud-only save connects only when main's target is a cloud controller with a credential (otherwise the
+          views ask to choose, or show the first run when nothing is configured);
+        - Remove cloud access while main targets a cloud controller needs no renderer step: main returns its target to
+          local in the save itself (see the review fix below), so the read-back target is local — with a local
+          controller the save reconnects it with a plain `connect()`; in a cloud-only configuration nothing is left, and
+          the reply's `connectionReset` (`handleConnectionReset()`) lands in the first-run state with Connect disabled
+          (`!state.hasStoredConfig`) and the switcher hidden.
+        The list is read again after every save while a credential is stored (the credential or the local controller,
+        whose duplicate it hides, may have changed).
+      - **Strings (es / en):** four new keys — `controllerSwitcherToggle`, `controllerSwitcherNone`,
+        `chooseControllerHint`, `chooseController`; everything else reuses the I-1c2a / I-1c1 keys plus `loading` and
+        `controllerVersionLabel`. `ui-strings.json` gained the switcher's label, busy text and ARIA references.
+      - **Smoke stub** (separate hunks; the user's `window-placement.cjs` lines untouched): a scripted
+        `cloudConnectResult` success installs a session (a fresh nonce; its `controllerName` / `siteName` kept); new knob
+        `cloudData`, the data a cloud target's session serves (the capabilities use its version).
+      - **Tests:** unit 1344 → 1353 (`renderer-controller-switcher.test.ts`: the config read, the startup action, the
+        save follow-up, the notice, activation, the entry texts and the new strings; `renderer-view-state.test.ts`:
+        `chooseController`). Smoke 295 → 312: new launch `[cloud]` (17 checks, es then en; window reloads play the
+        restarts) — startup with the duplicate hidden and the offline / below-6.3 entries disabled with their reasons,
+        the layout at four widths, the keyboard, a switch to "OC200 Planta 4" (busy, skeletons, the reset, header name and
+        site, its data, main's target), -7132 / offline / -52602 texts, no cloud offer after a refused login and "Connect
+        through TP-Link cloud" after an unreachable one (then "Esta red" directly), a cloud-only start (no connect,
+        "Elegir controlador", a choice, a restart on the cloud target), a cloud-only save that reconnects the cloud
+        target, Remove cloud access going back to local, and a cloud-only credential save asking to choose. TLS probe 29.
+      - **Review fix** (`docs/reviews/phaseI-1c2b.md`, Codex, 0 blockers, 2 should-fix):
+        - Removing the cloud credential while on a cloud controller left main's run target on that controller, and the
+          renderer repaired it with a later config read and a separate `switchController({kind: 'local'})`. Now
+          `ConnectionManager.applyConfigSave()` returns the target to local in the save's own synchronous step whenever
+          a successful save leaves a cloud target without a usable cloud credential
+          (`CloudConnectionDeps.hasUsableCredential()`, `index.ts`: `getCloudCredentials() !== null`, the startup
+          target's test; fails closed without a cloud side or when the check throws). It happens right after the write,
+          before the transition (`invalidateControllerState()`) and any await, and the save reports `connectionReset`.
+          So CONFIG_LOAD's `connectionTarget` reads `'local'` as soon as the save replies, the old session's nonce gets
+          `notConnected` on every data channel, and a cloud connect, lookup or site choice in flight is superseded. It
+          changes the run's target only, like `startOn()`'s fallback: a removal already drops the stored
+          `activeController` with the cloud fields. The renderer's `'switchToLocal'` follow-up is gone
+          (`saveFollowUp()`: `'connect' | 'none'`), and the smoke stub mirrors the rule (`dropUnusableCloudTarget()`).
+        - After removing the only (cloud-only) configuration, `handleConnectionReset()` re-enabled Connect. It now sets
+          `connectBtn.disabled = !state.hasStoredConfig`, so the views land in the first-run state with Connect disabled
+          and the switcher hidden.
+        - Tests: unit 1353 → 1358 (`connection-targets.test.ts`, new describe "a save that leaves a cloud target without
+          a usable credential": the synchronous reset with no `activeController` write of its own; a lookup, a site
+          choice or a connect in flight superseded; a failed save; a throwing check; no cloud side; the real
+          config-model save rules — removal on a cloud target stores `activeController` local, removal on the local
+          target changes nothing, a credential change that keeps one stays on the cloud target; cloud-only removal
+          leaves `configIncomplete`; real sessions: the old nonce refused with nothing sent to the cloud, CONFIG_SAVE's
+          `connectionReset`, the next connect local; `renderer-controller-switcher.test.ts`: `saveFollowUp()`). Smoke
+          312 → 314: `[cloud]` es and en — Remove cloud access in a cloud-only configuration connected to "OC200 Planta 4"
+          lands in the first-run state (Connect disabled, the switcher hidden, no rows, header or nonce left, main's
+          target local, no connect, switch or list afterwards); es first plays a refused save that resets nothing. The
+          existing en removal check now expects a plain connect instead of a switch. TLS probe 29.
+      - **For I-1c3:** the live checklist needs the switcher steps with a real account (duplicate hidden, offline /
+        below-6.3 reasons, a switch and back, "Connect through TP-Link cloud" with the local controller unplugged,
+        -7132 by rapid switching, Remove cloud access while on a cloud controller — with and without a local controller).
   - **I-1c3 (routine):** README cloud section and a cloud section in `docs/live-test-checklist.md` from
     `docs/omada-cloud-openapi.md` §11.

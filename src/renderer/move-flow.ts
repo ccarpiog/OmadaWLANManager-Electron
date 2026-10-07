@@ -23,6 +23,7 @@ import { visibleApMacs } from './ap-filters';
 import { renderApList } from './ap-list';
 import { selectedAccessPoints } from './ap-selection';
 import { loadData } from './connection';
+import { renderControllerSwitcher } from './controller-switcher';
 import { currentMovePlan, focusDestinationRadio, hideDestinationPane, renderDestinationPane, renderMovePreview } from './destination-pane';
 import { apFilterInput, apList } from './elements';
 import { t } from './i18n';
@@ -202,6 +203,8 @@ export async function startMove(): Promise<void> {
   if (plan === null || plan.moving.length === 0) return;
 
   state.isApplyingChange = true;
+  // The controller switcher is disabled while this flow runs (inbox I-1c2b)
+  renderControllerSwitcher();
   const generation = ticket.generation;
   const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   // Disables the move button while the flow runs
@@ -251,6 +254,7 @@ export async function startMove(): Promise<void> {
   } finally {
     dialog.close();
     state.isApplyingChange = false;
+    renderControllerSwitcher();
     // Re-enables the move button for whatever the state is now
     renderMovePreview();
     restoreFocus(opener);

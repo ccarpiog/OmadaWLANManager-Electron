@@ -47,6 +47,39 @@
            (labels visually hidden, tooltips) from 800 px, a top view
            switcher below 800 px -->
       <nav class="sidebar" id="viewNav">
+        <!-- Controller switcher (controller-switcher.ts, inbox I-1c2b), at
+             the top of the sidebar: shown only while a TP-Link cloud
+             credential is stored. The
+             toggle names the controller the app works with and opens its
+             panel: "This network" first, then the cloud controllers by name
+             with a "Cloud" tag, each one that cannot be used focusable but
+             aria-disabled and described by its reason; a failed cloud list
+             says why under them. While an operation owns the session the
+             toggle is aria-disabled and described by the reason. The panel
+             drops down over the full sidebar, and opens as a popover beside
+             the compact sidebar and below the top view switcher -->
+        <div class="controller-switcher" id="controllerSwitcher" role="group" aria-labelledby="controllerSwitcherLabel" hidden>
+          <button type="button" class="nav-item controller-switcher-toggle" id="controllerSwitcherBtn" aria-expanded="false" aria-controls="controllerSwitcherPanel">
+            <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="2" y="3" width="20" height="7" rx="2"></rect>
+              <rect x="2" y="14" width="20" height="7" rx="2"></rect>
+              <line x1="6" y1="6.5" x2="6.01" y2="6.5"></line>
+              <line x1="6" y1="17.5" x2="6.01" y2="17.5"></line>
+            </svg>
+            <span class="nav-label controller-switcher-text">
+              <span class="controller-switcher-label" id="controllerSwitcherLabel"></span>
+              <span class="controller-switcher-current" id="controllerSwitcherCurrent"></span>
+            </span>
+            <svg class="controller-switcher-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <p class="visually-hidden" id="controllerSwitcherBusyText"></p>
+          <div class="controller-switcher-panel" id="controllerSwitcherPanel" tabindex="-1" hidden>
+            <ul class="controller-switcher-list" id="controllerSwitcherList" aria-labelledby="controllerSwitcherLabel"></ul>
+            <p class="controller-switcher-notice" id="controllerSwitcherNotice" role="status" hidden></p>
+          </div>
+        </div>
         <ul class="nav-list">
           <li>
             <button type="button" class="nav-item" id="navAccessPoints" data-view="accessPoints" aria-current="page">

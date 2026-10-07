@@ -187,7 +187,7 @@ const CLOUD_LOCAL_OMADAC_ID = 'c0ffee00c0ffee00c0ffee00c0ffee00';
 // The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
 const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
 // One launch per run*() function in main()
-const EXPECTED_LAUNCHES = 11;
+const EXPECTED_LAUNCHES = 12;
 // The launches of this run (fewer only with OMADA_SMOKE_ONLY; set by main())
 let expectedLaunches = EXPECTED_LAUNCHES;
 // Fingerprints of the fake controller's self-signed certificates (launch 3)
@@ -1536,7 +1536,8 @@ async function checkWindowLikeRealApp(session) {
 
 /**
  * Checks the TP-Link cloud channels through the real preload bridge (inbox
- * I-1a; no switcher UI yet): testCloudAccess() and getCloudControllers() send
+ * I-1a; the switcher UI over them is the [cloud] launch's, I-1c2b):
+ * testCloudAccess() and getCloudControllers() send
  * no argument; with no cloud credential saved both answer notConfigured (the
  * stub honors the config's cloudAccess flags like main, inbox I-1c2a); with
  * one they answer while disconnected with the stub's four controller DTOs —
@@ -1580,7 +1581,8 @@ async function checkCloudChannels(session) {
 
 /**
  * Checks the controller-switch channel through the real preload bridge (inbox
- * I-1b2b2; no switcher UI yet — I-1c): a malformed target (an unusable
+ * I-1b2b2; the switcher UI is the [cloud] launch's, I-1c2b): a malformed
+ * target (an unusable
  * omadacId, an extra key, an unknown kind, no object) is rejected by the
  * real guard before any state change; a cloud target is "persisted" and
  * connected — refused like main without a cloud credential (connectError,
@@ -5841,6 +5843,807 @@ async function runCloudSettings(electronInfo) {
     await session.app.close().catch(() => {});
   }
 } // End of function runCloudSettings()
+
+// ============================================================================
+// Launch [cloud] (inbox I-1c2b): the controller switcher
+// ============================================================================
+
+// The connectable controller of the stub's four-organization account and the
+// name of the local controller's cloud duplicate (CLOUD_STUB_CONTROLLERS)
+const CLOUD_REMOTE_ID = '4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d';
+const CLOUD_REMOTE_NAME = 'OC200 Planta 4';
+const CLOUD_LOCAL_NAME = 'Omada red antigua (Proxmox)';
+// The switcher's entry keys ('local', 'cloud:' + omadacId)
+const SWITCHER_KEY = {
+  local: 'local',
+  tooOld: 'cloud:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b',
+  offline: 'cloud:3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a',
+  remote: `cloud:${CLOUD_REMOTE_ID}`,
+  duplicate: `cloud:${CLOUD_LOCAL_OMADAC_ID}`,
+};
+// The cloud-access flags of a stored cloud credential
+const CLOUD_CREDENTIAL = { clientId: 'smoke-cloud-client', hasCloudSecret: true };
+// OC200 Planta 4's fake data (the stub serves it while that controller is the target)
+const CLOUD_REMOTE_DATA = {
+  controllerVersion: '6.3.0.45',
+  accessPoints: [
+    { mac: 'D0-D0-D0-00-00-01', name: 'Planta 4 Recepción', type: 'ap', wlanGroup: 'Planta 4', statusCategory: 1, clientNum: 3 },
+    { mac: 'D0-D0-D0-00-00-02', name: 'Planta 4 Sala', type: 'ap', wlanGroup: 'Planta 4', statusCategory: 1, clientNum: 0 },
+  ],
+  wlanGroups: [{ wlanId: 'p4p4p4p4p4p4p4p4p4p4p4p4', wlanName: 'Planta 4', ssidList: [{ ssidName: 'Oficina P4' }], isDefault: true }],
+};
+// The cloud connects the stub plays: OC200 Planta 4, the local controller
+// through its cloud duplicate, and three refusals (main's code-first details)
+const CLOUD_REMOTE_OK = { success: true, controllerName: CLOUD_REMOTE_NAME, siteName: 'Planta 4' };
+const CLOUD_DUPLICATE_OK = { success: true, controllerName: CLOUD_LOCAL_NAME };
+const CLOUD_CONNECT_RATE_LIMITED = { success: false, error: 'connectError', detail: 'rateLimited (errorCode -7132)' };
+const CLOUD_CONNECT_OFFLINE = { success: false, error: 'connectError', detail: 'offline' };
+const CLOUD_CONNECT_EXPIRED = { success: false, error: 'connectError', detail: 'credentialInvalid (errorCode -52602)' };
+// Local connects: a controller that never answered (main's typed
+// `unreachable`), and one that answered and refused the login
+const LOCAL_UNREACHABLE = { success: false, error: 'connectError', detail: 'connect ETIMEDOUT 192.0.2.10:8043', unreachable: true };
+const LOCAL_REFUSED = { success: false, error: 'connectError', detail: 'Invalid username or password' };
+
+// The switcher's texts the [cloud] checks read (src/renderer/i18n-strings.ts)
+const CLOUD_SWITCHER_TEXT = {
+  es: {
+    label: 'Controlador', thisNetwork: 'Esta red', cloudTag: 'Nube', none: 'Ninguno elegido', toggle: 'Controlador: {name}',
+    busy: 'Espera a que termine la operación en curso para cambiar de controlador.',
+    throughCloud: 'Conectar a través de la nube de TP-Link',
+    chooseHint: 'Elige un controlador de la nube de TP-Link para empezar', choose: 'Elegir controlador',
+    offline: 'El controlador no está en línea en la nube de TP-Link: la aplicación solo puede llegar a él mientras está en línea. Vuelve a intentarlo más tarde.',
+    connectionError: 'Error de conexión', retry: 'Reintentar', settings: 'Ajustes',
+    configureHint: 'Configura la conexión en Ajustes para empezar', configure: 'Configurar la conexión', saveError: 'Error al guardar la configuración',
+  },
+  en: {
+    label: 'Controller', thisNetwork: 'This network', cloudTag: 'Cloud', none: 'None chosen', toggle: 'Controller: {name}',
+    busy: 'Wait for the current operation to finish before switching controllers.',
+    throughCloud: 'Connect through TP-Link cloud',
+    chooseHint: 'Choose a TP-Link cloud controller to get started', choose: 'Choose controller',
+    expired: 'TP-Link says the cloud credential has expired or no longer exists. Create a new one in the TP-Link Omada cloud portal and save it in Settings → TP-Link cloud.',
+    connectionError: 'Connection error', retry: 'Retry', settings: 'Settings',
+    configureHint: 'Set up the connection in Settings to get started', configure: 'Configure connection', saveError: 'Error saving configuration',
+  },
+};
+
+/**
+ * Reads the controller switcher: whether it is shown and where (the first
+ * element of the sidebar, above the views' navigation), its group label, the
+ * toggle (texts, tooltip, expanded, busy and its description), whether the
+ * panel is open, every entry (key, title, tag, detail, aria-current,
+ * aria-disabled and the reason it is described by), the notice and focus.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} What the switcher shows.
+ */
+function readSwitcher(page) {
+  return page.evaluate(() => {
+    /**
+     * Looks an element up by id.
+     * @param {string} id - The id.
+     * @returns {HTMLElement | null} The element.
+     */
+    const byId = (id) => document.getElementById(id);
+    const container = byId('controllerSwitcher');
+    const toggle = byId('controllerSwitcherBtn');
+    const panel = byId('controllerSwitcherPanel');
+    const notice = byId('controllerSwitcherNotice');
+    const navList = document.querySelector('#viewNav .nav-list');
+    /**
+     * Tells whether an element is rendered (not in a hidden subtree, not display:none).
+     * @param {Element | null} element - The element.
+     * @returns {boolean} True when visible.
+     */
+    const visible = (element) => Boolean(element) && element.closest('[hidden]') === null && element.checkVisibility({ checkVisibilityCSS: true });
+    const describedBy = toggle?.getAttribute('aria-describedby') ?? null;
+    return {
+      shown: visible(container),
+      first: byId('viewNav')?.firstElementChild?.id ?? null,
+      aboveNav: visible(container) && navList !== null && (container.getBoundingClientRect().bottom <= navList.getBoundingClientRect().top + 1 ||
+        container.getBoundingClientRect().right <= navList.getBoundingClientRect().left + 1),
+      groupRole: container?.getAttribute('role') ?? null,
+      groupLabel: byId(container?.getAttribute('aria-labelledby') ?? '')?.textContent ?? null,
+      label: byId('controllerSwitcherLabel')?.textContent ?? '',
+      current: byId('controllerSwitcherCurrent')?.textContent ?? '',
+      title: toggle?.title ?? '',
+      expanded: toggle?.getAttribute('aria-expanded') ?? null,
+      cloudActive: Boolean(container?.classList.contains('is-cloud')),
+      busy: toggle?.getAttribute('aria-disabled') === 'true',
+      busyReason: describedBy === null ? null : describedBy.split(' ').map((id) => byId(id)?.textContent ?? '').join(' '),
+      open: visible(panel),
+      entries: Array.from(document.querySelectorAll('#controllerSwitcherList .controller-entry')).map((button) => ({
+        key: button.dataset.key ?? '',
+        title: button.querySelector('.controller-entry-title')?.textContent ?? '',
+        tag: button.querySelector('.controller-entry-tag')?.textContent ?? null,
+        detail: button.querySelector('.controller-entry-detail')?.textContent ?? null,
+        current: button.getAttribute('aria-current'),
+        disabled: button.getAttribute('aria-disabled') === 'true',
+        reason: (button.getAttribute('aria-describedby') || '').split(' ').filter(Boolean).map((id) => byId(id)?.textContent ?? '').join(' ') || null,
+      })),
+      notice: notice && !notice.hidden ? notice.textContent : null,
+      activeKey: document.activeElement?.dataset?.key ?? null,
+      activeId: document.activeElement?.id || '',
+    };
+  }); // End of the in-page switcher probe
+} // End of function readSwitcher()
+
+/**
+ * Reads the §4.6 state block of a view's main list: its state, message,
+ * role and actions ([data-state-action, text]); null when the list shows
+ * data or the loading skeleton.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} [listId='apList'] - The list's id.
+ * @returns {Promise<object | null>} The block.
+ */
+function readStateBlock(page, listId = 'apList') {
+  return page.evaluate((id) => {
+    const block = document.querySelector(`#${id} .state-block`);
+    return block === null ? null : {
+      state: block.dataset.state ?? null,
+      text: block.querySelector('p')?.textContent ?? '',
+      role: block.getAttribute('role'),
+      actions: Array.from(block.querySelectorAll('[data-state-action]')).map((button) => [button.dataset.stateAction, button.textContent]),
+    };
+  }, listId);
+} // End of function readStateBlock()
+
+/**
+ * Waits until the switcher is shown with the given number of entries.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {number} count - Expected entries.
+ * @returns {Promise<void>}
+ */
+async function waitForSwitcherEntries(page, count) {
+  await page.waitForFunction((expected) => !document.getElementById('controllerSwitcher').hidden &&
+    document.querySelectorAll('#controllerSwitcherList .controller-entry').length === expected, count, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the header shows the connected state with the given controller label.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} host - The host or the cloud controller's name.
+ * @returns {Promise<void>}
+ */
+async function waitForControllerLabel(page, host) {
+  await page.waitForFunction((expected) =>
+    document.getElementById('statusIndicator')?.classList.contains('connected') &&
+    document.getElementById('controllerHost')?.textContent === expected, host, { timeout: WAIT_MS });
+  await waitForLoadIdle(page);
+}
+
+/**
+ * Waits until the AP list's state block shows the given state.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} kind - The state (data-state).
+ * @returns {Promise<void>}
+ */
+async function waitForStateBlock(page, kind) {
+  await page.waitForFunction((expected) => document.querySelector('#apList .state-block')?.dataset.state === expected, kind, { timeout: WAIT_MS });
+}
+
+/**
+ * Opens the switcher's panel (a click on the toggle) unless it is open.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function openSwitcher(page) {
+  if (!(await page.isVisible('#controllerSwitcherPanel'))) {
+    await page.click('#controllerSwitcherBtn');
+  }
+  await page.waitForSelector('#controllerSwitcherPanel', { state: 'visible', timeout: WAIT_MS });
+}
+
+/**
+ * Chooses an entry of the switcher with the mouse.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} key - The entry's key.
+ * @returns {Promise<void>}
+ */
+async function chooseSwitcherEntry(page, key) {
+  await openSwitcher(page);
+  await page.click(`#controllerSwitcherList .controller-entry[data-key="${key}"]`);
+}
+
+/**
+ * Counts the stub's calls per channel.
+ * @param {object} session - The launch.
+ * @returns {Promise<Record<string, number>>} Calls of connect, switch, cloud:controllers and config:save.
+ */
+async function cloudCallCounts(session) {
+  const state = await stubState(session);
+  return {
+    connect: callsTo(state, 'omada:connect').length,
+    switch: callsTo(state, 'omada:switch-controller').length,
+    list: callsTo(state, 'cloud:controllers').length,
+    save: callsTo(state, 'config:save').length,
+  };
+} // End of function cloudCallCounts()
+
+/**
+ * Reloads the window (a fresh renderer start on the stub's current config
+ * and target) and waits until init() revealed the UI.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function restartRenderer(page) {
+  await page.reload();
+  await page.waitForFunction(() => !document.body.classList.contains('pre-init'), null, { timeout: WAIT_MS });
+}
+
+/**
+ * The expected entries of the switcher with the local controller configured
+ * (the local duplicate hidden), from readSwitcher().
+ * @param {'es' | 'en'} language - UI language.
+ * @param {string} activeKey - The active entry's key.
+ * @param {boolean} [viaCloud=false] - The local entry is reached through its cloud duplicate.
+ * @returns {object[]} The entries.
+ */
+function expectedLocalEntries(language, activeKey, viaCloud = false) {
+  const text = CLOUD_SWITCHER_TEXT[language];
+  const status = CLOUD_TEXT[language].status;
+  return [
+    { key: SWITCHER_KEY.local, title: text.thisNetwork, tag: viaCloud ? text.cloudTag : null, detail: CONTROLLER_HOST, disabled: false, reason: null },
+    { key: SWITCHER_KEY.tooOld, title: 'OC200 Planta 2', tag: text.cloudTag, detail: 'Omada 6.2.0.9', disabled: true, reason: status.versionTooOld },
+    { key: SWITCHER_KEY.offline, title: 'OC200 Planta 3', tag: text.cloudTag, detail: 'Omada 6.3.0.45', disabled: true, reason: status.offline },
+    { key: SWITCHER_KEY.remote, title: CLOUD_REMOTE_NAME, tag: text.cloudTag, detail: 'Omada 6.3.0.45', disabled: false, reason: null },
+  ].map((entry) => ({ ...entry, current: entry.key === activeKey ? 'true' : null }));
+} // End of function expectedLocalEntries()
+
+/**
+ * Reads what a reset must leave behind: the shell, the switcher, the AP
+ * list's state block, the AP and destination rows on screen, and main's
+ * (the stub's) target, connection and session nonce.
+ * @param {object} session - The launch.
+ * @returns {Promise<object>} The snapshot.
+ */
+async function readCloudOutcome(session) {
+  const { page } = session;
+  const stub = await stubState(session);
+  const rows = await page.evaluate(() => ({
+    aps: document.querySelectorAll('#apList .ap-row').length,
+    destinations: document.querySelectorAll('#destinationList .destination-option').length,
+  }));
+  return {
+    shell: await readShell(page),
+    switcher: await readSwitcher(page),
+    block: await readStateBlock(page),
+    rows,
+    target: stub.target,
+    connected: stub.connected,
+    sessionNonce: stub.sessionNonce,
+    calls: await cloudCallCounts(session),
+  };
+} // End of function readCloudOutcome()
+
+/**
+ * Remove cloud access in a cloud-only configuration (no local controller)
+ * while connected to "OC200 Planta 4" (inbox I-1c2b review), for the es and
+ * en checks of the [cloud] launch. Optionally a refused save first (the
+ * stub's scripted `saveResult`, like a failed write in main): its error
+ * toast, Settings still open, and nothing reset — still connected to the
+ * cloud controller, its rows on screen, the switcher shown, main's target
+ * unchanged. Then the real save: main returns its target to local in the
+ * save itself and nothing is left to connect to — the first-run state with
+ * "Configure connection", Connect disabled, the switcher hidden, no AP or
+ * destination rows, no header controller or site, the old session nonce
+ * refused, main's `connectionTarget` 'local', and neither a connect, a
+ * switch nor a controller list after the save.
+ * @param {object} session - The launch.
+ * @param {'es' | 'en'} language - UI language.
+ * @param {boolean} refusedFirst - Play a refused save before the real one.
+ * @returns {Promise<{ ok: boolean; detail: unknown }>} The verdict.
+ */
+async function cloudOnlyRemovalVerdict(session, language, refusedFirst) {
+  const { page } = session;
+  const text = CLOUD_SWITCHER_TEXT[language];
+  await waitForControllerLabel(page, CLOUD_REMOTE_NAME);
+  const connected = await readCloudOutcome(session);
+  const oldNonce = connected.sessionNonce;
+  await openSettingsWhenIdle(page);
+  await page.click('#removeCloudBtn');
+  await page.click('#confirmCloudRemoveBtn');
+  let refused = null;
+  if (refusedFirst) {
+    try {
+      await configureStub(session, { saveResult: { success: false, error: 'saveFailed' } });
+      await saveExpectingToast(page, text.saveError);
+    } finally {
+      await configureStub(session, { saveResult: null });
+    }
+    refused = await readCloudOutcome(session);
+  }
+  await page.click('#saveSettingsBtn');
+  await waitForSettingsClosed(page);
+  await waitForStateBlock(page, 'firstRun');
+  // Room for a follow-up the save must not start (a connect, a switch, a list read)
+  await page.waitForTimeout(400);
+  const removed = await readCloudOutcome(session);
+  const save = await latestSave(session);
+  const target = await page.evaluate(async () => (await window.omadaAPI.loadConfig()).connectionTarget);
+  const stale = await callBridge(page, 'getAccessPoints', oldNonce);
+  const before = connected.calls;
+  const refusedOk = refused === null || (
+    refused.shell.settingsOpen === true && refused.shell.indicator.includes('connected') && refused.shell.host === CLOUD_REMOTE_NAME &&
+    refused.switcher.shown && refused.switcher.current === CLOUD_REMOTE_NAME && refused.rows.aps === CLOUD_REMOTE_DATA.accessPoints.length &&
+    isDeepStrictEqual(refused.target, { kind: 'cloud', omadacId: CLOUD_REMOTE_ID }) && refused.connected === true && refused.sessionNonce === oldNonce &&
+    refused.calls.save === before.save + 1 && refused.calls.connect === before.connect && refused.calls.switch === before.switch
+  );
+  return verdict(
+    connected.rows.aps === CLOUD_REMOTE_DATA.accessPoints.length && typeof oldNonce === 'string' && refusedOk &&
+    isDeepStrictEqual(save.payload, { url: '', username: '', language, removeCloudAccess: true }) &&
+    save.config.cloudAccess.clientId === '' && save.config.cloudAccess.hasCloudSecret === false &&
+    removed.block?.text === text.configureHint && isDeepStrictEqual(removed.block?.actions, [['configure', text.configure]]) &&
+    removed.shell.connectDisabled === true && removed.shell.connect === TEXT[language].connect && removed.shell.status === TEXT[language].disconnected &&
+    removed.shell.host === null && removed.shell.site === null && removed.shell.settingsOpen === false &&
+    removed.switcher.shown === false && removed.rows.aps === 0 && removed.rows.destinations === 0 &&
+    isDeepStrictEqual(removed.target, { kind: 'local' }) && removed.connected === false && removed.sessionNonce === null && target === 'local' &&
+    /: notConnected \(/.test(stale.rejected ?? '') &&
+    removed.calls.save === before.save + (refusedFirst ? 2 : 1) &&
+    removed.calls.connect === before.connect && removed.calls.switch === before.switch && removed.calls.list === before.list,
+    { refused: refused && { shell: [refused.shell.settingsOpen, refused.shell.host], switcher: refused.switcher.current, rows: refused.rows, target: refused.target, calls: refused.calls },
+      payload: save.payload, block: removed.block, shell: [removed.shell.connectDisabled, removed.shell.connect, removed.shell.status, removed.shell.host, removed.shell.site],
+      switcher: removed.switcher.shown, rows: removed.rows, target: [removed.target, target], stale, calls: [before, removed.calls] }
+  );
+} // End of function cloudOnlyRemovalVerdict()
+
+/**
+ * The Spanish checks of the [cloud] launch (see runCloudSwitcher()).
+ * @param {object} session - The launch.
+ * @returns {Promise<void>}
+ */
+async function runCloudSwitcherSpanish(session) {
+  const { page } = session;
+  const text = CLOUD_SWITCHER_TEXT.es;
+  const fixtureAps = data.accessPoints.filter((ap) => MAC_REGEX.test(ap.mac)).length;
+
+  await check(`[cloud] es: startup with a cloud credential — connected to the local controller; the switcher is the sidebar's first element, above the views' navigation, a group labelled "${text.label}" whose toggle reads "${text.thisNetwork}" (tooltip "${fmt(text.toggle, { name: text.thisNetwork })}", collapsed); one cloud:controllers call with no argument; opened, "${text.thisNetwork}" (its host, aria-current) first, then the cloud controllers by name with "${text.cloudTag}" and their versions — "OC200 Planta 2" and "OC200 Planta 3" aria-disabled and described by their reasons (below 6.3, offline), "OC200 Planta 4" usable; the local duplicate "${CLOUD_LOCAL_NAME}" is not listed`, async () => {
+    await waitForControllerLabel(page, CONTROLLER_HOST);
+    await waitForApCount(page, fixtureAps);
+    await waitForSwitcherEntries(page, 4);
+    const closed = await readSwitcher(page);
+    await openSwitcher(page);
+    const opened = await readSwitcher(page);
+    await page.keyboard.press('Escape');
+    const lists = callsTo(await stubState(session), 'cloud:controllers');
+    return verdict(
+      closed.shown && closed.first === 'controllerSwitcher' && closed.aboveNav && closed.groupRole === 'group' && closed.groupLabel === text.label &&
+      closed.label === text.label && closed.current === text.thisNetwork && closed.title === fmt(text.toggle, { name: text.thisNetwork }) &&
+      closed.expanded === 'false' && !closed.open && !closed.busy && !closed.cloudActive &&
+      opened.open && opened.expanded === 'true' && isDeepStrictEqual(opened.entries, expectedLocalEntries('es', SWITCHER_KEY.local)) && opened.notice === null &&
+      !opened.entries.some((entry) => entry.title === CLOUD_LOCAL_NAME) &&
+      lists.length === 1 && lists[0].args.length === 0,
+      { closed, opened, lists: lists.map((call) => call.args) }
+    );
+  }); // End of check "[cloud] es: startup with a cloud credential"
+
+  await check('[cloud] es: per width — the full sidebar, the icon sidebar and the top view switcher show the switcher\'s toggle first in the sidebar, nothing overflows horizontally, and the open panel lies inside the window', async () => {
+    const seen = [];
+    let ok = true;
+    try {
+      for (const [width, height] of [[1200, 700], [900, 650], [750, 650], [700, 500]]) {
+        await resizeAndSettle(session, width, height);
+        const layout = await readLayout(page);
+        await openSwitcher(page);
+        const panel = await page.evaluate(() => {
+          const rect = document.getElementById('controllerSwitcherPanel').getBoundingClientRect();
+          const toggle = document.getElementById('controllerSwitcherBtn').getBoundingClientRect();
+          return {
+            inside: rect.width > 0 && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight,
+            toggle: toggle.width > 0 && toggle.height > 0 && toggle.right <= window.innerWidth,
+          };
+        });
+        await page.keyboard.press('Escape');
+        const row = { width, overflow: layout.docScrollWidth > layout.docClientWidth || layout.overflowing.length > 0, overflowing: layout.overflowing, ...panel };
+        seen.push(row);
+        ok = ok && !row.overflow && row.inside && row.toggle;
+      } // End of the loop over the widths
+    } finally {
+      await resizeAndSettle(session, 1200, 700);
+    }
+    return verdict(ok, seen);
+  }); // End of check "[cloud] es: per width"
+
+  await check('[cloud] es: keyboard — Enter on the toggle opens the panel with focus on the active entry; ArrowDown / End / Home / ArrowUp move through every entry (the disabled ones focusable); Enter on a disabled entry switches nothing and keeps the panel open; Escape closes it with focus back on the toggle and leaves the AP search as it was', async () => {
+    await page.fill('#apFilter', 'zz');
+    await page.focus('#controllerSwitcherBtn');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#controllerSwitcherPanel', { state: 'visible', timeout: WAIT_MS });
+    const opened = await readSwitcher(page);
+    const walk = [];
+    for (const key of ['ArrowDown', 'ArrowDown', 'End', 'Home', 'ArrowUp', 'ArrowDown']) {
+      await page.keyboard.press(key);
+      walk.push((await readSwitcher(page)).activeKey);
+    }
+    const before = await cloudCallCounts(session);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    const afterDisabled = await readSwitcher(page);
+    const after = await cloudCallCounts(session);
+    await page.keyboard.press('Escape');
+    const closed = await readSwitcher(page);
+    const search = await page.inputValue('#apFilter');
+    await page.fill('#apFilter', '');
+    return verdict(
+      opened.open && opened.activeKey === SWITCHER_KEY.local &&
+      isDeepStrictEqual(walk, [SWITCHER_KEY.tooOld, SWITCHER_KEY.offline, SWITCHER_KEY.remote, SWITCHER_KEY.local, SWITCHER_KEY.local, SWITCHER_KEY.tooOld]) &&
+      afterDisabled.open && afterDisabled.activeKey === SWITCHER_KEY.tooOld && after.switch === before.switch &&
+      !closed.open && closed.activeId === 'controllerSwitcherBtn' && closed.expanded === 'false' && search === 'zz',
+      { opened: [opened.open, opened.activeKey], walk, afterDisabled: [afterDisabled.open, afterDisabled.activeKey], switches: after.switch - before.switch, closed: [closed.open, closed.activeId], search }
+    );
+  }); // End of check "[cloud] es: keyboard"
+
+  await check(`[cloud] es: choosing "${CLOUD_REMOTE_NAME}" invalidates the session and switches — one switchController({kind: 'cloud', omadacId}); while it runs the switcher is aria-disabled and described by "${text.busy}" (a click opens nothing) and the views show the loading skeleton; then the header shows "${CLOUD_REMOTE_NAME}" and its site, the AP list its two APs, and the AP selection, the AP search, the AP groups search, the AP details and the Back history are reset; the toggle reads "${CLOUD_REMOTE_NAME}" and main's target is it`, async () => {
+    const box = (name) => `#apList .ap-checkbox[data-mac="${AP[name].mac}"]`;
+    await page.click(box('Salón'));
+    await page.fill('#apFilter', 'a');
+    await page.click(`#apList .ap-row[data-mac="${AP['EAP Carpio'].mac}"] .ap-row-group`);
+    await page.waitForFunction(() => document.activeElement?.id === 'apDetailsName', null, { timeout: WAIT_MS });
+    await page.click('#apDetailsContent .cross-link[data-link-kind="group"]');
+    await page.waitForFunction(() => document.activeElement?.id === 'groupDetailName', null, { timeout: WAIT_MS });
+    await page.fill('#groupSearch', 'def');
+    const setUp = await page.evaluate(() => ({
+      back: !document.getElementById('backBar').hidden, checked: document.querySelectorAll('#apList .ap-checkbox:checked').length,
+    }));
+    const before = await stubState(session);
+    let during;
+    try {
+      await configureStub(session, { cloudConnectResult: CLOUD_REMOTE_OK, delays: { 'omada:switch-controller': 1500 } });
+      await chooseSwitcherEntry(page, SWITCHER_KEY.remote);
+      await page.waitForTimeout(300);
+      const switcher = await readSwitcher(page);
+      // A click on the aria-disabled toggle (dispatched: Playwright's click
+      // would wait for it to be enabled again)
+      await page.evaluate(() => document.getElementById('controllerSwitcherBtn').click());
+      await page.waitForTimeout(150);
+      during = {
+        switcher, openAfterClick: (await readSwitcher(page)).open,
+        shell: await page.evaluate(() => ({
+          status: document.getElementById('statusText')?.textContent ?? '',
+          apSkeleton: document.querySelector('#apList .skeleton-list') !== null,
+          groupSkeleton: document.querySelector('#groupList .skeleton-list') !== null,
+          apRows: document.querySelectorAll('#apList .ap-row').length,
+          host: document.getElementById('controllerHost')?.hidden ? null : document.getElementById('controllerHost')?.textContent,
+        })),
+      };
+      await waitForControllerLabel(page, CLOUD_REMOTE_NAME);
+      await waitForApCount(page, CLOUD_REMOTE_DATA.accessPoints.length);
+    } finally {
+      await configureStub(session, { delays: {} });
+    }
+    const after = await stubState(session);
+    const header = await readHeader(page);
+    const reset = await page.evaluate(() => ({
+      checked: document.querySelectorAll('#apList .ap-checkbox:checked').length,
+      apSearch: document.getElementById('apFilter').value,
+      groupSearch: document.getElementById('groupSearch').value,
+      back: !document.getElementById('backBar').hidden,
+      details: !document.getElementById('apDetailsPanel').hidden,
+      names: Array.from(document.querySelectorAll('#apList .ap-row .item-name')).map((name) => name.textContent),
+      groups: Array.from(document.querySelectorAll('#groupList .master-item')).length,
+    }));
+    const switcher = await readSwitcher(page);
+    const switches = callsTo(after, 'omada:switch-controller').slice(callsTo(before, 'omada:switch-controller').length);
+    const target = await page.evaluate(async () => (await window.omadaAPI.loadConfig()).connectionTarget);
+    await page.click('#navAccessPoints');
+    return verdict(
+      setUp.back && setUp.checked === 1 &&
+      during.switcher.busy && during.switcher.busyReason === text.busy && !during.switcher.open && !during.openAfterClick &&
+      during.shell.status === TEXT.es.connecting && during.shell.apSkeleton && during.shell.groupSkeleton && during.shell.apRows === 0 && during.shell.host === null &&
+      isDeepStrictEqual(switches.map((call) => call.args), [[{ kind: 'cloud', omadacId: CLOUD_REMOTE_ID }]]) &&
+      header.host === CLOUD_REMOTE_NAME && header.site === fmt(TEXT.es.site, { site: 'Planta 4' }) &&
+      reset.checked === 0 && reset.apSearch === '' && reset.groupSearch === '' && !reset.back && !reset.details &&
+      isDeepStrictEqual(reset.names, ['Planta 4 Recepción', 'Planta 4 Sala']) && reset.groups === 1 &&
+      switcher.current === CLOUD_REMOTE_NAME && switcher.cloudActive && !switcher.busy &&
+      switcher.entries.find((entry) => entry.key === SWITCHER_KEY.remote)?.current === 'true' && target === CLOUD_REMOTE_ID,
+      { setUp, during, switches: switches.map((call) => call.args), header, reset, switcher: [switcher.current, switcher.busy], target }
+    );
+  }); // End of check "[cloud] es: choosing OC200 Planta 4"
+
+  await check(`[cloud] es: a refused cloud connect has its own text — back on "${text.thisNetwork}", choosing "${CLOUD_REMOTE_NAME}" refused for rate limiting (-7132) shows the rate-limit text with main's detail in the status and the views (Retry + Settings, no cloud offer); Retry refused because it is offline shows the offline text; "${text.thisNetwork}" then connects the local controller again`, async () => {
+    await chooseSwitcherEntry(page, SWITCHER_KEY.local);
+    await waitForControllerLabel(page, CONTROLLER_HOST);
+    await configureStub(session, { cloudConnectResult: CLOUD_CONNECT_RATE_LIMITED });
+    await chooseSwitcherEntry(page, SWITCHER_KEY.remote);
+    const rateText = `${CLOUD_TEXT.es.rateLimited} (rateLimited (errorCode -7132))`;
+    await waitForStatus(page, rateText);
+    await waitForStateBlock(page, 'loadError');
+    // The switch persisted main's target even though its connect was refused
+    await page.waitForFunction((name) => document.getElementById('controllerSwitcherCurrent')?.textContent === name, CLOUD_REMOTE_NAME, { timeout: WAIT_MS });
+    const rate = await readStateBlock(page);
+    const rateSwitcher = await readSwitcher(page);
+    await configureStub(session, { cloudConnectResult: CLOUD_CONNECT_OFFLINE });
+    await page.click('#apList [data-state-action="retry"]');
+    const offlineText = `${text.offline} (offline)`;
+    await waitForStatus(page, offlineText);
+    await waitForStateBlock(page, 'loadError');
+    const offline = await readStateBlock(page);
+    await configureStub(session, { cloudConnectResult: CLOUD_REMOTE_OK });
+    await chooseSwitcherEntry(page, SWITCHER_KEY.local);
+    await waitForControllerLabel(page, CONTROLLER_HOST);
+    const back = await readSwitcher(page);
+    const actions = [['retry', text.retry], ['settings', text.settings]];
+    return verdict(
+      rate.text === rateText && rate.role === 'alert' && isDeepStrictEqual(rate.actions, actions) &&
+      rateSwitcher.current === CLOUD_REMOTE_NAME && !rateSwitcher.busy &&
+      offline.text === offlineText && isDeepStrictEqual(offline.actions, actions) &&
+      back.current === text.thisNetwork && !back.cloudActive,
+      { rate, rateSwitcher: rateSwitcher.current, offline, back: back.current }
+    );
+  }); // End of check "[cloud] es: a refused cloud connect"
+
+  await check(`[cloud] es: a local controller that answers with a refusal gets no cloud offer; one that does not answer at all (unreachable) gets "${text.throughCloud}" in the error state after one fresh controller list — which switches to its cloud duplicate: the header shows "${CLOUD_LOCAL_NAME}", the toggle "${text.thisNetwork}" with the "${text.cloudTag}" tag on its entry; "${text.thisNetwork}" then connects directly`, async () => {
+    await configureStub(session, { connect: LOCAL_REFUSED, cloudConnectResult: CLOUD_DUPLICATE_OK });
+    await page.click('#connectBtn');
+    await page.waitForFunction(() => !document.getElementById('statusIndicator').classList.contains('connected') && !document.getElementById('connectBtn').disabled, null, { timeout: WAIT_MS });
+    const before = await cloudCallCounts(session);
+    await page.click('#connectBtn');
+    await waitForStateBlock(page, 'loadError');
+    await page.waitForTimeout(300);
+    const refused = await readStateBlock(page);
+    const afterRefused = await cloudCallCounts(session);
+    await configureStub(session, { connect: LOCAL_UNREACHABLE });
+    await page.click('#apList [data-state-action="retry"]');
+    await page.waitForSelector('#apList [data-state-action="connectThroughCloud"]', { timeout: WAIT_MS });
+    const offered = await readStateBlock(page);
+    const status = await page.textContent('#statusText');
+    const afterOffer = await cloudCallCounts(session);
+    await page.click('#apList [data-state-action="connectThroughCloud"]');
+    await waitForControllerLabel(page, CLOUD_LOCAL_NAME);
+    const viaCloud = await readSwitcher(page);
+    const switchCall = callsTo(await stubState(session), 'omada:switch-controller').at(-1)?.args;
+    await configureStub(session, { connect: { success: true } });
+    await chooseSwitcherEntry(page, SWITCHER_KEY.local);
+    await waitForControllerLabel(page, CONTROLLER_HOST);
+    const direct = await readSwitcher(page);
+    const lastSwitch = callsTo(await stubState(session), 'omada:switch-controller').at(-1)?.args;
+    return verdict(
+      refused.text === `${text.connectionError} (${LOCAL_REFUSED.detail})` && isDeepStrictEqual(refused.actions, [['retry', text.retry], ['settings', text.settings]]) &&
+      afterRefused.list === before.list &&
+      offered.text === `${text.connectionError} (${LOCAL_UNREACHABLE.detail})` && status === offered.text &&
+      isDeepStrictEqual(offered.actions, [['retry', text.retry], ['connectThroughCloud', text.throughCloud], ['settings', text.settings]]) &&
+      afterOffer.list === before.list + 1 &&
+      isDeepStrictEqual(switchCall, [{ kind: 'cloud', omadacId: CLOUD_LOCAL_OMADAC_ID }]) &&
+      viaCloud.current === text.thisNetwork && viaCloud.cloudActive && isDeepStrictEqual(viaCloud.entries, expectedLocalEntries('es', SWITCHER_KEY.local, true)) &&
+      isDeepStrictEqual(lastSwitch, [{ kind: 'local' }]) && direct.current === text.thisNetwork && !direct.cloudActive &&
+      isDeepStrictEqual(direct.entries, expectedLocalEntries('es', SWITCHER_KEY.local)),
+      { refused, lists: [before.list, afterRefused.list, afterOffer.list], offered, status, switchCall, viaCloud: [viaCloud.current, viaCloud.cloudActive, viaCloud.entries[0]], lastSwitch, direct: direct.current }
+    );
+  }); // End of check "[cloud] es: a local controller that does not answer"
+
+  await check(`[cloud] es: a cloud-only start (no local controller, a cloud credential, main on the local target): no connect; the views say "${text.chooseHint}" with "${text.choose}"; the toggle says "${text.none}" and the four organizations are cloud entries (the old duplicate too); "${text.choose}" opens the panel on "${CLOUD_REMOTE_NAME}", whose Enter connects it; restarted with it as main's target, the app connects it at once`, async () => {
+    await configureStub(session, {
+      config: { url: '', username: '', language: 'es', hasPassword: false, pinnedFingerprint: null, cloudAccess: CLOUD_CREDENTIAL },
+      cloudConnectResult: CLOUD_REMOTE_OK,
+    });
+    const before = await cloudCallCounts(session);
+    await restartRenderer(page);
+    await waitForSwitcherEntries(page, 4);
+    await waitForStateBlock(page, 'chooseController');
+    await page.waitForTimeout(200);
+    const start = { block: await readStateBlock(page), switcher: await readSwitcher(page), shell: await readShell(page), calls: await cloudCallCounts(session) };
+    await page.click('#apList [data-state-action="chooseController"]');
+    await page.waitForSelector('#controllerSwitcherPanel', { state: 'visible', timeout: WAIT_MS });
+    const focus = (await readSwitcher(page)).activeKey;
+    await page.keyboard.press('Enter');
+    await waitForControllerLabel(page, CLOUD_REMOTE_NAME);
+    const chosen = await readSwitcher(page);
+    const beforeRestart = await cloudCallCounts(session);
+    await restartRenderer(page);
+    await waitForControllerLabel(page, CLOUD_REMOTE_NAME);
+    const restarted = await cloudCallCounts(session);
+    const status = CLOUD_TEXT.es.status;
+    return verdict(
+      start.calls.connect === before.connect && start.calls.switch === before.switch && start.calls.list === before.list + 1 &&
+      start.block?.text === text.chooseHint && isDeepStrictEqual(start.block?.actions, [['chooseController', text.choose]]) &&
+      start.shell.connectDisabled === true && start.shell.status === TEXT.es.disconnected &&
+      start.switcher.current === text.none && isDeepStrictEqual(start.switcher.entries.map((entry) => [entry.key, entry.title, entry.tag, entry.disabled, entry.reason]), [
+        [SWITCHER_KEY.tooOld, 'OC200 Planta 2', text.cloudTag, true, status.versionTooOld],
+        [SWITCHER_KEY.offline, 'OC200 Planta 3', text.cloudTag, true, status.offline],
+        [SWITCHER_KEY.remote, CLOUD_REMOTE_NAME, text.cloudTag, false, null],
+        [SWITCHER_KEY.duplicate, CLOUD_LOCAL_NAME, text.cloudTag, false, null],
+      ]) &&
+      focus === SWITCHER_KEY.remote && chosen.current === CLOUD_REMOTE_NAME &&
+      restarted.connect === beforeRestart.connect + 1 && restarted.switch === beforeRestart.switch,
+      { start, focus, chosen: chosen.current, calls: [before, beforeRestart, restarted] }
+    );
+  }); // End of check "[cloud] es: a cloud-only start"
+
+  await check(`[cloud] es: "Quitar el acceso a la nube" in the cloud-only configuration while connected to "${CLOUD_REMOTE_NAME}" — a refused save resets nothing (still connected, its rows and the switcher shown, main's target unchanged); saved, main's target is local at once and nothing is left to connect to: the first-run state ("${text.configureHint}" with "${text.configure}"), Conectar disabled, the switcher hidden, no rows or controller left, the old session nonce refused, no connect, switch or list after the save`, async () => {
+    return cloudOnlyRemovalVerdict(session, 'es', true);
+  }); // End of check "[cloud] es: Quitar el acceso a la nube in the cloud-only configuration"
+
+  // The cloud credential stored again and "OC200 Planta 4" chosen once more
+  // (main's target is local after the removal), for the language switch below
+  await configureStub(session, { config: { url: '', username: '', language: 'es', hasPassword: false, pinnedFingerprint: null, cloudAccess: CLOUD_CREDENTIAL } });
+  await restartRenderer(page);
+  await waitForSwitcherEntries(page, 4);
+  await waitForStateBlock(page, 'chooseController');
+  await chooseSwitcherEntry(page, SWITCHER_KEY.remote);
+  await waitForControllerLabel(page, CLOUD_REMOTE_NAME);
+
+  await check('[cloud] es: switching the language to English in the cloud-only configuration (a cloud-only save: "" as URL and username) reads main\'s target back — the cloud controller — and reconnects it; the switcher reads "Controller"', async () => {
+    const before = await cloudCallCounts(session);
+    await openSettingsWhenIdle(page);
+    await page.selectOption('#languageSelect', 'en');
+    await page.click('#saveSettingsBtn');
+    await waitForSettingsClosed(page);
+    await page.waitForFunction(() => document.documentElement.lang === 'en', null, { timeout: WAIT_MS });
+    await waitForStubCall(session, 'omada:connect', before.connect);
+    await waitForControllerLabel(page, CLOUD_REMOTE_NAME);
+    const save = await latestSave(session);
+    const after = await cloudCallCounts(session);
+    const switcher = await readSwitcher(page);
+    return verdict(
+      isDeepStrictEqual(save.payload, { url: '', username: '', language: 'en' }) && after.connect === before.connect + 1 && after.switch === before.switch &&
+      after.list === before.list + 1 && switcher.label === CLOUD_SWITCHER_TEXT.en.label && switcher.current === CLOUD_REMOTE_NAME,
+      { payload: save.payload, before, after, switcher: [switcher.label, switcher.current] }
+    );
+  }); // End of check "[cloud] es: switching the language to English"
+} // End of function runCloudSwitcherSpanish()
+
+/**
+ * The English checks of the [cloud] launch (see runCloudSwitcher()).
+ * @param {object} session - The launch.
+ * @returns {Promise<void>}
+ */
+async function runCloudSwitcherEnglish(session) {
+  const { page } = session;
+  const text = CLOUD_SWITCHER_TEXT.en;
+
+  // A local controller configured again (the cloud credential kept), main
+  // still on OC200 Planta 4: a restart connects that cloud controller
+  await configureStub(session, {
+    config: { url: CONTROLLER_URL, username: 'admin', language: 'en', hasPassword: true, pinnedFingerprint: null, cloudAccess: CLOUD_CREDENTIAL },
+    cloudConnectResult: CLOUD_REMOTE_OK,
+    connect: { success: true },
+  });
+  await restartRenderer(page);
+  await checkTranslations(session, 'en');
+
+  await check(`[cloud] en: startup on a TP-Link cloud controller (main's target, a local controller configured too) connects it at once — the header shows "${CLOUD_REMOTE_NAME}" —; the switcher reads "${text.label}" / "${CLOUD_REMOTE_NAME}"; opened, "${text.thisNetwork}" first, then the cloud controllers with "${text.cloudTag}", the disabled ones described by their English reasons, "${CLOUD_REMOTE_NAME}" active`, async () => {
+    await waitForControllerLabel(page, CLOUD_REMOTE_NAME);
+    await waitForSwitcherEntries(page, 4);
+    await openSwitcher(page);
+    const opened = await readSwitcher(page);
+    await page.keyboard.press('Escape');
+    return verdict(
+      opened.label === text.label && opened.current === CLOUD_REMOTE_NAME && opened.title === fmt(text.toggle, { name: CLOUD_REMOTE_NAME }) && opened.cloudActive &&
+      isDeepStrictEqual(opened.entries, expectedLocalEntries('en', SWITCHER_KEY.remote)),
+      opened
+    );
+  }); // End of check "[cloud] en: startup on a TP-Link cloud controller"
+
+  await check('[cloud] en: a cloud connect refused for an expired or deleted credential (-52602) points at Settings → TP-Link cloud, with main\'s detail', async () => {
+    await page.click('#connectBtn');
+    await page.waitForFunction(() => !document.getElementById('statusIndicator').classList.contains('connected') && !document.getElementById('connectBtn').disabled, null, { timeout: WAIT_MS });
+    await configureStub(session, { cloudConnectResult: CLOUD_CONNECT_EXPIRED });
+    await page.click('#connectBtn');
+    const expired = `${text.expired} (credentialInvalid (errorCode -52602))`;
+    await waitForStatus(page, expired);
+    await waitForStateBlock(page, 'loadError');
+    const block = await readStateBlock(page);
+    await configureStub(session, { cloudConnectResult: CLOUD_REMOTE_OK });
+    return verdict(block.text === expired && isDeepStrictEqual(block.actions, [['retry', text.retry], ['settings', text.settings]]), block);
+  }); // End of check "[cloud] en: a cloud connect refused for an expired credential"
+
+  await check(`[cloud] en: switching to "${text.thisNetwork}" — the switcher is aria-disabled with "${text.busy}" while it runs —; the local controller does not answer, so the error state offers "${text.throughCloud}", which reaches it through its cloud duplicate ("${CLOUD_LOCAL_NAME}" in the header)`, async () => {
+    let busy;
+    try {
+      await configureStub(session, { connect: LOCAL_UNREACHABLE, cloudConnectResult: CLOUD_DUPLICATE_OK, delays: { 'omada:switch-controller': 1200 } });
+      await chooseSwitcherEntry(page, SWITCHER_KEY.local);
+      await page.waitForTimeout(300);
+      busy = await readSwitcher(page);
+      await page.waitForSelector('#apList [data-state-action="connectThroughCloud"]', { timeout: WAIT_MS });
+    } finally {
+      await configureStub(session, { delays: {} });
+    }
+    const offered = await readStateBlock(page);
+    await page.click('#apList [data-state-action="connectThroughCloud"]');
+    await waitForControllerLabel(page, CLOUD_LOCAL_NAME);
+    const viaCloud = await readSwitcher(page);
+    return verdict(
+      busy.busy && busy.busyReason === text.busy && busy.title === text.busy &&
+      isDeepStrictEqual(offered.actions, [['retry', text.retry], ['connectThroughCloud', text.throughCloud], ['settings', text.settings]]) &&
+      offered.text === `${text.connectionError} (${LOCAL_UNREACHABLE.detail})` &&
+      viaCloud.current === text.thisNetwork && viaCloud.cloudActive && viaCloud.entries[0]?.tag === text.cloudTag,
+      { busy: [busy.busy, busy.busyReason, busy.title], offered, viaCloud: [viaCloud.current, viaCloud.cloudActive, viaCloud.entries[0]] }
+    );
+  }); // End of check "[cloud] en: switching to This network"
+
+  await check('[cloud] en: "Remove cloud access" saved while connected through the cloud — main returns its target to local in the save itself (connectionReset) — reconnects the local controller with a plain connect (no switch): connected locally, main\'s target local, the switcher hidden', async () => {
+    await configureStub(session, { connect: { success: true } });
+    const before = await cloudCallCounts(session);
+    await openSettingsWhenIdle(page);
+    await page.click('#removeCloudBtn');
+    await page.click('#confirmCloudRemoveBtn');
+    await page.click('#saveSettingsBtn');
+    await waitForSettingsClosed(page);
+    await waitForControllerLabel(page, CONTROLLER_HOST);
+    await page.waitForFunction(() => document.getElementById('controllerSwitcher').hidden, null, { timeout: WAIT_MS });
+    const save = await latestSave(session);
+    const state = await stubState(session);
+    const after = await cloudCallCounts(session);
+    const target = await page.evaluate(async () => (await window.omadaAPI.loadConfig()).connectionTarget);
+    return verdict(
+      isDeepStrictEqual(save.payload, { url: CONTROLLER_URL, username: 'admin', language: 'en', removeCloudAccess: true }) &&
+      after.switch === before.switch && after.connect === before.connect + 1 && isDeepStrictEqual(state.target, { kind: 'local' }) &&
+      state.connected === true && after.list === before.list && target === 'local',
+      { payload: save.payload, switches: after.switch - before.switch, connects: after.connect - before.connect, lists: after.list - before.list, target }
+    );
+  }); // End of check "[cloud] en: Remove cloud access saved while connected through the cloud"
+
+  await check(`[cloud] en: a cloud-only save of a new credential (no local controller) reads the controller list and asks to choose a controller — "${text.chooseHint}" with "${text.choose}", the four organizations listed — without connecting`, async () => {
+    await page.click('#connectBtn');
+    await page.waitForFunction(() => !document.getElementById('statusIndicator').classList.contains('connected') && !document.getElementById('connectBtn').disabled, null, { timeout: WAIT_MS });
+    await configureStub(session, { config: { url: '', username: '', language: 'en', hasPassword: false, pinnedFingerprint: null } });
+    const before = await cloudCallCounts(session);
+    await page.click('#settingsBtn');
+    await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+    await page.fill('#cloudClientIdInput', 'owm-cloud-new');
+    await page.fill('#cloudClientSecretInput', CLOUD_SECRETS[2]);
+    await page.click('#saveSettingsBtn');
+    await waitForSettingsClosed(page);
+    await waitForSwitcherEntries(page, 4);
+    await waitForStateBlock(page, 'chooseController');
+    await page.waitForTimeout(200);
+    const after = await cloudCallCounts(session);
+    const block = await readStateBlock(page);
+    const switcher = await readSwitcher(page);
+    const shell = await readShell(page);
+    const leaks = await countCloudSecretLeaks(page);
+    return verdict(
+      after.save === before.save + 1 && after.connect === before.connect && after.switch === before.switch && after.list === before.list + 1 &&
+      block.text === text.chooseHint && isDeepStrictEqual(block.actions, [['chooseController', text.choose]]) &&
+      switcher.current === text.none && switcher.entries.length === 4 && switcher.entries.every((entry) => entry.tag === text.cloudTag) &&
+      shell.connectDisabled === true && leaks === 0,
+      { before, after, block, switcher: [switcher.current, switcher.entries.length], connectDisabled: shell.connectDisabled, leaks }
+    );
+  }); // End of check "[cloud] en: a cloud-only save of a new credential"
+
+  await check(`[cloud] en: "Remove cloud access" in the cloud-only configuration while connected to "${CLOUD_REMOTE_NAME}" (chosen in the switcher) — main's target is local at once and nothing is left to connect to: the first-run state ("${text.configureHint}" with "${text.configure}"), Connect disabled, the switcher hidden, no rows or controller left, the old session nonce refused, no connect, switch or list after the save`, async () => {
+    await configureStub(session, { cloudConnectResult: CLOUD_REMOTE_OK });
+    await chooseSwitcherEntry(page, SWITCHER_KEY.remote);
+    return cloudOnlyRemovalVerdict(session, 'en', false);
+  }); // End of check "[cloud] en: Remove cloud access in the cloud-only configuration"
+} // End of function runCloudSwitcherEnglish()
+
+/**
+ * Launch [cloud] (inbox I-1c2b): the controller switcher over the stub's
+ * four-organization account — a local controller configured with a cloud
+ * credential stored and main's `localOmadacId` known. Spanish: the switcher
+ * at startup (the local duplicate hidden, the offline and below-6.3
+ * controllers disabled with their reasons, at every width), the keyboard, a
+ * switch to a cloud controller (busy, skeletons, the state reset, the
+ * header name, its data), the cloud error texts, "Connect through TP-Link
+ * cloud" after an unreachable local controller (and none after a refusal),
+ * a cloud-only start, Remove cloud access in the cloud-only configuration
+ * (a refused save first; then the first-run state), and a cloud-only save
+ * that reconnects the cloud target. English, after a restart on the cloud
+ * target: the texts, -52602, the busy reason and the cloud offer, Remove
+ * cloud access going back to local (main's target reset by the save), a
+ * cloud-only save asking to choose a controller, and Remove cloud access in
+ * the cloud-only configuration again. No request leaves the app (D4).
+ * @param {{ binary: string }} electronInfo - Resolved Electron binary.
+ * @returns {Promise<void>}
+ */
+async function runCloudSwitcher(electronInfo) {
+  const session = await launch(electronInfo, 'cloud', {
+    config: { url: CONTROLLER_URL, username: 'admin', language: 'es', hasPassword: true, cloudAccess: CLOUD_CREDENTIAL },
+    localOmadacId: CLOUD_LOCAL_OMADAC_ID,
+    connect: { success: true },
+    controllerVersion: data.controllerVersion,
+    accessPoints: data.accessPoints,
+    wlanGroups: data.wlanGroups,
+    cloudData: CLOUD_REMOTE_DATA,
+  });
+  try {
+    await checkTranslations(session, 'es');
+    await runCloudSwitcherSpanish(session);
+    await runCloudSwitcherEnglish(session);
+  } finally {
+    session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
+    await session.app.close().catch(() => {});
+  }
+} // End of function runCloudSwitcher()
 
 /**
  * Calls one window.omadaAPI method from the renderer and reports its value
@@ -11125,6 +11928,7 @@ async function main() {
     ['mgmt', runManagementAccess],
     ['caps', runManagementCapabilities],
     ['cloudset', runCloudSettings],
+    ['cloud', runCloudSwitcher],
     ['groups', runApGroupManagement],
     ['nets', runManagedNetworks],
     ['netedit', runNetworkEditing],

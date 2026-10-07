@@ -23,6 +23,7 @@
 import type { WlanGroup } from '../shared/types';
 import { renderApDetails } from './ap-details';
 import { loadData } from './connection';
+import { renderControllerSwitcher } from './controller-switcher';
 import { renderDestinationPane } from './destination-pane';
 import { apFilterInput, apList, destinationSearchInput, groupDetail } from './elements';
 import { openGroupDialog, type GroupDialogContent, type GroupDialogKind } from './group-dialog';
@@ -237,6 +238,8 @@ export async function runGroupFlow(kind: GroupDialogKind, groupId: string | null
   if (nonce === null || (kind !== 'create' && (group === null || !isWritableGroupId(group.wlanId)))) return;
 
   state.isManagingApGroup = true;
+  // The controller switcher is disabled while this flow runs (inbox I-1c2b)
+  renderControllerSwitcher();
   const generation = state.sessionGeneration;
   const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const openerInDetail = opener !== null && groupDetail.contains(opener);
@@ -295,6 +298,7 @@ export async function runGroupFlow(kind: GroupDialogKind, groupId: string | null
   } finally {
     dialog.close();
     state.isManagingApGroup = false;
+    renderControllerSwitcher();
     if (generation === state.sessionGeneration) {
       // Re-enables the actions for whatever the state is now
       renderGroupsView();

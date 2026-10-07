@@ -65,6 +65,7 @@ import {
 } from './elements';
 import { renderApFilterOptions, renderApList } from './ap-list';
 import { applyCloudTranslations } from './cloud-settings';
+import { renderControllerSwitcher } from './controller-switcher';
 import { renderDestinationList } from './destination-pane';
 import { t } from './i18n';
 import { moveActionLabel } from './move-text';
@@ -87,6 +88,9 @@ import { renderHeaderMeta } from './status';
 export function applyTranslations() {
   // App shell: sidebar entries and counts, Settings entry, view titles
   applyShellTranslations();
+  // The controller switcher at the top of the sidebar (its label, the
+  // active controller, the entries and their reasons, the busy reason)
+  renderControllerSwitcher();
 
   // Panel titles and list labels; the destination list's follows the
   // controller's group model

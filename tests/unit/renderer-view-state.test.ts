@@ -69,6 +69,15 @@ describe('contentState', () => {
     assert.equal(contentState(input()), 'disconnected');
   });
 
+  test('a cloud-only configuration with no controller chosen asks to choose one (inbox I-1c2b); a controller to connect to, an attempt, an error or data win', () => {
+    assert.equal(contentState(input({ hasStoredConfig: false, canChooseController: true })), 'chooseController');
+    assert.equal(contentState(input({ hasStoredConfig: false, canChooseController: false })), 'firstRun');
+    assert.equal(contentState(input({ canChooseController: true })), 'disconnected');
+    assert.equal(contentState(input({ hasStoredConfig: false, canChooseController: true, isConnecting: true })), 'loading');
+    assert.equal(contentState(input({ hasStoredConfig: false, canChooseController: true, loadError: 'x' })), 'loadError');
+    assert.equal(contentState(input({ hasStoredConfig: false, canChooseController: true, hasData: true })), 'ready');
+  });
+
   test('connecting or loading the first data shows the loading state', () => {
     assert.equal(contentState(input({ isConnecting: true })), 'loading');
     assert.equal(contentState(input({ isLoadingData: true })), 'loading');

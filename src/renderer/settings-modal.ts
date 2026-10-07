@@ -14,6 +14,8 @@ import {
   resetCloudTest,
 } from './cloud-settings';
 import { connect, disconnect, handleConnectionReset } from './connection';
+import { loadCloudControllers, renderControllerSwitcher, syncSwitcherConfig } from './controller-switcher';
+import { saveFollowUp, type SaveFollowUp } from './controller-switcher-model';
 import {
   cancelCertResetBtn,
   cancelManagementRemoveBtn,
@@ -396,6 +398,7 @@ export async function confirmCertificateReset(): Promise<void> {
   }
   if (isOperationInProgress()) return;
   state.isResettingCertificate = true;
+  renderControllerSwitcher();
   confirmCertResetBtn.disabled = true;
   cancelCertResetBtn.disabled = true;
   try {
@@ -415,6 +418,7 @@ export async function confirmCertificateReset(): Promise<void> {
     showToast(t('certResetError'), 'error');
   } finally {
     state.isResettingCertificate = false;
+    renderControllerSwitcher();
     confirmCertResetBtn.disabled = false;
     cancelCertResetBtn.disabled = false;
     hideCertificateResetConfirm();
@@ -445,12 +449,25 @@ export async function confirmCertificateReset(): Promise<void> {
  * planCloudOnlySave() mirror main): it sends '' as URL and username with
  * the cloud fields, refuses typed management fields
  * ('managementNeedsController') and an empty form ("fill in the URL and
- * username", as before), and neither marks a local configuration as stored
- * nor auto-connects.
+ * username", as before), and does not mark a local configuration as
+ * stored. After any successful save main's config is read back for the
+ * controller switcher (inbox I-1c2b, syncSwitcherConfig(): the local URL,
+ * the cloud credential, main's target) and decides what follows
+ * (saveFollowUp()): a cloud-only save auto-connects only when main's target
+ * is a TP-Link cloud controller (otherwise the views ask to choose one in
+ * the switcher, or show the first run when nothing is configured any more);
+ * a save that removed the cloud credential while main targeted a cloud
+ * controller needs nothing special — main returned its target to local in
+ * the save itself, so the read-back target is local and the auto-connect
+ * reaches the local controller; with a cloud credential stored the
+ * switcher's controller list is read again (the credential or the local
+ * controller — whose cloud duplicate it hides — may have changed).
  * The URL is validated/normalized here and again in the main process. A save
- * that changed the controller URL makes the main process close the current
- * connection (reported as `connectionReset`): the connected UI is dropped
- * locally before the auto-connect starts. A no-op while any exclusive
+ * that changed the controller URL, or a cloud save that dropped a cloud
+ * connection, makes the main process close the current connection (reported
+ * as `connectionReset`): the connected UI is dropped locally before the
+ * auto-connect starts, and the Connect button follows whether a controller
+ * is left to connect to (handleConnectionReset()). A no-op while any exclusive
  * operation is pending (including a previous save still in flight — e.g.
  * Enter-key repeat); the Save button is disabled while saving so it cannot
  * double-submit.
@@ -460,6 +477,7 @@ export async function saveSettings(): Promise<void> {
   if (isOperationInProgress()) return;
   state.isSavingSettings = true;
   saveSettingsBtn.disabled = true;
+  renderControllerSwitcher();
   // Session generation at save start: if a disconnect or another operation
   // supersedes the session while the save is awaiting, the auto-connect
   // below must not start
@@ -554,24 +572,44 @@ export async function saveSettings(): Promise<void> {
     const result = await window.omadaAPI.saveConfig(payload);
 
     if (result.success) {
+      // Main's config as saved, for the controller switcher (inbox I-1c2b):
+      // the local URL, the cloud credential and main's current target (also
+      // state.hasStoredConfig: whether connect() reaches a controller)
+      const saved = await syncSwitcherConfig();
       // A usable local configuration now exists: the views can offer
       // connecting instead of configuring, and the header's Connect works.
-      // A cloud-only save changes neither (inbox I-1c2a: connecting a cloud
-      // controller is the controller switcher's, I-1c2b)
+      // After a cloud-only save that holds only while main's target is a
+      // TP-Link cloud controller (canConnect())
       if (!cloudOnly) {
         state.hasStoredConfig = true;
         connectBtn.disabled = false;
+      } else if (!state.isConnected) {
+        connectBtn.disabled = !state.hasStoredConfig;
       }
 
       // Auto-connect only when the save's session is still current: a save
       // that completes after a disconnect (or after a newer operation
       // started) must not start a connection. Decided before the connection
       // reset below, which starts a new local session itself. A cloud-only
-      // save does not auto-connect (main's target may be the unconfigured
-      // local controller)
-      connectAfterSave = !cloudOnly && generation === state.sessionGeneration;
+      // save auto-connects only when main's target is a cloud controller
+      // (otherwise it is the unconfigured local controller, and the views
+      // ask to choose a cloud controller in the switcher, or show the first
+      // run when nothing is configured). Main's target is already the one a
+      // connect reaches: a removed cloud credential returned a cloud target
+      // to local in the save (saveFollowUp(); without a config read back, as
+      // before)
+      const followUp: SaveFollowUp = saved !== null ? saveFollowUp(saved, cloudOnly) : cloudOnly ? 'none' : 'connect';
+      connectAfterSave = followUp === 'connect' && generation === state.sessionGeneration;
+      // The switcher's controller list follows the saved credential (and the
+      // local controller, whose cloud duplicate it hides); without a
+      // credential syncSwitcherConfig() already dropped it
+      if (state.switcherCredentialStored) {
+        void loadCloudControllers();
+      }
       if (result.connectionReset) {
-        // The controller URL changed: main already closed the connection
+        // The controller URL or the cloud credential of a cloud connection
+        // changed: main already closed the connection (and, for a removed
+        // cloud credential, returned its target to local)
         handleConnectionReset();
       }
 
@@ -605,6 +643,7 @@ export async function saveSettings(): Promise<void> {
   } finally {
     state.isSavingSettings = false;
     saveSettingsBtn.disabled = false;
+    renderControllerSwitcher();
   }
 
   // Auto-connect only when the save's session was still current (see above)

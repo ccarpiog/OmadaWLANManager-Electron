@@ -1,18 +1,24 @@
 // ============================================================================
 // The §4.6 states of the views' content (docs/management-design.md) as DOM
-// blocks: first run (one "Configure connection" action), disconnected
-// ("Connect to controller"), initial loading (skeleton rows in the layout)
-// and the initial-load error (a persistent inline error with Retry and
-// Settings). The state itself is derived by contentState() in the pure
-// view-state.ts. Each view's main list shows the block with its action
-// (exactly one per view); the destination list next to the AP list shows
-// the same state as text only, so the Access points view never offers two
-// identical actions. The action buttons carry data-state-action
-// ("configure", "connect", "retry", "settings"), followed by one delegated
-// handler in renderer.ts, so this module needs no import of the connection
-// or settings code. Everything is built with DOM APIs, never HTML strings.
+// blocks: first run (one "Configure connection" action), a cloud-only
+// configuration with no controller chosen yet ("Choose controller", which
+// opens the controller switcher; inbox I-1c2b), disconnected ("Connect to
+// controller"), initial loading (skeleton rows in the layout) and the
+// initial-load error (a persistent inline error with Retry and Settings, plus
+// "Connect through TP-Link cloud" when a local controller that did not
+// answer can be reached through its cloud duplicate, state.cloudFallback).
+// The state itself is derived by contentState() in the pure view-state.ts.
+// Each view's main list shows the block with its action (exactly one per
+// view); the destination list next to the AP list shows the same state as
+// text only, so the Access points view never offers two identical actions.
+// The action buttons carry data-state-action ("configure",
+// "chooseController", "connect", "retry", "connectThroughCloud",
+// "settings"), followed by one delegated handler in renderer.ts, so this
+// module needs no import of the connection or settings code. Everything is
+// built with DOM APIs, never HTML strings.
 // ============================================================================
 
+import { SWITCHER_TEXT } from './controller-switcher-model';
 import { createEmptyState } from './dom-helpers';
 import { t, type Translations } from './i18n';
 import { state } from './state';
@@ -46,6 +52,7 @@ export function currentContentState(): ContentState {
     isLoadingData: state.isLoadingData,
     hasData: state.lastUpdatedAt !== null,
     loadError: state.loadError,
+    canChooseController: state.switcherCredentialStored,
   });
 }
 
@@ -93,9 +100,11 @@ export function createSkeletonState(): HTMLElement {
 /**
  * Builds the block of a non-ready content state for one target: the
  * message (its first paragraph) and, in a view's main list, the state's
- * action(s): "Configure connection" (first run), "Connect to controller"
- * (disconnected), or Retry + Settings (initial-load error, which is a
- * persistent alert). The destination list gets the text only.
+ * action(s): "Configure connection" (first run), "Choose controller" (a
+ * cloud-only configuration), "Connect to controller" (disconnected), or
+ * Retry + Settings — with "Connect through TP-Link cloud" between them when
+ * it is offered — (initial-load error, which is a persistent alert). The
+ * destination list gets the text only.
  * @param {StateTarget} target - Where the block goes.
  * @param {Exclude<ContentState, 'ready'>} kind - The state.
  * @returns {HTMLElement} The block.
@@ -110,12 +119,19 @@ export function createStateBlock(target: StateTarget, kind: Exclude<ContentState
   if (kind === 'firstRun') {
     block = createEmptyState(t('configureHint'));
     actions.push(createStateAction('configure', t('configureConnection'), 'btn-primary'));
+  } else if (kind === 'chooseController') {
+    block = createEmptyState(t('chooseControllerHint'));
+    actions.push(createStateAction('chooseController', t('chooseController'), 'btn-primary'));
   } else if (kind === 'disconnected') {
     block = createEmptyState(t(DISCONNECTED_TEXT[target]));
     actions.push(createStateAction('connect', t('connectToController'), 'btn-primary'));
   } else {
     block = createEmptyState(state.loadError ?? t('loadError'));
-    actions.push(createStateAction('retry', t('retry'), 'btn-primary'), createStateAction('settings', t('settings'), 'btn-secondary'));
+    actions.push(createStateAction('retry', t('retry'), 'btn-primary'));
+    if (state.cloudFallback !== null) {
+      actions.push(createStateAction('connectThroughCloud', t(SWITCHER_TEXT.connectThroughCloud), 'btn-secondary'));
+    }
+    actions.push(createStateAction('settings', t('settings'), 'btn-secondary'));
     // The view's main list carries the alert; the destination list next to
     // it repeats the message, muted
     if (withActions) {

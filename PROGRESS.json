@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T18:41:51Z",
+ "updated": "2026-10-07T19:42:09Z",
  "plan": "todo.md",
  "goal": "Add AP-group and Wi-Fi network management for Omada 6.3 to the Electron app, then remote controllers through the TP-Link cloud.",
  "phases": [
@@ -395,9 +395,9 @@
   {
    "id": "I-1c2",
    "title": "Controller switcher and cloud error states",
-   "status": "in_progress",
+   "status": "done",
    "risk": "high",
-   "summary": "Split into I-1c2a (cloud-only save, switcher data and Settings note) and I-1c2b (switcher UI, error states, cloud smoke)."
+   "summary": "Split into I-1c2a (cloud-only save, switcher data and Settings note) and I-1c2b (switcher UI, error states, cloud smoke); both done."
   },
   {
    "id": "I-1c2a",
@@ -412,9 +412,11 @@
   {
    "id": "I-1c2b",
    "title": "Controller switcher UI and cloud error states",
-   "status": "queued",
+   "status": "done",
    "risk": "high",
-   "summary": "Adds the sidebar controller switcher, resets the view on a switch, starts cloud-only setups and offers connecting through the cloud."
+   "summary": "Adds the sidebar controller switcher, resets the view on a switch, starts cloud-only setups and offers connecting through the cloud.",
+   "review": "docs/reviews/phaseI-1c2b.md",
+   "narrative": "docs/progress-archive/phase-i-1c2b.md"
   },
   {
    "id": "I-1c3",

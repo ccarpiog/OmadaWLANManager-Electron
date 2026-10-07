@@ -41,6 +41,7 @@
 import type { ManagedNetwork, NetworkBindingsRequest } from '../shared/types';
 import { openBindingDialog, type BindingDescriber, type BindingDialog } from './binding-dialog';
 import { loadData } from './connection';
+import { renderControllerSwitcher } from './controller-switcher';
 import { networkDetail } from './elements';
 import { t, tFormat, translate } from './i18n';
 import { displayName, focusById } from './inventory-ui';
@@ -406,6 +407,8 @@ export async function runBindingFlow(networkId: string | null): Promise<void> {
   }
 
   state.isManagingNetwork = true;
+  // The controller switcher is disabled while this flow runs (inbox I-1c2b)
+  renderControllerSwitcher();
   const generation = state.sessionGeneration;
   const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const openerInDetail = opener !== null && networkDetail.contains(opener);
@@ -430,6 +433,7 @@ export async function runBindingFlow(networkId: string | null): Promise<void> {
   } finally {
     dialog?.close();
     state.isManagingNetwork = false;
+    renderControllerSwitcher();
     if (generation === state.sessionGeneration) {
       // Re-enables the actions for whatever the state is now
       renderNetworksView();

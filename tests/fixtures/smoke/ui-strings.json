@@ -102,7 +102,11 @@
     "#apStatusFilter option[value=\"unknown\"]": "Estado desconocido",
     "#apGroupFilter@aria-label": "Filtrar por grupo",
     "#apGroupFilter option[value=\"\"]": "Todos los grupos",
-    "#clearApSelectionBtn": "Borrar selección"
+    "#clearApSelectionBtn": "Borrar selección",
+    "#controllerSwitcherLabel": "Controlador",
+    "#controllerSwitcherBusyText": "Espera a que termine la operación en curso para cambiar de controlador.",
+    "#controllerSwitcher@aria-labelledby": "controllerSwitcherLabel",
+    "#controllerSwitcherBtn@aria-controls": "controllerSwitcherPanel"
   },
   "en": {
     "#apPanelTitle": "Access points",
@@ -206,6 +210,10 @@
     "#apStatusFilter option[value=\"unknown\"]": "Unknown status",
     "#apGroupFilter@aria-label": "Filter by group",
     "#apGroupFilter option[value=\"\"]": "All groups",
-    "#clearApSelectionBtn": "Clear selection"
+    "#clearApSelectionBtn": "Clear selection",
+    "#controllerSwitcherLabel": "Controller",
+    "#controllerSwitcherBusyText": "Wait for the current operation to finish before switching controllers.",
+    "#controllerSwitcher@aria-labelledby": "controllerSwitcherLabel",
+    "#controllerSwitcherBtn@aria-controls": "controllerSwitcherPanel"
   }
 }

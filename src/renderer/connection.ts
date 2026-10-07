@@ -7,14 +7,22 @@
 // A successful connection keeps the site name and the session nonce main
 // reported, and after its first data load fetches the management
 // capabilities in the background (management.ts).
+// The controller switcher's switch (inbox I-1c2b, switchToController()) runs
+// the same attempt as connect() over switchController(), after dropping the
+// controller on screen (data, selection, searches, managed caches, details,
+// Back history); a refused TP-Link cloud connect gets its own text
+// (cloudConnectFailureKey()), and a local controller that did not answer
+// may be offered "Connect through TP-Link cloud" (offerCloudFallback()).
 // Every async path is serialized through the operation flags and
 // generation-checked after each await (see state.ts).
 // ============================================================================
 
-import type { AccessPoint, CertificateActionResult, ConnectionResult, SiteInfo } from '../shared/types';
+import type { AccessPoint, CertificateActionResult, ConnectionResult, ControllerTarget, SiteInfo } from '../shared/types';
 import { renderApFilterOptions, renderApList } from './ap-list';
 import { GROUP_FILTER_ALL, pruneSelection, sanitizeClientCount, STATUS_FILTER_ALL } from './ap-selection';
 import { showCertificateChanged, showCertificateTrust } from './cert-modal';
+import { applySwitcherConfig, loadCloudControllers, renderControllerSwitcher, syncSwitcherConfig } from './controller-switcher';
+import { cloudConnectFailureKey, cloudFallbackTarget, isLocalUnreachable, isSwitcherBusy, localOmadacIdOf } from './controller-switcher-model';
 import { renderDestinationList, renderMovePreview } from './destination-pane';
 import { apFilterInput, connectBtn, destinationSearchInput, refreshBtn, settingsBtn } from './elements';
 import { t } from './i18n';
@@ -45,38 +53,46 @@ import {
 } from './validation';
 
 /**
- * Maps a failed connection result (stable error codes sent by the main
- * process over IPC — see the OMADA_CONNECT handler in src/main/index.ts) to a
- * localized message. An unknown/absent code falls back to the generic
- * connection error; the optional technical detail is appended when present.
+ * The localized text of a connection error code (stable codes sent by the
+ * main process over IPC — see the OMADA_CONNECT handler in
+ * src/main/index.ts); an unknown/absent code is the generic connection error.
+ * @param {string | undefined} error - The error code.
+ * @returns {string} The localized text.
+ */
+function connectionErrorText(error: string | undefined): string {
+  switch (error) {
+    case 'configIncomplete':
+      return t('configIncomplete');
+    case 'connectFailed':
+      return t('connectFailed');
+    case 'connectionSuperseded':
+      return t('connectionSuperseded');
+    case 'siteUnavailable':
+      return t('siteSelectError');
+    case 'certificateUntrusted':
+      return t('certUntrustedStatus');
+    case 'certificateChanged':
+      return t('certChangedStatus');
+    default:
+      return t('connectionError');
+  }
+} // End of function connectionErrorText()
+
+/**
+ * Maps a failed connection result to a localized message: for a TP-Link
+ * cloud target, a refused connect whose code-first `detail` has its own text
+ * (cloudConnectFailureKey(): rate limiting -7132, offline, an expired or
+ * deleted credential -52602 pointing at Settings → TP-Link cloud, none saved,
+ * an unknown controller, the session codes); otherwise the code's text
+ * (connectionErrorText()). The optional technical detail is appended when
+ * present.
  * @param {{ error?: string; detail?: string }} result - The failed result.
+ * @param {boolean} [cloudTarget=false] - The attempt was for a cloud controller.
  * @returns {string} The localized error message to display.
  */
-function connectionErrorMessage(result: { error?: string; detail?: string }): string {
-  let message: string;
-  switch (result.error) {
-    case 'configIncomplete':
-      message = t('configIncomplete');
-      break;
-    case 'connectFailed':
-      message = t('connectFailed');
-      break;
-    case 'connectionSuperseded':
-      message = t('connectionSuperseded');
-      break;
-    case 'siteUnavailable':
-      message = t('siteSelectError');
-      break;
-    case 'certificateUntrusted':
-      message = t('certUntrustedStatus');
-      break;
-    case 'certificateChanged':
-      message = t('certChangedStatus');
-      break;
-    default:
-      message = t('connectionError');
-      break;
-  }
+function connectionErrorMessage(result: { error?: string; detail?: string }, cloudTarget = false): string {
+  const cloudKey = cloudTarget ? cloudConnectFailureKey(result) : null;
+  let message = cloudKey !== null ? t(cloudKey) : connectionErrorText(result.error);
   if (result.detail) {
     message = `${message} (${result.detail})`;
   }
@@ -97,11 +113,50 @@ function connectionErrorMessage(result: { error?: string; detail?: string }): st
  * side as the attempt starts and the new session runs its own checks, so
  * no AP-group write action outlives the old verdict. Started from the
  * Connect button, the attempt gives focus back to it once it is enabled
- * again (restoreConnectFocus()).
+ * again (restoreConnectFocus()). Main connects its current target: a
+ * refused TP-Link cloud connect gets the cloud texts (inbox I-1c2b).
  * @returns {Promise<void>}
  */
 export async function connect(): Promise<void> {
   if (isOperationInProgress()) return;
+  await runConnectionAttempt(() => window.omadaAPI.connect(), state.connectionTarget?.kind === 'cloud', false);
+} // End of function connect()
+
+/**
+ * Switches to another controller (the controller switcher and "Connect
+ * through TP-Link cloud", inbox I-1c2b): a no-op while the switcher is busy
+ * (isSwitcherBusy(): a move, a write, a connect, a disconnect, a save, a
+ * certificate reset — a data load or refresh does not block it, it is
+ * superseded). The renderer session is invalidated FIRST — the generation
+ * bumped and the session nonce dropped, so every reply still in flight for
+ * the old controller is discarded —, the controller on screen is dropped
+ * (clearData(): data, AP selection, destination, filters and searches,
+ * managed caches, the AP details pane and drill-ins, the Back history; the
+ * views show the loading skeletons), then main's switchController() runs and
+ * its reply (that connect's result) is handled exactly like connect()'s —
+ * site selection, certificate trust, the cloud error texts. Main's target
+ * is read back afterwards for the switcher (it changes even when the new
+ * controller's connect fails).
+ * @param {ControllerTarget} target - The controller to switch to.
+ * @returns {Promise<void>}
+ */
+export async function switchToController(target: ControllerTarget): Promise<void> {
+  if (isSwitcherBusy(state)) return;
+  await runConnectionAttempt(() => window.omadaAPI.switchController(target), target.kind === 'cloud', true);
+} // End of function switchToController()
+
+/**
+ * The attempt shared by connect() and switchToController() (see them): the
+ * session invalidated, the connecting state shown (the switcher disabled),
+ * the request awaited and its result handled (handleConnectResult()), the
+ * buttons released and the switcher re-rendered at the end. Every post-await
+ * commit is generation-checked.
+ * @param {() => Promise<ConnectionResult>} request - The IPC call (connect or switch).
+ * @param {boolean} cloudTarget - The attempt is for a TP-Link cloud controller.
+ * @param {boolean} isSwitch - A controller switch (drops the controller on screen first).
+ * @returns {Promise<void>}
+ */
+async function runConnectionAttempt(request: () => Promise<ConnectionResult>, cloudTarget: boolean, isSwitch: boolean): Promise<void> {
   // Disabling the Connect button below drops its focus; remember that it
   // started the attempt (spec §4.7: focus returns to the opener once the
   // certificate or site dialog it may open has closed)
@@ -113,9 +168,21 @@ export async function connect(): Promise<void> {
   // in-flight serialization)
   const generation = state.sessionGeneration;
   state.isConnecting = true;
-  // A new attempt replaces the previous error with the loading skeletons
+  // A new attempt replaces the previous error (and its "Connect through
+  // TP-Link cloud" offer) with the loading skeletons
   state.loadError = null;
   state.refreshError = false;
+  state.cloudFallback = null;
+  if (isSwitch) {
+    // The controller on screen goes at once: its session (the nonce with
+    // the old generation, like disconnect()), its site and every piece of
+    // view state that belongs to it (clearData(); the views show the
+    // skeletons while isConnecting)
+    state.sessionNonce = null;
+    state.siteName = null;
+    state.isConnected = false;
+    clearData();
+  }
   setStatus('connecting');
   connectBtn.disabled = true;
   // Settings must stay closed while a connection is in flight: a settings
@@ -123,16 +190,17 @@ export async function connect(): Promise<void> {
   settingsBtn.disabled = true;
   connectBtn.textContent = t('connecting');
   renderContentViews();
+  renderControllerSwitcher();
 
   try {
-    const result = await window.omadaAPI.connect();
+    const result = await request();
 
     // Stale result (session superseded while awaiting): discard it
     if (generation !== state.sessionGeneration) return;
 
-    await handleConnectResult(result, generation, true);
+    await handleConnectResult(result, generation, true, cloudTarget);
   } catch (error) {
-    console.error('Error connecting:', error);
+    console.error(isSwitch ? 'Error switching controllers:' : 'Error connecting:', error);
     // A stale failure must neither flip the newer session's UI nor release
     // a controller that the newer session may own (abortConnection()
     // re-checks the generation itself, but never reach it when stale)
@@ -151,9 +219,30 @@ export async function connect(): Promise<void> {
         renderContentViews();
       }
       restoreConnectFocus(fromConnectButton);
+      if (isSwitch) {
+        void syncAfterSwitch(generation);
+      }
     }
+    renderControllerSwitcher();
   }
-} // End of function connect()
+} // End of function runConnectionAttempt()
+
+/**
+ * After a switch: reads main's target back for the switcher (the switch
+ * persisted it even when the new controller's connect failed), and —
+ * still disconnected and idle — lets the Connect button and the views follow
+ * whether connect() now reaches a controller (a cloud-only configuration).
+ * @param {number} generation - The switch's session generation.
+ * @returns {Promise<void>}
+ */
+async function syncAfterSwitch(generation: number): Promise<void> {
+  await syncSwitcherConfig();
+  if (generation !== state.sessionGeneration || state.isConnected || isOperationInProgress()) return;
+  connectBtn.disabled = !state.hasStoredConfig;
+  if (state.lastUpdatedAt === null) {
+    renderContentViews();
+  }
+} // End of function syncAfterSwitch()
 
 /**
  * Gives focus back to the Connect button after an attempt it started, once
@@ -175,18 +264,22 @@ function restoreConnectFocus(fromConnectButton: boolean): void {
 } // End of function restoreConnectFocus()
 
 /**
- * Handles one OMADA_CONNECT result inside connect(): success commits the
- * connected UI; a superseded result resets only the local UI; a multi-site
- * result runs the site selection; a certificate result runs the first-use
- * confirmation (only when `allowTrust` — the retry after trusting never asks
- * twice) or the "certificate changed" notice; anything else aborts with the
- * mapped error message. Errors propagate to connect()'s catch.
+ * Handles one OMADA_CONNECT (or switch) result inside connect(): success
+ * commits the connected UI; a superseded result resets only the local UI; a
+ * multi-site result runs the site selection; a certificate result runs the
+ * first-use confirmation (only when `allowTrust` — the retry after trusting
+ * never asks twice) or the "certificate changed" notice; anything else
+ * aborts with the mapped error message (a cloud target's own texts,
+ * connectionErrorMessage()) — and a LOCAL controller that did not answer may
+ * then be offered "Connect through TP-Link cloud" (offerCloudFallback()).
+ * Errors propagate to connect()'s catch.
  * @param {ConnectionResult} result - The connect result.
  * @param {number} generation - The session generation captured by connect().
  * @param {boolean} allowTrust - Whether a first-use result may be offered for trust.
+ * @param {boolean} [cloudTarget=false] - The attempt was for a TP-Link cloud controller.
  * @returns {Promise<void>}
  */
-async function handleConnectResult(result: ConnectionResult, generation: number, allowTrust: boolean): Promise<void> {
+async function handleConnectResult(result: ConnectionResult, generation: number, allowTrust: boolean, cloudTarget = false): Promise<void> {
   if (result.success) {
     applySessionDetails(result, null);
     await commitConnectedUi(generation);
@@ -204,9 +297,36 @@ async function handleConnectResult(result: ConnectionResult, generation: number,
   } else if (result.error === 'certificateChanged') {
     await runCertificateChanged(result.certificate, generation);
   } else {
-    await abortConnection(generation, connectionErrorMessage(result));
+    await abortConnection(generation, connectionErrorMessage(result, cloudTarget));
+    if (!cloudTarget) {
+      void offerCloudFallback(result, generation);
+    }
   }
 } // End of function handleConnectResult()
+
+/**
+ * "Connect through TP-Link cloud" (inbox I-1c2b): after a local connect that
+ * failed because the controller did not answer at all (main's
+ * `unreachable`), and while a cloud credential is stored, reads the
+ * account's controllers again (fresh: the duplicate must be online now) and,
+ * when cloudFallbackTarget() finds the local controller's cloud duplicate
+ * online and usable in a complete list, offers it in the views' error state
+ * (state.cloudFallback, an action next to Retry). Discarded when the
+ * attempt's session moved on meanwhile (a Retry, a switch, a disconnect),
+ * its error is no longer shown or a newer list read superseded this one.
+ * @param {ConnectionResult} result - The failed local connect.
+ * @param {number} generation - The attempt's session generation.
+ * @returns {Promise<void>}
+ */
+async function offerCloudFallback(result: ConnectionResult, generation: number): Promise<void> {
+  if (!isLocalUnreachable(result) || !state.switcherCredentialStored) return;
+  const cloud = await loadCloudControllers();
+  if (cloud === null || generation !== state.sessionGeneration || state.loadError === null || state.isConnecting) return;
+  const target = cloudFallbackTarget({ localResult: result, cloud, localOmadacId: localOmadacIdOf(cloud) });
+  if (target === null) return;
+  state.cloudFallback = target;
+  renderContentViews();
+} // End of function offerCloudFallback()
 
 /**
  * Runs the certificate first-use step of connect(): validates the details and
@@ -314,6 +434,8 @@ async function commitConnectedUi(generation: number): Promise<void> {
   const config = await window.omadaAPI.loadConfig();
   // Stale result: a newer session owns the UI now
   if (generation !== state.sessionGeneration) return;
+  // The switcher marks the controller now connected (main's target)
+  applySwitcherConfig(config);
   // The header labels the connection with the configured controller's host,
   // or — for a TP-Link cloud controller, which has no URL — with the
   // controller name its connect result carried (state.controllerName;
@@ -472,6 +594,8 @@ function clearData(): void {
   resetManagedNetworks();
   state.lastUpdatedAt = null;
   state.refreshError = false;
+  // The "Connect through TP-Link cloud" offer belongs to the error it came with
+  state.cloudFallback = null;
   state.selectedApMacs = new Set<string>();
   state.selectionAnchorMac = null;
   state.apFocusMac = null;
@@ -508,6 +632,7 @@ function clearData(): void {
 export async function disconnect(): Promise<void> {
   if (isOperationInProgress()) return;
   state.isDisconnecting = true;
+  renderControllerSwitcher();
   invalidateSession();
   // The session nonce goes with the old generation at once (phase 20a): a
   // nonce-bound call started while the disconnect is awaited (e.g. "Test
@@ -534,18 +659,23 @@ export async function disconnect(): Promise<void> {
       connectBtn.disabled = false;
       clearData();
     }
+    renderControllerSwitcher();
   }
 } // End of function disconnect()
 
 /**
  * Mirrors a connection reset the main process performed on its own — a
- * settings save that changed the controller URL, or a certificate reset
- * (results carrying `connectionReset`): main already invalidated every
- * in-flight attempt and detached and logged out the controller, so the
- * renderer only drops its session (bumping the session generation discards
- * any in-flight load result) and shows the plain disconnected state with
- * cleared data. Purely local — no IPC. A no-op while not connected: there is
- * no connected UI to drop, and a status message already shown stays.
+ * settings save that changed the controller URL or the cloud credential of
+ * a cloud connection, or a certificate reset (results carrying
+ * `connectionReset`): main already invalidated every in-flight attempt and
+ * detached and logged out the controller, so the renderer only drops its
+ * session (bumping the session generation discards any in-flight load
+ * result) and shows the disconnected state with cleared data. The Connect
+ * button follows whether connect() still reaches a controller
+ * (state.hasStoredConfig, already read back by the caller): removing the only
+ * cloud configuration leaves the first-run state with Connect disabled.
+ * Purely local — no IPC. A no-op while not connected: there is no connected
+ * UI to drop, and a status message already shown stays.
  */
 export function handleConnectionReset(): void {
   // The controller (URL) or its trust changed: the remembered site name may
@@ -554,7 +684,7 @@ export function handleConnectionReset(): void {
   if (!state.isConnected) return;
   invalidateSession();
   resetConnectionUi(null);
-  connectBtn.disabled = false;
+  connectBtn.disabled = !state.hasStoredConfig;
 } // End of function handleConnectionReset()
 
 /**

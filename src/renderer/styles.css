@@ -405,6 +405,196 @@ body.platform-darwin .title-bar {
   flex: none;
 }
 
+/* Controller switcher at the top of the sidebar (controller-switcher.ts,
+   inbox I-1c2b): a toggle naming the active controller, and its panel of
+   entries — a dropdown over the sidebar below the toggle (never in the
+   layout flow: closing it on a press elsewhere must not move what is being
+   pressed), a popover beside the compact sidebar and below the top view
+   switcher (responsive rules at the end) */
+.controller-switcher {
+  position: relative;
+  flex: none;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.controller-switcher-toggle .controller-switcher-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.controller-switcher-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.controller-switcher-current {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.controller-switcher-chevron {
+  flex: none;
+  color: var(--text-secondary);
+  transition: transform var(--transition);
+}
+
+.controller-switcher-toggle[aria-expanded="true"] .controller-switcher-chevron {
+  transform: rotate(180deg);
+}
+
+/* A TP-Link cloud controller is active: the toggle's icon says so */
+.controller-switcher.is-cloud .controller-switcher-toggle .nav-icon {
+  color: var(--accent-color);
+}
+
+/* Disabled while an operation owns the session (aria-disabled, so it stays
+   focusable and its reason can be read) */
+.controller-switcher-toggle.is-busy {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.controller-switcher-toggle.is-busy:hover {
+  background: transparent;
+}
+
+.controller-switcher-panel {
+  position: absolute;
+  top: calc(100% - 4px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.controller-switcher-panel:focus {
+  outline: none;
+}
+
+.controller-switcher-panel:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+.controller-switcher-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* One entry: a native button (title, "Cloud" tag, host or version) and,
+   when it cannot be used, its reason under it */
+.controller-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.controller-entry:hover {
+  background: var(--bg-tertiary);
+}
+
+.controller-entry:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+.controller-entry[aria-current="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-color);
+}
+
+.controller-entry[aria-disabled="true"] {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.controller-entry[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+.controller-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.controller-entry-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.controller-entry-tag {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  color: var(--accent-color);
+  background: var(--accent-soft);
+  border-radius: 8px;
+}
+
+.controller-entry-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.controller-entry-reason {
+  padding: 0 8px 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.controller-switcher-notice {
+  margin-top: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  border-left: 3px solid var(--border-color);
+}
+
+.controller-switcher-notice[data-tone="error"] {
+  border-left-color: var(--error-color);
+}
+
 /* View area: one view at a time (the others carry the hidden attribute) */
 .view-area {
   display: flex;
@@ -2447,6 +2637,24 @@ body.platform-darwin .title-bar {
     font-size: 11px;
     line-height: 16px;
   }
+
+  /* Controller switcher: the toggle shows its icon only (its texts stay
+     the accessible name, the tooltip names the active controller); the
+     panel opens as a popover to the right of the compact sidebar, outside
+     its scroll box (fixed, at its place in the flow vertically) */
+  .controller-switcher-chevron {
+    display: none;
+  }
+
+  .controller-switcher-panel {
+    position: fixed;
+    top: auto;
+    right: auto;
+    left: 80px;
+    width: 300px;
+    max-width: calc(100vw - 96px);
+    margin-top: -48px;
+  }
 }
 
 @media (max-width: 799px) {
@@ -2504,6 +2712,24 @@ body.platform-darwin .title-bar {
   /* Settings: the gear alone (its label stays visually hidden) */
   .nav-settings {
     width: 44px;
+  }
+
+  /* Controller switcher: first in the row, its icon alone like Settings;
+     the panel drops down below the row */
+  .controller-switcher {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
+  .controller-switcher-toggle {
+    width: 44px;
+  }
+
+  .controller-switcher-panel {
+    left: 8px;
+    margin-top: 4px;
+    max-height: calc(100vh - 120px);
   }
 
   .view-notice {

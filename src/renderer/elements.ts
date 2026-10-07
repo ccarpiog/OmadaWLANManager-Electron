@@ -30,6 +30,18 @@ export const viewAccessPoints = document.getElementById('viewAccessPoints') as H
 export const viewGroups = document.getElementById('viewGroups') as HTMLElement;
 export const viewNetworks = document.getElementById('viewNetworks') as HTMLElement;
 
+// Controller switcher at the top of the sidebar (controller-switcher.ts,
+// inbox I-1c2b): its container, the toggle (label + the active controller),
+// the busy reason, and the panel with the entries and the cloud list's notice
+export const controllerSwitcher = document.getElementById('controllerSwitcher') as HTMLElement;
+export const controllerSwitcherBtn = document.getElementById('controllerSwitcherBtn') as HTMLButtonElement;
+export const controllerSwitcherLabel = document.getElementById('controllerSwitcherLabel') as HTMLElement;
+export const controllerSwitcherCurrent = document.getElementById('controllerSwitcherCurrent') as HTMLElement;
+export const controllerSwitcherBusyText = document.getElementById('controllerSwitcherBusyText') as HTMLElement;
+export const controllerSwitcherPanel = document.getElementById('controllerSwitcherPanel') as HTMLElement;
+export const controllerSwitcherList = document.getElementById('controllerSwitcherList') as HTMLElement;
+export const controllerSwitcherNotice = document.getElementById('controllerSwitcherNotice') as HTMLElement;
+
 // Notices above the views (notices.ts): the read-only banner of the AP
 // groups and Wi-Fi networks views, and the refresh-error notice with Retry
 export const readOnlyBanner = document.getElementById('readOnlyBanner') as HTMLElement;

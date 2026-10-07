@@ -183,7 +183,10 @@ const connectionManager = new ConnectionManager<ControllerSession>({
   cloud: {
     lookupController: createCloudControllerLookup({ access: cloudAccess, transport: cloudTransport }),
     getCloudSiteId,
-    saveCloudSiteId
+    saveCloudSiteId,
+    // A save that leaves a cloud target without a usable credential returns
+    // the run's target to local (the startup target's test)
+    hasUsableCredential: () => getCloudCredentials() !== null
   }
 });
 
@@ -449,7 +452,8 @@ app.on('before-quit', (event) => {
 // the Client Secret, only the hasPassword / hasClientSecret flags), plus the
 // current connection target (inbox I-1c2a: 'local' or the cloud omadacId
 // connect() reaches now — the stored activeController unless the startup fell
-// back to local), so the renderer knows what a connect() will reach
+// back to local, or a save left the cloud target without a usable cloud
+// credential), so the renderer knows what a connect() will reach
 handleTrusted(IPC_CHANNELS.CONFIG_LOAD, async (_event, ...extra: unknown[]): Promise<RendererConfig> => {
   requireNoExtraArguments(extra);
   return { ...getRendererConfig(), connectionTarget: activeControllerValue(connectionManager.target) };
@@ -472,7 +476,11 @@ handleTrusted(IPC_CHANNELS.CONFIG_LOAD, async (_event, ...extra: unknown[]): Pro
 // controller session is replaced. The reply then carries connectionReset so
 // the renderer drops its connected UI — also when the transition ran because
 // the save changed the TP-Link cloud credential while the target is a cloud
-// controller (inbox I-1b2b2; finishConfigSave()). A save that keeps the URL but touches
+// controller (inbox I-1b2b2; finishConfigSave()). A save that leaves a cloud
+// target without a usable cloud credential (Remove cloud access) returns the
+// target to local in that same step (inbox I-1c2b review), so CONFIG_LOAD's
+// `connectionTarget` reads 'local' once the reply arrives and the next
+// connect reaches the local controller. A save that keeps the URL but touches
 // the management access (Client ID, Client Secret, removal) drops the
 // installed session's Open API client and capabilities at once and starts NO
 // check run here (applyManagementAccessChange()): the Settings flow

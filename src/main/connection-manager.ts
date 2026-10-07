@@ -56,6 +56,9 @@
 // connects it with the site remembered in `cloudSites[omadacId]`; a site the
 // user picks is persisted there, never in the local `siteId`. A cloud
 // failure's `detail` starts with its stable code (describeCloudSessionError()).
+// A config save that leaves a cloud target without a usable cloud credential
+// (Remove cloud access) returns the target to local in the save's own
+// synchronous step, together with the transition (applyConfigSave()).
 // Wiring (inbox I-1b2b2): OMADA_SWITCH_CONTROLLER calls switchTarget() with a
 // target its guard checked (ipc-guards.ts), and index.ts sets the startup
 // target with startOn() — resolveStartupTarget(): the stored cloud controller
@@ -138,6 +141,12 @@ export interface CloudConnectionDeps<C> {
   getCloudSiteId(omadacId: string): string;
   // Remembers the site the user picked on a cloud controller (`cloudSites`)
   saveCloudSiteId(omadacId: string, siteId: string): void;
+  // Whether the cloud credential is usable now (production: config.ts
+  // getCloudCredentials() !== null — a cloud Client ID with a secret, the
+  // session-only one included; the same test as the startup target). A
+  // config save that leaves a cloud target without one returns the target
+  // to local (applyConfigSave())
+  hasUsableCredential(): boolean;
 }
 
 /**
@@ -554,10 +563,18 @@ export class ConnectionManager<C extends ManagedController> {
    * is still valid. The same transition runs when the save changed the cloud
    * credential while the target is a cloud controller (`cloudCredentialsChanged`):
    * the cloud session and any cloud connect in flight were built on the
-   * replaced account client. A save that changes neither leaves the
-   * connection alone. The result tells whether the transition ran
-   * (`connectionReset`), decided in the same synchronous step, so CONFIG_SAVE
-   * reports it for both causes.
+   * replaced account client. A successful save that leaves a cloud target
+   * without a usable cloud credential (Remove cloud access, inbox I-1c2b
+   * review; cloudCredentialUsable()) also returns the target to local in that
+   * same step, before the transition: CONFIG_LOAD's `connectionTarget` reads
+   * 'local' as soon as the save replies, the next connect reaches the local
+   * controller, and nothing is ever served for the cloud controller again.
+   * The run's target only — like startOn()'s fallback, the stored
+   * `activeController` is not written here (a removal has already dropped it
+   * with the cloud fields, config-model.ts). A save that changes none of
+   * these leaves the connection alone. The result tells whether the
+   * transition ran (`connectionReset`), decided in the same synchronous step,
+   * so CONFIG_SAVE reports it for every cause.
    * @param {() => R} save - Persists the config; reports success, urlChanged
    *   and (optional) cloudCredentialsChanged.
    * @returns {Promise<R & { connectionReset: boolean }>} The save result plus
@@ -567,13 +584,33 @@ export class ConnectionManager<C extends ManagedController> {
     save: () => R
   ): Promise<R & { connectionReset: boolean }> {
     const result = save();
-    const cloudChanged = result.cloudCredentialsChanged === true && this.activeTarget.kind === 'cloud';
-    const connectionReset = result.success && (result.urlChanged === true || cloudChanged);
+    const onCloud = this.activeTarget.kind === 'cloud';
+    const cloudChanged = result.cloudCredentialsChanged === true && onCloud;
+    // Decided right after the write, with no await in between
+    const cloudTargetLost = result.success && onCloud && !this.cloudCredentialUsable();
+    if (cloudTargetLost) {
+      this.activeTarget = localTarget();
+    }
+    const connectionReset = result.success && (result.urlChanged === true || cloudChanged || cloudTargetLost);
     if (connectionReset) {
       await this.invalidateControllerState();
     }
     return { ...result, connectionReset };
   } // End of function applyConfigSave()
+
+  /**
+   * Whether the cloud credential is usable now
+   * (CloudConnectionDeps.hasUsableCredential()). Fails closed: without the
+   * cloud side, or when the check throws, a cloud target cannot be served.
+   * @returns {boolean} True when a cloud connect could authenticate.
+   */
+  private cloudCredentialUsable(): boolean {
+    try {
+      return this.deps.cloud?.hasUsableCredential() === true;
+    } catch {
+      return false;
+    }
+  } // End of function cloudCredentialUsable()
 
   /**
    * Switches the connection target (see the header). In ONE synchronous step,

@@ -22,14 +22,21 @@
 //   cloud, …), keyed by the code-first `detail` main sends;
 // - parseConnectionTarget(): main's current connection target
 //   (RendererConfig.connectionTarget), failing closed.
+// Phase I-1c2b adds what the switcher's DOM (controller-switcher.ts) and the
+// startup (renderer.ts init()) decide from: readSwitcherConfig() /
+// canConnect() / startupAction() (connect, let the user choose a cloud
+// controller, or open Settings), saveFollowUp() (what follows a settings
+// save), the entry and toggle texts (switcherEntryParts()),
+// isEntryActivatable() and switcherNotice().
 // Unit-tested in tests/unit/renderer-controller-switcher.test.ts.
 // ============================================================================
 
-import type { CloudController, CloudControllerReason, ControllerTarget } from '../shared/types';
+import type { CloudAccessStatus, CloudController, CloudControllerReason, ControllerTarget } from '../shared/types';
 import {
   CLOUD_REASON_TEXT,
   cloudTestOutcome,
   isCloudControllerId,
+  parseCloudAccessStatus,
   tpLinkErrorCode,
   type CloudTestDisplay,
   type ParsedCloudResult,
@@ -439,3 +446,203 @@ export function cloudConnectFailureKey(result: unknown): keyof Translations | nu
   }
   return CLOUD_CONNECT_CODE_TEXT.get(code) ?? null;
 } // End of function cloudConnectFailureKey()
+
+// ============================================================================
+// The switcher's DOM inputs and decisions (inbox I-1c2b)
+// ============================================================================
+
+/**
+ * What the switcher and the startup read from a config (config:load).
+ */
+export interface SwitcherConfig {
+  // The configured local controller URL ('' when none: a first run or a
+  // cloud-only configuration)
+  localUrl: string;
+  // A TP-Link cloud credential is stored: a cloud Client ID and a usable
+  // secret (main lists the account's controllers only then)
+  credentialStored: boolean;
+  // Main's current connection target (null when unknown)
+  target: ControllerTarget | null;
+}
+
+/**
+ * Tells whether the cloud-access flags hold a usable cloud credential: a
+ * cloud Client ID and a usable secret (main's cloudCredentialsOf()).
+ * @param {CloudAccessStatus} status - The validated flags (parseCloudAccessStatus()).
+ * @returns {boolean} True when the cloud controllers can be listed.
+ */
+export function hasCloudCredential(status: CloudAccessStatus): boolean {
+  return status.clientId !== '' && status.hasCloudSecret === true;
+}
+
+/**
+ * Reads what the switcher needs from a config received over IPC, failing
+ * closed field by field: a missing URL reads as none, malformed cloud flags
+ * as no credential, an unknown connection target as null.
+ * @param {unknown} config - The RendererConfig from loadConfig().
+ * @returns {SwitcherConfig} The local URL, the credential flag and the target.
+ */
+export function readSwitcherConfig(config: unknown): SwitcherConfig {
+  const candidate = typeof config === 'object' && config !== null ? (config as Record<string, unknown>) : {};
+  return {
+    localUrl: typeof candidate.url === 'string' ? candidate.url : '',
+    credentialStored: hasCloudCredential(parseCloudAccessStatus(candidate.cloudAccess)),
+    target: parseConnectionTarget(candidate.connectionTarget),
+  };
+}
+
+/**
+ * Tells whether connect() reaches a controller: a local controller is
+ * configured, or main's target is a TP-Link cloud controller while a cloud
+ * credential is stored (a cloud-only configuration after a cloud controller
+ * was chosen; without the credential main refuses the cloud connect). The
+ * views then offer "Connect to controller" and the header's Connect works
+ * (state.hasStoredConfig).
+ * @param {SwitcherConfig} config - The config's switcher view.
+ * @returns {boolean} True when there is a controller to connect to.
+ */
+export function canConnect(config: SwitcherConfig): boolean {
+  return config.localUrl !== '' || (config.target?.kind === 'cloud' && config.credentialStored);
+}
+
+/**
+ * What the app does at startup (and after a cloud-only save): connect when
+ * connect() reaches a controller (canConnect()); otherwise, with a cloud
+ * credential stored, let the user choose a cloud controller in the switcher
+ * (no connect: main's target is the unconfigured local controller);
+ * otherwise open Settings (the first run, as before).
+ */
+export type StartupAction = 'connect' | 'chooseController' | 'configure';
+
+/**
+ * Decides the startup action (see StartupAction).
+ * @param {SwitcherConfig} config - The config's switcher view.
+ * @returns {StartupAction} What to do.
+ */
+export function startupAction(config: SwitcherConfig): StartupAction {
+  if (canConnect(config)) {
+    return 'connect';
+  }
+  return config.credentialStored ? 'chooseController' : 'configure';
+}
+
+/**
+ * What follows a successful settings save (the Settings flow reconnects after
+ * every save, as before). Main's target is already the one a connect reaches:
+ * a save that leaves a cloud target without a usable cloud credential
+ * (Remove cloud access) returns it to local in the save itself.
+ * - 'connect' — a save with a local controller (reconnect main's target), and
+ *   a cloud-only save while main's target is a cloud controller with a
+ *   credential (canConnect());
+ * - 'none' — a cloud-only save without a reachable controller: the views ask
+ *   to choose a cloud controller (a credential stored) or show the first run
+ *   (nothing configured: the only cloud configuration was removed).
+ */
+export type SaveFollowUp = 'connect' | 'none';
+
+/**
+ * Decides what follows a successful settings save (see SaveFollowUp).
+ * @param {SwitcherConfig} config - Main's config read back after the save.
+ * @param {boolean} cloudOnly - The save configured no local controller.
+ * @returns {SaveFollowUp} What to do.
+ */
+export function saveFollowUp(config: SwitcherConfig, cloudOnly: boolean): SaveFollowUp {
+  if (cloudOnly) {
+    return canConnect(config) ? 'connect' : 'none';
+  }
+  return 'connect';
+}
+
+/**
+ * The active entry of the switcher.
+ * @param {SwitcherModel} model - The switcher's model.
+ * @returns {SwitcherEntry | null} The entry of the controller the app works with, or null.
+ */
+export function activeSwitcherEntry(model: SwitcherModel): SwitcherEntry | null {
+  return model.entries.find((entry) => entry.active) ?? null;
+}
+
+/**
+ * Tells whether choosing an entry runs a switch: a usable entry that is not
+ * the controller already on screen — the active entry runs one only while
+ * not connected (to connect it again) or while it is the local controller
+ * reached through its cloud duplicate (choosing it connects directly).
+ * @param {SwitcherEntry} entry - The entry.
+ * @param {boolean} connected - Whether a session is on screen (state.isConnected).
+ * @returns {boolean} True when choosing it switches.
+ */
+export function isEntryActivatable(entry: SwitcherEntry, connected: boolean): boolean {
+  return entry.usable && (!entry.active || entry.viaCloud || !connected);
+}
+
+/**
+ * The texts of one entry (or of the toggle, for the active one).
+ */
+export interface SwitcherEntryParts {
+  // The local entry's title key ("This network"); null for a cloud entry
+  titleKey: keyof Translations | null;
+  // A cloud entry's title: its name, else its omadacId (an active
+  // controller the list does not show and whose name is unknown); '' for the
+  // local entry
+  title: string;
+  // The "Cloud" tag: every cloud entry, and the local entry while it is
+  // reached through its cloud duplicate
+  cloudTag: boolean;
+  // The local controller's host (its display name), when known
+  host: string | null;
+  // A cloud controller's Omada version, when reported
+  version: string | null;
+}
+
+/**
+ * The texts an entry shows: "This network" with the local host, or the cloud
+ * controller's name with its version, and whether the "Cloud" tag applies.
+ * @param {SwitcherEntry} entry - The entry.
+ * @returns {SwitcherEntryParts} Its texts.
+ */
+export function switcherEntryParts(entry: SwitcherEntry): SwitcherEntryParts {
+  if (entry.kind === 'local') {
+    return { titleKey: SWITCHER_TEXT.local, title: '', cloudTag: entry.viaCloud, host: entry.name, version: null };
+  }
+  const omadacId = entry.target.kind === 'cloud' ? entry.target.omadacId : '';
+  return { titleKey: null, title: entry.name ?? omadacId, cloudTag: true, host: null, version: entry.version };
+}
+
+/**
+ * A line under the switcher's entries: why the cloud list could not be read
+ * (its text and main's diagnostic; the local entry stays usable), that it is
+ * being read for the first time, that the account has no controller, or that
+ * the list may be incomplete.
+ */
+export interface SwitcherNotice {
+  key: keyof Translations;
+  detail: string | null;
+  tone: 'error' | 'info';
+}
+
+/**
+ * The switcher's notice (see SwitcherNotice): a failed list first, then the
+ * first read still in flight (a credential stored, no list held yet), then an
+ * empty account, then a possibly incomplete list; none otherwise.
+ * @param {SwitcherModel} model - The switcher's model.
+ * @param {ParsedCloudResult | null} cloud - The parsed list it was built from.
+ * @param {boolean} credentialStored - Whether a cloud credential is stored.
+ * @returns {SwitcherNotice | null} The notice, or null.
+ */
+export function switcherNotice(model: SwitcherModel, cloud: ParsedCloudResult | null, credentialStored: boolean): SwitcherNotice | null {
+  if (model.cloud.kind === 'failed') {
+    return { key: model.cloud.textKey, detail: model.cloud.detail, tone: 'error' };
+  }
+  if (cloud === null && credentialStored) {
+    return { key: 'loading', detail: null, tone: 'info' };
+  }
+  if (cloud !== null && cloud.ok) {
+    if (cloud.controllers.length === 0) {
+      return { key: 'cloudTestOkNone', detail: null, tone: 'info' };
+    }
+    if (cloud.truncated) {
+      return { key: 'cloudTestTruncated', detail: null, tone: 'info' };
+    }
+  }
+  return null;
+} // End of function switcherNotice()

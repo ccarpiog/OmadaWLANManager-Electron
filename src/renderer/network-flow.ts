@@ -47,6 +47,7 @@
 
 import type { ManagedNetwork, NetworkCreateRequest, NetworkPasswordRequest, NetworkUpdateRequest } from '../shared/types';
 import { loadData } from './connection';
+import { renderControllerSwitcher } from './controller-switcher';
 import { networkDetail } from './elements';
 import { WRITABLE_GROUP_ID_REGEX } from './group-management';
 import { t, tFormat, translate, type Translations } from './i18n';
@@ -763,6 +764,8 @@ export async function runNetworkFlow(kind: NetworkDialogKind, networkId: string 
   }
 
   state.isManagingNetwork = true;
+  // The controller switcher is disabled while this flow runs (inbox I-1c2b)
+  renderControllerSwitcher();
   const generation = state.sessionGeneration;
   const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const openerInDetail = opener !== null && networkDetail.contains(opener);
@@ -800,6 +803,7 @@ export async function runNetworkFlow(kind: NetworkDialogKind, networkId: string 
   } finally {
     dialog?.close();
     state.isManagingNetwork = false;
+    renderControllerSwitcher();
     if (generation === state.sessionGeneration) {
       // Re-enables the actions for whatever the state is now
       renderNetworksView();

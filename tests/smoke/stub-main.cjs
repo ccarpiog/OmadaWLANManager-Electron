@@ -239,8 +239,16 @@ function defaultScenario() {
     saveResult: null,
     // When set, the connect of a cloud target (after OMADA_SWITCH_CONTROLLER
     // to one) returns this verbatim; null: main's refusal without a cloud
-    // credential ({ success: false, error: 'connectError', detail: 'notConfigured' })
+    // credential ({ success: false, error: 'connectError', detail: 'notConfigured' }).
+    // A scripted success (inbox I-1c2b, e.g. { success: true, controllerName:
+    // 'OC200 Planta 4', siteName: 'Planta 4' }) installs a session like a real
+    // cloud connect: a fresh session nonce is added, and the data channels
+    // serve it
     cloudConnectResult: null,
+    // The fake data of the cloud controller a cloud target's session serves
+    // (inbox I-1c2b): { accessPoints, wlanGroups, controllerVersion } in the
+    // shapes of the top-level fields; null serves the top-level fields
+    cloudData: null,
     // The omadacId a local connect "learned" for the configured controller
     // (main's stored `localOmadacId`, inbox I-1c2a): a successful cloud:test /
     // cloud:controllers reply carries it, like CloudAccessService; null (the
@@ -472,6 +480,24 @@ function applyCloudSave(payload, current) {
 } // End of function applyCloudSave()
 
 /**
+ * Mirrors ConnectionManager.applyConfigSave()'s rule for a successful save
+ * that leaves a cloud target without a usable cloud credential (inbox I-1c2b
+ * review; Remove cloud access): the run's target returns to local in the
+ * save itself — no `activeController` write of its own, the removal already
+ * dropped the stored choice with the cloud fields — and the save is a
+ * transition (connectionReset). Call it once every failure check has passed.
+ * @param {object} cloud - The cloud-access flags after the save.
+ * @returns {boolean} True when a cloud target was returned to local.
+ */
+function dropUnusableCloudTarget(cloud) {
+  if (stub.target.kind !== 'cloud' || (cloud.clientId && cloud.hasCloudSecret === true)) {
+    return false;
+  }
+  stub.target = { kind: 'local' };
+  return true;
+}
+
+/**
  * Mirrors isCloudOnlySave() in src/main/config-model.ts (inbox I-1c2a): the
  * payload's URL and username are blank and its password absent or empty
  * while no local controller is "stored" (the scenario config has no URL).
@@ -495,7 +521,8 @@ function isCloudOnlyPayload(payload) {
  * no cloud Client ID stored and does not remove cloud access configures
  * nothing ('invalidUrl', the empty form's code). The config keeps no local
  * field. A cloud-credential change while the target is a cloud controller is
- * a transition (connectionReset), as for any save.
+ * a transition (connectionReset), as for any save, and a removal also
+ * returns that target to local (dropUnusableCloudTarget()).
  * @param {object} payload - The (shape-checked) ConfigSavePayload.
  * @returns {object} The ConfigSaveResult.
  */
@@ -511,7 +538,8 @@ function cloudOnlySave(payload) {
   if (payload.removeCloudAccess !== true && !cloud.cloud.clientId) {
     return { success: false, error: 'invalidUrl' };
   }
-  const cloudReset = cloud.changed && stub.target.kind === 'cloud';
+  const cloudChanged = cloud.changed && stub.target.kind === 'cloud';
+  const cloudReset = dropUnusableCloudTarget(cloud.cloud) || cloudChanged;
   if (cloudReset) {
     stub.pendingTrust = null;
     stub.pendingSelection = null;
@@ -563,7 +591,7 @@ function dropSession() {
 function currentCapabilities() {
   const off = (reason, diagnostic) =>
     diagnostic ? { manageApGroups: false, manageWifiNetworks: false, reason, diagnostic } : { manageApGroups: false, manageWifiNetworks: false, reason };
-  if (groupModelForVersion(normalizeControllerVersion(stub.scenario.controllerVersion)) !== 'apGroup') {
+  if (groupModelForVersion(normalizeControllerVersion(sessionData().controllerVersion)) !== 'apGroup') {
     return off('legacyController');
   }
   const config = currentRendererConfig();
@@ -631,7 +659,10 @@ function requireDataSession(sessionNonce) {
  * session's side the old nonce reaches; then the scripted
  * `cloudConnectResult`, else main's refusal of a cloud connect without a
  * usable cloud credential (the stub keeps none): connectError with the
- * code-first detail 'notConfigured'. Nothing is installed.
+ * code-first detail 'notConfigured'. A refusal installs nothing; a scripted
+ * success (inbox I-1c2b) installs the session like settleAttempt(): a fresh
+ * session nonce (installSession()) with the scripted fields — its
+ * controllerName and siteName — kept.
  * @returns {object} The ConnectionResult.
  */
 function cloudConnectReply() {
@@ -639,8 +670,25 @@ function cloudConnectReply() {
   stub.pendingTrust = null;
   stub.sessionNonce = null;
   const scripted = stub.scenario.cloudConnectResult;
+  if (scripted && scripted.success === true) {
+    const installed = installSession(typeof scripted.siteName === 'string' ? scripted.siteName : null);
+    return { ...structuredClone(scripted), ...installed };
+  }
   return scripted ? structuredClone(scripted) : { success: false, error: 'connectError', detail: 'notConfigured' };
 } // End of function cloudConnectReply()
+
+/**
+ * The fake controller data the installed session serves (inbox I-1c2b): the
+ * scenario's `cloudData` while the target is a cloud controller and it is
+ * set, else the top-level fields.
+ * @returns {{ accessPoints: object[]; wlanGroups: object[]; controllerVersion: string | null }} The data.
+ */
+function sessionData() {
+  const cloud = stub.target.kind === 'cloud' ? stub.scenario.cloudData : null;
+  return cloud
+    ? { accessPoints: cloud.accessPoints || [], wlanGroups: cloud.wlanGroups || [], controllerVersion: cloud.controllerVersion ?? null }
+    : { accessPoints: stub.scenario.accessPoints, wlanGroups: stub.scenario.wlanGroups, controllerVersion: stub.scenario.controllerVersion };
+} // End of function sessionData()
 
 /**
  * The fake controller's AP groups as `GET …/ap-groups` would list them after
@@ -995,10 +1043,12 @@ const handlers = {
    * connectionReset. A success carries managementAccess (flags only). The
    * TP-Link cloud fields follow applyCloudSave() (flags only); a save that
    * changes the cloud credential while the target is a cloud controller is a
-   * transition as well (connectionReset, like finishConfigSave()), and a
-   * success carries cloudAccess. The shape guard is main's own
-   * (isValidConfigSavePayload() of ipc-guards.js), and a save without any
-   * local controller follows cloudOnlySave() (inbox I-1c2a).
+   * transition as well (connectionReset, like finishConfigSave()) — one that
+   * leaves no usable credential also returns the target to local
+   * (dropUnusableCloudTarget()) —, and a success carries cloudAccess. The
+   * shape guard is main's own (isValidConfigSavePayload() of ipc-guards.js),
+   * and a save without any local controller follows cloudOnlySave() (inbox
+   * I-1c2a).
    * @param {unknown} payload - The ConfigSavePayload sent by the renderer.
    * @returns {object} The ConfigSaveResult.
    */
@@ -1033,7 +1083,8 @@ const handlers = {
     if (!cloud.ok) {
       return { success: false, error: cloud.error };
     }
-    const cloudReset = cloud.changed && stub.target.kind === 'cloud';
+    const cloudChanged = cloud.changed && stub.target.kind === 'cloud';
+    const cloudReset = dropUnusableCloudTarget(cloud.cloud) || cloudChanged;
     let pinnedFingerprint = stub.scenario.config.pinnedFingerprint || null;
     if (cloudReset) {
       stub.pendingTrust = null;
@@ -1135,7 +1186,7 @@ const handlers = {
    */
   [IPC_CHANNELS.OMADA_GET_APS]: (sessionNonce, ...extra) => {
     requireDataSession(requireSessionNonce(sessionNonce, extra));
-    return sortedCopy(stub.scenario.accessPoints, 'name');
+    return sortedCopy(sessionData().accessPoints, 'name');
   },
 
   /**
@@ -1149,11 +1200,12 @@ const handlers = {
    */
   [IPC_CHANNELS.OMADA_GET_WLANS]: (sessionNonce, ...extra) => {
     requireDataSession(requireSessionNonce(sessionNonce, extra));
-    const controllerVersion = normalizeControllerVersion(stub.scenario.controllerVersion);
+    const data = sessionData();
+    const controllerVersion = normalizeControllerVersion(data.controllerVersion);
     return {
       controllerVersion,
       groupModel: groupModelForVersion(controllerVersion),
-      groups: sortedCopy(stub.scenario.wlanGroups, 'wlanName'),
+      groups: sortedCopy(data.wlanGroups, 'wlanName'),
     };
   }, // End of the OMADA_GET_WLANS handler
 

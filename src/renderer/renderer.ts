@@ -94,13 +94,19 @@
 //                         validation and its texts
 //   cloud-settings.ts     the Settings "TP-Link cloud (optional)" section
 //                         (Remove cloud access, "Test cloud access")
+//   controller-switcher-model.ts pure controller switcher model (entries,
+//                         the local duplicate hidden, reasons, busy,
+//                         "Connect through TP-Link cloud", cloud error
+//                         texts, the startup decision)
+//   controller-switcher.ts the controller switcher at the top of the
+//                         sidebar (toggle, panel, the cloud list it shows)
 //   settings-modal.ts     settings modal (open/close/save, certificate reset,
 //                         the management-access section)
 //   move-dialog.ts        move review / progress / per-AP results dialog
 //   site-modal.ts         site-selection modal (multi-site controllers)
 //   cert-modal.ts         certificate first-use / "certificate changed" modal
-//   connection.ts         connect/disconnect, site selection, certificate
-//                         trust, load/refresh
+//   connection.ts         connect/disconnect, the controller switch, site
+//                         selection, certificate trust, load/refresh
 //   move-flow.ts          moves the selected APs (review, sequential run,
 //                         results, Retry failed)
 // Shared types come from src/shared/types.ts (type-only imports), and the
@@ -123,7 +129,18 @@ import {
   runCloudTest,
   undoCloudRemoval,
 } from './cloud-settings';
-import { connect, refreshData, retryLoad, toggleConnection } from './connection';
+import { connect, refreshData, retryLoad, switchToController, toggleConnection } from './connection';
+import {
+  applySwitcherConfig,
+  handleControllerSwitcherFocusOut,
+  handleControllerSwitcherKeydown,
+  handleOutsidePointerDown,
+  loadCloudControllers,
+  openControllerSwitcher,
+  takeSwitcherChoice,
+  toggleControllerSwitcher,
+} from './controller-switcher';
+import { startupAction } from './controller-switcher-model';
 import {
   closeDestinationPane,
   handleDestinationChange,
@@ -156,6 +173,9 @@ import {
   confirmCloudRemoveBtn,
   confirmManagementRemoveBtn,
   connectBtn,
+  controllerSwitcher,
+  controllerSwitcherBtn,
+  controllerSwitcherList,
   destinationBackBtn,
   destinationList,
   destinationSearchInput,
@@ -248,6 +268,22 @@ viewNav.addEventListener('click', (e) => {
   }
 });
 
+// Controller switcher at the top of the sidebar (controller-switcher.ts,
+// inbox I-1c2b): the toggle opens / closes its panel; choosing an entry that
+// can be used switches to it (connection.ts switchToController()); arrows
+// move between the entries, Escape closes the panel (focus back on the
+// toggle), and focus or a pointer press elsewhere closes it
+controllerSwitcherBtn.addEventListener('click', toggleControllerSwitcher);
+controllerSwitcherList.addEventListener('click', (e) => {
+  const target = takeSwitcherChoice(e);
+  if (target !== null) {
+    void switchToController(target);
+  }
+});
+controllerSwitcher.addEventListener('keydown', handleControllerSwitcherKeydown);
+controllerSwitcher.addEventListener('focusout', handleControllerSwitcherFocusOut);
+document.addEventListener('pointerdown', handleOutsidePointerDown);
+
 // Cross-navigation: every cross-link in the views (AP details, group and
 // network details) is followed by one delegated handler; "Back to …"
 viewArea.addEventListener('click', handleCrossLinkClick);
@@ -259,8 +295,10 @@ closeApDetailsBtn.addEventListener('click', () => closeApDetails(true));
 
 // §4.6 state actions inside the views (content-state.ts, notices.ts,
 // managed-networks-view.ts): "Configure connection" and Settings open the
-// settings modal, "Connect to controller" connects, Retry reloads (or
-// reconnects), the Wi-Fi networks view's Retry reads its managed list again
+// settings modal, "Choose controller" opens the controller switcher,
+// "Connect to controller" connects, Retry reloads (or reconnects), "Connect
+// through TP-Link cloud" switches to the local controller's cloud duplicate,
+// the Wi-Fi networks view's Retry reads its managed list again
 viewArea.addEventListener('click', (e) => {
   const button = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('[data-state-action]') : null;
   switch (button?.dataset.stateAction) {
@@ -268,11 +306,19 @@ viewArea.addEventListener('click', (e) => {
     case 'settings':
       openSettings();
       break;
+    case 'chooseController':
+      openControllerSwitcher();
+      break;
     case 'connect':
       connect();
       break;
     case 'retry':
       retryLoad();
+      break;
+    case 'connectThroughCloud':
+      if (state.cloudFallback !== null) {
+        void switchToController(state.cloudFallback);
+      }
       break;
     case 'retryNetworks':
       retryManagedNetworks();
@@ -434,9 +480,14 @@ function applyPlatformClass(): void {
  * user-facing text lives in the i18n tables — index.html ships without text,
  * so no wrong-language flash), reveals the UI (the pre-init class in
  * index.html keeps it hidden until every visible string is populated), and
- * either opens settings (first run) or auto-connects. If loading the config
- * fails, the UI is still revealed with default-language texts plus an error
- * toast — never left as a hidden/blank shell.
+ * then (startupAction(), inbox I-1c2b) auto-connects when connect() reaches
+ * a controller — a local URL is configured, or main's target is a TP-Link
+ * cloud controller —, lets the user choose a cloud controller in the
+ * switcher when only a cloud credential is stored (no connect), or opens
+ * settings (first run). With a cloud credential stored the switcher's
+ * controller list is read in the background. If loading the config fails,
+ * the UI is still revealed with default-language texts plus an error toast —
+ * never left as a hidden/blank shell.
  * @returns {Promise<void>}
  */
 async function init(): Promise<void> {
@@ -449,8 +500,10 @@ async function init(): Promise<void> {
 
   // Before any config exists, the views show the first-run state with its
   // one "Configure connection" action (content-state.ts), and the header's
-  // Connect stays disabled until a controller is configured
-  state.hasStoredConfig = Boolean(config?.url);
+  // Connect stays disabled until connect() reaches a controller (a local URL,
+  // or a TP-Link cloud controller as main's target: applySwitcherConfig()
+  // sets state.hasStoredConfig and the switcher's inputs)
+  const switcherView = config === null ? null : applySwitcherConfig(config);
   connectBtn.disabled = !state.hasStoredConfig;
 
   // Set language from config (default when the config could not be loaded)
@@ -462,19 +515,28 @@ async function init(): Promise<void> {
   // rule in styles.css — the CSP forbids doing this with inline styles)
   document.body.classList.remove('pre-init');
 
-  if (!config) {
+  if (!config || switcherView === null) {
     // Config unreadable: leave the usable default UI up and report the error
     showToast(t('configLoadError'), 'error');
     return;
   }
 
-  // If no config, open settings
-  if (!config.url) {
+  // The TP-Link cloud account's controllers, for the switcher (only with a
+  // stored cloud credential; never awaited: the connect does not wait)
+  if (switcherView.credentialStored) {
+    void loadCloudControllers();
+  }
+
+  const action = startupAction(switcherView);
+  if (action === 'configure') {
+    // No config at all: open settings
     openSettings();
-  } else {
+  } else if (action === 'connect') {
     // Auto-connect on startup
     connect();
   }
+  // 'chooseController': the views ask to choose a cloud controller in the
+  // switcher, which lists them once the read above answers
 } // End of function init()
 
 // Start the app

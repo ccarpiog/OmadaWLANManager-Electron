@@ -722,6 +722,16 @@ export interface Translations {
   apGroupNotReported: string;
   certCloudNote: string;
   managementNeedsController: string;
+
+  // The controller switcher's UI (inbox I-1c2b; controller-switcher.ts): the
+  // toggle's tooltip with the active controller ({name}), its text when no
+  // controller is chosen yet, and the views' state for a cloud-only
+  // configuration with no controller chosen (its hint and its action, which
+  // opens the switcher)
+  controllerSwitcherToggle: string;
+  controllerSwitcherNone: string;
+  chooseControllerHint: string;
+  chooseController: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -1326,6 +1336,10 @@ export const translations: Record<Language, Translations> = {
     apGroupNotReported: 'Desconocido: el controlador no informó del grupo de este AP',
     certCloudNote: 'Los controladores de la nube de TP-Link se alcanzan a través de la nube de TP-Link: su certificado se verifica de la forma habitual, sin fijarlo ni preguntar.',
     managementNeedsController: 'El acceso de gestión pertenece a un controlador de esta red: introduce primero su URL, usuario y contraseña, o deja vacíos el Client ID y el Client Secret.',
+    controllerSwitcherToggle: 'Controlador: {name}',
+    controllerSwitcherNone: 'Ninguno elegido',
+    chooseControllerHint: 'Elige un controlador de la nube de TP-Link para empezar',
+    chooseController: 'Elegir controlador',
   },
   en: {
     disconnected: 'Disconnected',
@@ -1928,6 +1942,10 @@ export const translations: Record<Language, Translations> = {
     apGroupNotReported: 'Unknown: the controller did not report this AP\'s group',
     certCloudNote: 'TP-Link cloud controllers are reached through TP-Link\'s cloud: their certificate is verified normally, with no pinning and no prompt.',
     managementNeedsController: 'Management access belongs to a controller on this network: enter its URL, username and password first, or leave the Client ID and Client Secret empty.',
+    controllerSwitcherToggle: 'Controller: {name}',
+    controllerSwitcherNone: 'None chosen',
+    chooseControllerHint: 'Choose a TP-Link cloud controller to get started',
+    chooseController: 'Choose controller',
   },
 };
 

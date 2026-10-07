@@ -22,6 +22,9 @@ import type { GroupModel, ManagementCapabilities, ManagementReason } from '../sh
 /**
  * The state the content of the three views shows:
  * - 'firstRun': no controller configured yet (one "Configure connection" action);
+ * - 'chooseController': no controller connect() reaches yet, but a TP-Link
+ *   cloud credential is stored (a cloud-only configuration, inbox I-1c2b):
+ *   the user picks a cloud controller in the switcher ("Choose controller");
  * - 'disconnected': configured but not connected ("Connect to controller");
  * - 'loading': connecting or loading the first data (skeletons in the layout);
  * - 'loadError': the connection or its first data load failed (a persistent
@@ -29,7 +32,7 @@ import type { GroupModel, ManagementCapabilities, ManagementReason } from '../sh
  * - 'ready': data is loaded. Refreshing and a failed refresh keep this state
  *   (the data stays on screen, marked as refreshing or as stale).
  */
-export type ContentState = 'firstRun' | 'disconnected' | 'loading' | 'loadError' | 'ready';
+export type ContentState = 'firstRun' | 'chooseController' | 'disconnected' | 'loading' | 'loadError' | 'ready';
 
 /**
  * What contentState() derives the state from.
@@ -45,13 +48,19 @@ export interface ContentStateInput {
   hasData: boolean;
   // The localized message of a failed connection or first load, or null
   loadError: string | null;
+  // A TP-Link cloud credential is stored, so a cloud controller can be
+  // chosen in the switcher even without a configured controller (inbox
+  // I-1c2b; absent = false)
+  canChooseController?: boolean;
 }
 
 /**
  * Derives the content state. Loaded data always wins (a refresh keeps it on
  * screen, also when it fails); then an attempt in flight shows the loading
  * skeletons (a Retry replaces the error with them); then a failed attempt
- * shows its error; otherwise first run or disconnected.
+ * shows its error; otherwise disconnected, or — with no controller to
+ * connect to — choosing a cloud controller (a cloud credential stored) or
+ * the first run.
  * @param {ContentStateInput} input - The relevant renderer state.
  * @returns {ContentState} The state to show.
  */
@@ -59,7 +68,8 @@ export function contentState(input: ContentStateInput): ContentState {
   if (input.hasData) return 'ready';
   if (input.isConnecting || input.isLoadingData) return 'loading';
   if (input.loadError !== null) return 'loadError';
-  return input.hasStoredConfig ? 'disconnected' : 'firstRun';
+  if (input.hasStoredConfig) return 'disconnected';
+  return input.canChooseController === true ? 'chooseController' : 'firstRun';
 }
 
 // ============================================================================

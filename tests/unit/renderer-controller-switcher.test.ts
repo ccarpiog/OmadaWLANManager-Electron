@@ -8,7 +8,11 @@
 // still usable, the "Connect through TP-Link cloud" decision (offered only for
 // an unreachable local controller whose omadacId a complete list shows online
 // and usable), the busy predicate, the text of a refused cloud connect, main's
-// connection target parsed fail-closed, and the es / en texts.
+// connection target parsed fail-closed, and the es / en texts. Phase I-1c2b
+// adds the switcher's DOM inputs: the config read (readSwitcherConfig(),
+// canConnect(), startupAction()), when the switcher shows, which entries a
+// choice switches to, the entry and toggle texts, and the notice under the
+// entries.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -16,17 +20,26 @@ import { toCloudController, validateCloudOrganization } from '../../src/main/clo
 import { cloudRefusalDetail } from '../../src/main/connection-manager';
 import { describeCloudSessionError } from '../../src/main/cloud-controller-session';
 import type { CloudController, CloudControllerReason, ConnectionResult } from '../../src/shared/types';
-import { CLOUD_REASON_TEXT, parseCloudAccessResult, type ParsedCloudResult } from '../../src/renderer/cloud-form';
+import { CLOUD_REASON_TEXT, NO_CLOUD_ACCESS, parseCloudAccessResult, type ParsedCloudResult } from '../../src/renderer/cloud-form';
 import {
+  activeSwitcherEntry,
   buildControllerSwitcher,
+  canConnect,
   cloudConnectFailureKey,
   cloudFallbackTarget,
+  hasCloudCredential,
+  isEntryActivatable,
   isLocalUnreachable,
   isSwitcherBusy,
   localOmadacIdOf,
   parseConnectionTarget,
+  readSwitcherConfig,
+  saveFollowUp,
+  startupAction,
   SWITCHER_CLOUD_FAILURE_TEXT,
   SWITCHER_TEXT,
+  switcherEntryParts,
+  switcherNotice,
   type SwitcherActivity,
   type SwitcherInput,
 } from '../../src/renderer/controller-switcher-model';
@@ -361,5 +374,123 @@ describe('the switcher\'s texts (es and en)', () => {
     const names = model.entries.map((entry) => entry.name ?? '');
     assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })));
     assert.equal(model.entries.length, dtos.length);
+  });
+});
+
+describe('readSwitcherConfig(), canConnect() and startupAction(): what starts (inbox I-1c2b)', () => {
+  const credential = { ...NO_CLOUD_ACCESS, clientId: 'owm-cloud', hasCloudSecret: true };
+
+  test('the config read fails closed field by field: no URL, no credential, an unknown target', () => {
+    assert.deepEqual(readSwitcherConfig({ url: 'https://192.168.1.130:8043', cloudAccess: credential, connectionTarget: REMOTE_ID }), {
+      localUrl: 'https://192.168.1.130:8043', credentialStored: true, target: { kind: 'cloud', omadacId: REMOTE_ID },
+    });
+    assert.deepEqual(readSwitcherConfig({ url: 7, cloudAccess: 'x', connectionTarget: 'a b' }), { localUrl: '', credentialStored: false, target: null });
+    for (const raw of [null, undefined, 'config', 3]) {
+      assert.deepEqual(readSwitcherConfig(raw), { localUrl: '', credentialStored: false, target: null }, String(raw));
+    }
+    // A config of today's local-only shape (no cloud fields): no credential, local
+    assert.deepEqual(readSwitcherConfig({ url: 'https://h:8043', connectionTarget: 'local' }), { localUrl: 'https://h:8043', credentialStored: false, target: { kind: 'local' } });
+  });
+
+  test('a credential needs a cloud Client ID and a usable secret', () => {
+    assert.equal(hasCloudCredential(credential), true);
+    assert.equal(hasCloudCredential({ ...credential, hasCloudSecret: false }), false);
+    assert.equal(hasCloudCredential({ ...credential, clientId: '' }), false);
+    assert.equal(hasCloudCredential(NO_CLOUD_ACCESS), false);
+    assert.equal(readSwitcherConfig({ cloudAccess: { clientId: 'owm cloud!', hasCloudSecret: true } }).credentialStored, false);
+  });
+
+  test('connect when a local URL is configured or main\'s target is a cloud controller; else choose a cloud controller with a credential; else Settings', () => {
+    const cases: Array<[Parameters<typeof startupAction>[0], boolean, string]> = [
+      [{ localUrl: 'https://h:8043', credentialStored: false, target: { kind: 'local' } }, true, 'connect'],
+      [{ localUrl: 'https://h:8043', credentialStored: true, target: { kind: 'cloud', omadacId: REMOTE_ID } }, true, 'connect'],
+      [{ localUrl: 'https://h:8043', credentialStored: false, target: null }, true, 'connect'],
+      [{ localUrl: '', credentialStored: true, target: { kind: 'cloud', omadacId: REMOTE_ID } }, true, 'connect'],
+      // A cloud target without a credential (removed during the run): main would refuse it
+      [{ localUrl: '', credentialStored: false, target: { kind: 'cloud', omadacId: REMOTE_ID } }, false, 'configure'],
+      [{ localUrl: '', credentialStored: true, target: { kind: 'local' } }, false, 'chooseController'],
+      [{ localUrl: '', credentialStored: true, target: null }, false, 'chooseController'],
+      [{ localUrl: '', credentialStored: false, target: { kind: 'local' } }, false, 'configure'],
+      [{ localUrl: '', credentialStored: false, target: null }, false, 'configure'],
+    ];
+    for (const [config, connects, action] of cases) {
+      assert.equal(canConnect(config), connects, JSON.stringify(config));
+      assert.equal(startupAction(config), action, JSON.stringify(config));
+    }
+  });
+});
+
+describe('saveFollowUp(): what follows a settings save (inbox I-1c2b)', () => {
+  test('reconnect main\'s target after a local save; after a cloud-only save only a cloud target with a credential; Remove cloud access follows main\'s target, already local (I-1c2b review)', () => {
+    const cloud = { kind: 'cloud', omadacId: REMOTE_ID } as const;
+    assert.equal(saveFollowUp({ localUrl: 'https://h:8043', credentialStored: false, target: { kind: 'local' } }, false), 'connect', 'a local save, or a removal on a cloud target (main returned it to local)');
+    assert.equal(saveFollowUp({ localUrl: 'https://h:8043', credentialStored: true, target: cloud }, false), 'connect');
+    assert.equal(saveFollowUp({ localUrl: '', credentialStored: true, target: cloud }, true), 'connect');
+    assert.equal(saveFollowUp({ localUrl: '', credentialStored: true, target: { kind: 'local' } }, true), 'none');
+    assert.equal(saveFollowUp({ localUrl: '', credentialStored: false, target: { kind: 'local' } }, true), 'none', 'the only cloud configuration removed: the first run');
+    assert.equal(saveFollowUp({ localUrl: '', credentialStored: false, target: cloud }, true), 'none', 'never a cloud connect without a credential');
+    assert.equal(saveFollowUp({ localUrl: '', credentialStored: false, target: null }, true), 'none');
+  });
+});
+
+describe('the switcher\'s notice (inbox I-1c2b)', () => {
+  test('a failed list says why with main\'s diagnostic; a first read in flight says loading; an empty account and an incomplete list say so; a complete list says nothing', () => {
+    const failedCloud: ParsedCloudResult = { ok: false, error: 'rateLimited', code: 'rateLimited', diagnostic: 'rateLimited, errorCode -7132' };
+    assert.deepEqual(switcherNotice(buildControllerSwitcher(inputOf({ cloud: failedCloud })), failedCloud, true), {
+      key: 'cloudTestRateLimited', detail: 'rateLimited, errorCode -7132', tone: 'error',
+    });
+    const expiredCloud: ParsedCloudResult = { ok: false, error: 'credentialInvalid', code: 'credentialInvalid', diagnostic: 'credentialInvalid, errorCode -52602' };
+    assert.equal(switcherNotice(buildControllerSwitcher(inputOf({ cloud: expiredCloud })), expiredCloud, true)?.key, 'cloudConnectCredentialExpired');
+    assert.deepEqual(switcherNotice(buildControllerSwitcher(inputOf({ cloud: null })), null, true), { key: 'loading', detail: null, tone: 'info' });
+    assert.equal(switcherNotice(buildControllerSwitcher(inputOf({ cloud: null })), null, false), null);
+    const empty = listed([]);
+    assert.deepEqual(switcherNotice(buildControllerSwitcher(inputOf({ cloud: empty })), empty, true), { key: 'cloudTestOkNone', detail: null, tone: 'info' });
+    const truncated = listed(FOUR, true);
+    assert.deepEqual(switcherNotice(buildControllerSwitcher(inputOf({ cloud: truncated })), truncated, true), { key: 'cloudTestTruncated', detail: null, tone: 'info' });
+    assert.equal(switcherNotice(buildControllerSwitcher(inputOf({})), listed(FOUR), true), null);
+    // Only the local duplicate listed: no notice (nothing else to choose, but the list is fine)
+    const onlyDuplicate = listed([FOUR[0]]);
+    assert.equal(switcherNotice(buildControllerSwitcher(inputOf({ cloud: onlyDuplicate })), onlyDuplicate, true), null);
+  });
+});
+
+describe('choosing an entry and its texts (inbox I-1c2b)', () => {
+  test('a usable entry switches; the controller on screen does not, unless not connected or reached through its cloud duplicate; an unusable entry never does', () => {
+    const model = buildControllerSwitcher(inputOf({}));
+    const [local, tooOld, offline, remote] = model.entries;
+    assert.equal(isEntryActivatable(remote, true), true);
+    assert.equal(isEntryActivatable(local, true), false);
+    assert.equal(isEntryActivatable(local, false), true);
+    assert.equal(isEntryActivatable(tooOld, true), false);
+    assert.equal(isEntryActivatable(offline, false), false);
+    const viaCloud = buildControllerSwitcher(inputOf({ active: { kind: 'cloud', omadacId: LOCAL_ID } }));
+    assert.equal(viaCloud.entries[0].viaCloud, true);
+    assert.equal(isEntryActivatable(viaCloud.entries[0], true), true);
+    const onCloud = buildControllerSwitcher(inputOf({ active: { kind: 'cloud', omadacId: REMOTE_ID } }));
+    const active = activeSwitcherEntry(onCloud);
+    assert.equal(active?.key, `cloud:${REMOTE_ID}`);
+    assert.equal(isEntryActivatable(active!, true), false);
+    assert.equal(isEntryActivatable(active!, false), true);
+    assert.equal(activeSwitcherEntry(buildControllerSwitcher(inputOf({ active: null }))), null);
+  });
+
+  test('"This network" with its host (the Cloud tag only through the cloud duplicate); a cloud entry by name with the tag and its version, or its omadacId when the name is unknown', () => {
+    const model = buildControllerSwitcher(inputOf({}));
+    assert.deepEqual(switcherEntryParts(model.entries[0]), { titleKey: 'thisNetwork', title: '', cloudTag: false, host: '192.168.1.130:8043', version: null });
+    assert.deepEqual(switcherEntryParts(model.entries[3]), { titleKey: null, title: 'OC200 Planta 4', cloudTag: true, host: null, version: '6.3.0.45' });
+    const viaCloud = buildControllerSwitcher(inputOf({ active: { kind: 'cloud', omadacId: LOCAL_ID } }));
+    assert.equal(switcherEntryParts(viaCloud.entries[0]).cloudTag, true);
+    const unlisted = buildControllerSwitcher(inputOf({ cloud: null, active: { kind: 'cloud', omadacId: REMOTE_ID }, activeName: null }));
+    const parts = switcherEntryParts(activeSwitcherEntry(unlisted)!);
+    assert.deepEqual(parts, { titleKey: null, title: REMOTE_ID, cloudTag: true, host: null, version: null });
+  });
+
+  test('the I-1c2b texts exist, non-empty and different, in es and en; the toggle\'s tooltip carries the controller name', () => {
+    for (const key of ['controllerSwitcherToggle', 'controllerSwitcherNone', 'chooseControllerHint', 'chooseController', 'cloudTestOkNone', 'cloudTestTruncated', 'loading'] as const) {
+      assert.ok(translations.es[key].trim() !== '' && translations.en[key].trim() !== '', key);
+      assert.notEqual(translations.es[key], translations.en[key], key);
+    }
+    assert.match(translations.es.controllerSwitcherToggle, /\{name\}/);
+    assert.match(translations.en.controllerSwitcherToggle, /\{name\}/);
   });
 });
