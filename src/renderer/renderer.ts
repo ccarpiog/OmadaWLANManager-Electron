@@ -88,6 +88,12 @@
 //                         test's outcome and its unsaved-changes guard)
 //   management.ts         management capabilities of the session (they
 //                         feed the read-only banner), "Test management access"
+//   cloud-form.ts         pure TP-Link cloud form rules (region / cloud
+//                         Client ID / secret save plan, secret placeholder,
+//                         unsaved-changes guard), cloud:test reply
+//                         validation and its texts
+//   cloud-settings.ts     the Settings "TP-Link cloud (optional)" section
+//                         (Remove cloud access, "Test cloud access")
 //   settings-modal.ts     settings modal (open/close/save, certificate reset,
 //                         the management-access section)
 //   move-dialog.ts        move review / progress / per-AP results dialog
@@ -109,6 +115,14 @@ import {
   selectAllFilteredAps,
 } from './ap-list';
 import { applyTranslations } from './apply-translations';
+import {
+  cancelCloudRemoval,
+  confirmCloudRemoval,
+  handleCloudFieldEdit,
+  requestCloudRemoval,
+  runCloudTest,
+  undoCloudRemoval,
+} from './cloud-settings';
 import { connect, refreshData, retryLoad, toggleConnection } from './connection';
 import {
   closeDestinationPane,
@@ -132,9 +146,14 @@ import {
   clearApSelectionBtn,
   clientIdInput,
   clientSecretInput,
+  cancelCloudRemoveBtn,
+  cloudClientIdInput,
+  cloudClientSecretInput,
+  cloudRegionSelect,
   closeApDetailsBtn,
   closeSettingsBtn,
   confirmCertResetBtn,
+  confirmCloudRemoveBtn,
   confirmManagementRemoveBtn,
   connectBtn,
   destinationBackBtn,
@@ -150,13 +169,16 @@ import {
   openDestinationBtn,
   passwordInput,
   refreshBtn,
+  removeCloudBtn,
   removeManagementBtn,
   resetCertBtn,
   saveSettingsBtn,
   selectAllApsBtn,
   settingsBtn,
   settingsModal,
+  testCloudBtn,
   testManagementBtn,
+  undoCloudRemovalBtn,
   undoManagementRemovalBtn,
   urlInput,
   usernameInput,
@@ -353,6 +375,20 @@ confirmManagementRemoveBtn.addEventListener('click', confirmManagementRemoval);
 undoManagementRemovalBtn.addEventListener('click', undoManagementRemoval);
 testManagementBtn.addEventListener('click', runManagementTest);
 
+// TP-Link cloud access (Settings): the region and the cloud Client ID decide
+// what a blank cloud secret means, and any cloud field edit discards a test
+// result in flight or on screen; "Remove cloud access" with an inline
+// confirmation (staged, applied by Save) and "Test cloud access" (main
+// tests the saved credential)
+cloudRegionSelect.addEventListener('change', handleCloudFieldEdit);
+cloudClientIdInput.addEventListener('input', handleCloudFieldEdit);
+cloudClientSecretInput.addEventListener('input', handleCloudFieldEdit);
+removeCloudBtn.addEventListener('click', requestCloudRemoval);
+cancelCloudRemoveBtn.addEventListener('click', cancelCloudRemoval);
+confirmCloudRemoveBtn.addEventListener('click', confirmCloudRemoval);
+undoCloudRemovalBtn.addEventListener('click', undoCloudRemoval);
+testCloudBtn.addEventListener('click', runCloudTest);
+
 // Trusted certificate (Settings): reset with an inline confirmation
 resetCertBtn.addEventListener('click', requestCertificateReset);
 cancelCertResetBtn.addEventListener('click', cancelCertificateReset);
@@ -372,8 +408,8 @@ settingsModal.addEventListener('click', (e) => {
 document.addEventListener('keydown', handleGlobalKeydown);
 
 // Enter submits the settings form from any of its text fields (not only the
-// password one), the management-access fields included
-for (const settingsField of [urlInput, usernameInput, passwordInput, clientIdInput, clientSecretInput]) {
+// password one), the management-access and TP-Link cloud fields included
+for (const settingsField of [urlInput, usernameInput, passwordInput, clientIdInput, clientSecretInput, cloudClientIdInput, cloudClientSecretInput]) {
   settingsField.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') saveSettings();
   });

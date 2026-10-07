@@ -184,7 +184,7 @@ const CLOUD_CONTROLLER_DTO_KEYS = ['connectable', 'name', 'omadacId', 'online', 
 // The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
 const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
 // One launch per run*() function in main()
-const EXPECTED_LAUNCHES = 10;
+const EXPECTED_LAUNCHES = 11;
 // The launches of this run (fewer only with OMADA_SMOKE_ONLY; set by main())
 let expectedLaunches = EXPECTED_LAUNCHES;
 // Fingerprints of the fake controller's self-signed certificates (launch 3)
@@ -5092,6 +5092,643 @@ async function runManagementCapabilities(electronInfo) {
     await session.app.close().catch(() => {});
   }
 } // End of function runManagementCapabilities()
+
+// ============================================================================
+// Launch: the TP-Link cloud section in Settings (inbox item I-1c1) — Region,
+// Client ID, Client Secret, the save codes, "Test cloud access" ("save
+// first", the controllers found with why any cannot be used, the error
+// texts, late replies) and Remove cloud access (Spanish, then English)
+// ============================================================================
+
+// Fake cloud Client Secrets this launch types: none may ever show up in a
+// CONFIG_LOAD result, in the DOM or in an input after the modal closes (and
+// the checks never print them: see withoutCloudSecret())
+const CLOUD_SECRETS = ['smoke-cloud-secret-1', 'smoke-cloud-secret-2', 'smoke-cloud-secret-3', 'smoke-cloud-secret-4'];
+
+// The cloud flags of a config with nothing stored (CloudAccessStatus)
+const NO_CLOUD_FLAGS = {
+  region: 'euw', clientId: '', hasCloudSecret: false, cloudSecretSessionOnly: false, canPersistCloudSecret: true, activeController: 'local',
+};
+
+// The dynamic texts the checks read (src/renderer/i18n-strings.ts)
+const CLOUD_TEXT = {
+  es: {
+    unchanged: '(sin cambios)', newRegion: '(obligatorio para la nueva región)', newClientId: '(obligatorio para el nuevo Client ID)',
+    savedSessionOnly: 'El Client Secret de la nube solo se conserva durante esta sesión.',
+    errors: {
+      invalidCloudClientId: 'El Client ID de la nube de TP-Link solo puede tener letras, números, puntos, guiones y guiones bajos (hasta 128 caracteres).',
+      cloudClientIdRequired: 'Introduce el Client ID de la nube de TP-Link. Para desactivar el acceso a la nube, usa "Quitar el acceso a la nube".',
+      cloudClientSecretRequired: 'Introduce el Client Secret de la nube de TP-Link: es obligatorio con un Client ID nuevo o con otra región.',
+    },
+    running: 'Probando el acceso a la nube…',
+    unsaved: 'Guarda primero los cambios: la prueba usa la credencial de la nube guardada.',
+    notConfigured: 'No hay ninguna credencial de la nube de TP-Link guardada. Elige la región, introduce el Client ID y el Client Secret y pulsa Guardar.',
+    superseded: 'La credencial de la nube cambió durante la prueba. Vuelve a intentarlo.',
+    okMany: 'El acceso a la nube funciona: se encontraron {count} controladores.',
+    truncated: 'Puede que la lista esté incompleta: no se pudo leer entera la respuesta de TP-Link.',
+    rateLimited: 'TP-Link está recibiendo demasiadas solicitudes con esta credencial (límite de frecuencia). Espera un momento y vuelve a intentarlo.',
+    expired: 'TP-Link indica que esta credencial ha caducado o ya no existe. Crea otra en el portal de Omada en la nube de TP-Link y guárdala aquí.',
+    unknownError: 'La prueba de la nube de TP-Link falló con un error desconocido.',
+    listLabel: 'Controladores de la cuenta de la nube de TP-Link',
+    status: {
+      none: 'Disponible',
+      notController: 'No se puede usar: no es un controlador Omada.',
+      incompleteEntry: 'No se puede usar: TP-Link no envía todos los datos necesarios para conectar.',
+      unsupportedHost: 'No se puede usar: usa un servidor de la nube que la aplicación no admite.',
+      versionUnknown: 'No se puede usar: no indica una versión válida de Omada (se necesita la 6.3 o posterior).',
+      versionTooOld: 'No se puede usar: es anterior a Omada 6.3.',
+      offline: 'Sin conexión: el controlador no está en línea en la nube de TP-Link.',
+    },
+  },
+  en: {
+    unchanged: '(unchanged)', newRegion: '(required for the new region)', newClientId: '(required for the new Client ID)',
+    savedSessionOnly: 'The cloud Client Secret is kept for this session only.',
+    errors: {
+      invalidCloudClientId: 'The TP-Link cloud Client ID can only contain letters, digits, dots, hyphens and underscores (up to 128 characters).',
+      cloudClientIdRequired: 'Enter the TP-Link cloud Client ID. To turn off cloud access, use "Remove cloud access".',
+      cloudClientSecretRequired: 'Enter the TP-Link cloud Client Secret: it is required for a new Client ID or a different region.',
+    },
+    running: 'Testing cloud access…',
+    unsaved: 'Save your changes first: the test uses the saved cloud credential.',
+    notConfigured: 'No TP-Link cloud credential is saved. Choose the region, enter the Client ID and the Client Secret, and press Save.',
+    superseded: 'The cloud credential changed during the test. Try again.',
+    okMany: 'Cloud access works: {count} controllers found.',
+    truncated: 'The list may be incomplete: TP-Link\'s answer could not be read in full.',
+    rateLimited: 'TP-Link is receiving too many requests for this credential (rate limit). Wait a moment and try again.',
+    expired: 'TP-Link says this credential has expired or no longer exists. Create a new one in the TP-Link Omada cloud portal and save it here.',
+    unknownError: 'The TP-Link cloud test failed with an unknown error.',
+    listLabel: 'Controllers of the TP-Link cloud account',
+    status: {
+      none: 'Available',
+      notController: 'Cannot be used: not an Omada controller.',
+      incompleteEntry: 'Cannot be used: TP-Link does not report everything needed to connect.',
+      unsupportedHost: 'Cannot be used: it uses a cloud server the app does not support.',
+      versionUnknown: 'Cannot be used: it does not report a valid Omada version (6.3 or later is needed).',
+      versionTooOld: 'Cannot be used: it runs a version older than Omada 6.3.',
+      offline: 'Offline: the controller is not online in the TP-Link cloud.',
+    },
+  },
+};
+
+// The four-organization account of the stub (CLOUD_STUB_CONTROLLERS): name,
+// version and reason of each, in TP-Link's order
+const CLOUD_FOUR = [
+  { name: 'Omada red antigua (Proxmox)', version: '6.3.0.45', reason: 'none' },
+  { name: 'OC200 Planta 3', version: '6.3.0.45', reason: 'offline' },
+  { name: 'OC200 Planta 2', version: '6.2.0.9', reason: 'versionTooOld' },
+  { name: 'OC200 Planta 4', version: '6.3.0.45', reason: 'none' },
+];
+
+// A scripted success with the other four reasons and an incomplete list
+const CLOUD_OTHER_REASONS = {
+  success: true,
+  truncated: true,
+  controllers: [
+    { omadacId: '5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e', name: 'Sede (gateway)', online: true, version: '6.3.0.45', connectable: false, reason: 'notController' },
+    { omadacId: '6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f', name: 'Almacén', online: true, version: null, connectable: false, reason: 'incompleteEntry' },
+    { omadacId: '7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a', name: 'Oficina', online: true, version: '6.3.0.45', connectable: false, reason: 'unsupportedHost' },
+    { omadacId: '8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b', name: 'Laboratorio', online: true, version: null, connectable: false, reason: 'versionUnknown' },
+  ],
+};
+
+// The scripted failures the error checks play (main's codes-only diagnostics)
+const CLOUD_RATE_LIMITED = { success: false, error: 'rateLimited', diagnostic: 'rateLimited, errorCode -7132' };
+const CLOUD_EXPIRED = { success: false, error: 'credentialInvalid', diagnostic: 'credentialInvalid, errorCode -52602' };
+
+/**
+ * Copies a save payload for a failure detail with any typed cloud secret
+ * masked (the fake secrets never reach the test output).
+ * @param {object | null} payload - The CONFIG_SAVE payload.
+ * @returns {object | null} The copy.
+ */
+function withoutCloudSecret(payload) {
+  if (payload === null || payload.cloudClientSecret === undefined) {
+    return payload;
+  }
+  return { ...payload, cloudClientSecret: `<${payload.cloudClientSecret.length} chars>` };
+}
+
+/**
+ * Reads the TP-Link cloud section of the settings modal.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} Texts, field values, placeholder, notes, buttons and focus.
+ */
+function readCloudSection(page) {
+  return page.evaluate(() => {
+    const byId = (id) => document.getElementById(id);
+    const shown = (id) => Boolean(byId(id)) && byId(id).closest('[hidden]') === null;
+    const select = byId('cloudRegionSelect');
+    return {
+      heading: byId('cloudHeading')?.textContent || '',
+      help: byId('cloudHelp')?.textContent || '',
+      credentialHelp: byId('cloudCredentialHelp')?.textContent || '',
+      describedBy: byId('cloudHeading')?.closest('[role="group"]')?.getAttribute('aria-describedby') ?? null,
+      regionLabel: byId('labelCloudRegion')?.textContent || '',
+      region: select?.value ?? null,
+      regionOptions: Array.from(select?.options || []).map((option) => [option.value, option.textContent]),
+      regionDisabled: select?.disabled,
+      clientIdLabel: byId('labelCloudClientId')?.textContent || '',
+      clientSecretLabel: byId('labelCloudClientSecret')?.textContent || '',
+      clientId: byId('cloudClientIdInput')?.value ?? null,
+      secretTyped: (byId('cloudClientSecretInput')?.value ?? '') !== '',
+      secretType: byId('cloudClientSecretInput')?.type ?? null,
+      placeholder: byId('cloudClientSecretInput')?.placeholder ?? null,
+      idDisabled: byId('cloudClientIdInput')?.disabled,
+      secretDisabled: byId('cloudClientSecretInput')?.disabled,
+      secretDescribedBy: byId('cloudClientSecretInput')?.getAttribute('aria-describedby') ?? null,
+      sessionNote: shown('cloudSessionNote') ? byId('cloudSessionNote').textContent : null,
+      removalNote: shown('cloudRemovalNote') ? byId('cloudRemovalNote').textContent : null,
+      removeShown: shown('removeCloudBtn'),
+      removeDisabled: byId('removeCloudBtn')?.disabled,
+      removeText: byId('removeCloudBtn')?.textContent || '',
+      undoShown: shown('undoCloudRemovalBtn'),
+      undoText: byId('undoCloudRemovalBtn')?.textContent || '',
+      confirmShown: shown('cloudRemoveConfirm'),
+      confirmMessage: byId('cloudRemoveMessage')?.textContent || '',
+      activeId: document.activeElement?.id || '',
+      settingsOpen: byId('settingsModal')?.classList.contains('visible'),
+    };
+  }); // End of the in-page cloud-section probe
+} // End of function readCloudSection()
+
+/**
+ * Reads "Test cloud access": its button and its result box (the summary
+ * line, the controllers listed with name, version, status and reason, the
+ * incomplete-list note).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} What the button and the result show.
+ */
+function readCloudTest(page) {
+  return page.evaluate(() => {
+    const box = document.getElementById('cloudTestResult');
+    const button = document.getElementById('testCloudBtn');
+    const list = box?.querySelector('.cloud-test-list') ?? null;
+    return {
+      button: button?.textContent ?? '',
+      ariaDisabled: button?.getAttribute('aria-disabled') ?? null,
+      describedBy: button?.getAttribute('aria-describedby') ?? null,
+      shown: Boolean(box && !box.hidden),
+      summary: box?.querySelector('.cloud-test-summary')?.textContent ?? '',
+      result: box?.dataset.result ?? null,
+      tone: box?.dataset.tone ?? null,
+      role: box?.getAttribute('role') ?? null,
+      listLabel: list?.getAttribute('aria-label') ?? null,
+      items: Array.from(list?.querySelectorAll('li') || []).map((item) => ({
+        name: item.querySelector('.cloud-controller-name')?.textContent ?? '',
+        version: item.querySelector('.cloud-controller-version')?.textContent ?? null,
+        status: item.querySelector('.cloud-controller-status')?.textContent ?? '',
+        reason: item.dataset.reason ?? null,
+      })),
+      note: box?.querySelector('.cloud-test-note')?.textContent ?? null,
+      activeId: document.activeElement?.id || '',
+    };
+  }); // End of the in-page cloud-test probe
+} // End of function readCloudTest()
+
+/**
+ * Clicks "Test cloud access" and waits until the result box shows the given
+ * outcome (data-result).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} result - Expected data-result.
+ * @returns {Promise<object>} readCloudTest() once it shows.
+ */
+async function runCloudTestFor(page, result) {
+  await page.click('#testCloudBtn');
+  await page.waitForFunction((expected) => {
+    const box = document.getElementById('cloudTestResult');
+    return Boolean(box) && !box.hidden && box.dataset.result === expected;
+  }, result, { timeout: WAIT_MS });
+  return readCloudTest(page);
+}
+
+/**
+ * The cloud:test calls the stub recorded so far (channel arguments only).
+ * @param {object} session - The launch.
+ * @returns {Promise<unknown[][]>} Each call's arguments.
+ */
+async function cloudTestCalls(session) {
+  return callsTo(await stubState(session), 'cloud:test').map((call) => call.args);
+}
+
+/**
+ * Lists the fake cloud secrets found in the renderer: in the DOM, in any
+ * input's current value, or in a fresh CONFIG_LOAD result.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<number>} How many leaked (0 when clean; never the values).
+ */
+function countCloudSecretLeaks(page) {
+  return page.evaluate(async (secrets) => {
+    const config = JSON.stringify(await window.omadaAPI.loadConfig());
+    const values = Array.from(document.querySelectorAll('input')).map((input) => input.value).join('\n');
+    const html = document.documentElement.outerHTML;
+    return secrets.filter((secret) => config.includes(secret) || values.includes(secret) || html.includes(secret)).length;
+  }, CLOUD_SECRETS);
+}
+
+/**
+ * Removes every toast on screen, so the next waitForToast() can only match
+ * a toast shown after this point (the same text may have shown before).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function clearToasts(page) {
+  await page.evaluate(() => document.getElementById('toastContainer')?.replaceChildren());
+}
+
+/**
+ * Presses Save and waits for the error toast with the given text (the modal
+ * stays open).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} text - Expected toast text.
+ * @returns {Promise<void>}
+ */
+async function saveExpectingToast(page, text) {
+  await clearToasts(page);
+  await page.click('#saveSettingsBtn');
+  await waitForToast(page, 'error', text);
+}
+
+/**
+ * Plays the three renderer-side cloud save refusals (a secret without a
+ * Client ID, an implausible Client ID, a new Client ID without its secret):
+ * each shows its toast and sends nothing. The fields are empty afterwards.
+ * @param {object} session - The launch.
+ * @param {'es' | 'en'} language - UI language.
+ * @returns {Promise<{ ok: boolean; sent: number; open: boolean }>} Whether every refusal showed, saves sent meanwhile, Settings still open.
+ */
+async function playCloudSaveRefusals(session, language) {
+  const { page } = session;
+  const errors = CLOUD_TEXT[language].errors;
+  const before = (await latestSave(session)).count;
+  await page.fill('#cloudClientIdInput', '');
+  await page.fill('#cloudClientSecretInput', CLOUD_SECRETS[3]);
+  await saveExpectingToast(page, errors.cloudClientIdRequired);
+  await page.fill('#cloudClientIdInput', 'not a client id!');
+  await saveExpectingToast(page, errors.invalidCloudClientId);
+  await page.fill('#cloudClientIdInput', 'owm-cloud-new');
+  await page.fill('#cloudClientSecretInput', '');
+  await saveExpectingToast(page, errors.cloudClientSecretRequired);
+  await page.fill('#cloudClientIdInput', '');
+  const after = await latestSave(session);
+  return { ok: true, sent: after.count - before, open: (await readCloudSection(page)).settingsOpen === true };
+} // End of function playCloudSaveRefusals()
+
+/**
+ * The expected list items of the four-organization account.
+ * @param {'es' | 'en'} language - UI language.
+ * @returns {object[]} The items as readCloudTest() reads them.
+ */
+function expectedFourItems(language) {
+  return CLOUD_FOUR.map(({ name, version, reason }) => ({
+    name, version: `Omada ${version}`, status: CLOUD_TEXT[language].status[reason], reason,
+  }));
+}
+
+/**
+ * Cloud-settings launch (Spanish, then English): the "TP-Link cloud
+ * (optional)" section in Settings over the stubbed I-1a channels — rendering
+ * (Region, Client ID, password-type Client Secret, help and credential note),
+ * the cloud flags of CONFIG_LOAD, the three save codes (renderer- and
+ * main-side), saving a credential (sent once, never returned) with its
+ * "(unchanged)" / "(required for …)" hints, "Test cloud access" (the "save
+ * first" refusal without a call, no credential, the controllers found with
+ * why any cannot be used, -7132, -52602, an unknown code, superseded, a late
+ * reply after Settings closed and reopened), the session-only note, and
+ * Remove cloud access (inline confirmation, staged, applied by Save as
+ * removeCloudAccess). The stub keeps flags only; the real save rules are
+ * unit-tested (config-cloud.test.ts) and the cloud channels' real replies on
+ * fixtures (cloud-access.test.ts). No request leaves the app (D4).
+ * @param {{ binary: string }} electronInfo - Resolved Electron binary.
+ * @returns {Promise<void>}
+ */
+async function runCloudSettings(electronInfo) {
+  const session = await launch(electronInfo, 'cloudset', {
+    config: { url: CONTROLLER_URL, username: 'admin', language: 'es', hasPassword: true },
+    connect: { success: true },
+    controllerVersion: data.controllerVersion,
+    accessPoints: data.accessPoints,
+    wlanGroups: data.wlanGroups,
+  });
+  const { page } = session;
+  const es = CLOUD_TEXT.es;
+  const en = CLOUD_TEXT.en;
+  const base = { url: CONTROLLER_URL, username: 'admin' };
+
+  try {
+    await checkTranslations(session, 'es');
+
+    await check('[cloudset] es: Settings shows "Nube de TP-Link (opcional)" with its help and the note on where the credential is created (Account Level Open API, full access for changes), Region (Europa preselected, three regions), Client ID and a password-type Client Secret; CONFIG_LOAD carries the cloud flags only; nothing stored: no placeholder, Remove disabled, no result', async () => {
+      await openSettingsWhenIdle(page);
+      const section = await readCloudSection(page);
+      const test = await readCloudTest(page);
+      const flags = await page.evaluate(async () => (await window.omadaAPI.loadConfig()).cloudAccess);
+      const strings = uiStrings.es;
+      return verdict(
+        section.heading === strings['#cloudHeading'] && section.help === strings['#cloudHelp'] &&
+        section.credentialHelp === strings['#cloudCredentialHelp'] && section.credentialHelp.includes('Account Level Open API') &&
+        section.describedBy === 'cloudHelp cloudCredentialHelp' && section.regionLabel === 'Región' && section.region === 'euw' &&
+        isDeepStrictEqual(section.regionOptions, [['aps', 'Asia-Pacífico (APS)'], ['euw', 'Europa (EUW)'], ['use', 'Estados Unidos (USE)']]) &&
+        section.clientIdLabel === 'Client ID' && section.clientSecretLabel === 'Client Secret' && section.clientId === '' && !section.secretTyped &&
+        section.secretType === 'password' && section.placeholder === '' && section.sessionNote === null && section.secretDescribedBy === null &&
+        section.removeShown === true && section.removeDisabled === true && section.removeText === strings['#removeCloudBtn'] &&
+        section.undoShown === false && section.confirmShown === false && section.removalNote === null &&
+        test.shown === false && test.button === strings['#testCloudBtn'] && test.describedBy === 'cloudTestResult' &&
+        isDeepStrictEqual(flags, NO_CLOUD_FLAGS),
+        { section, test, flags }
+      );
+    }); // End of check "[cloudset] es: Settings shows the cloud section"
+
+    await check('[cloudset] es: "Probar el acceso a la nube" with nothing saved asks main once (no argument) and says no credential is saved; with an unsaved Client ID, Client Secret or region it says "Guarda primero los cambios: …" without calling main', async () => {
+      await configureStub(session, { cloudResult: { success: false, error: 'notConfigured' } });
+      const none = await runCloudTestFor(page, 'notConfigured');
+      const afterNone = await cloudTestCalls(session);
+      await page.fill('#cloudClientIdInput', 'owm-cloud-1');
+      const unsavedId = await runCloudTestFor(page, 'unsavedChanges');
+      await page.fill('#cloudClientIdInput', '');
+      await page.fill('#cloudClientSecretInput', CLOUD_SECRETS[0]);
+      const unsavedSecret = await runCloudTestFor(page, 'unsavedChanges');
+      await page.fill('#cloudClientSecretInput', '');
+      await page.selectOption('#cloudRegionSelect', 'aps');
+      const unsavedRegion = await runCloudTestFor(page, 'unsavedChanges');
+      await page.selectOption('#cloudRegionSelect', 'euw');
+      const calls = await cloudTestCalls(session);
+      await configureStub(session, { cloudResult: null });
+      return verdict(
+        none.summary === es.notConfigured && none.tone === 'info' && none.role === 'status' && none.items.length === 0 &&
+        isDeepStrictEqual(afterNone, [[]]) &&
+        [unsavedId, unsavedSecret, unsavedRegion].every((test) => test.summary === es.unsaved && test.tone === 'info' && test.items.length === 0) &&
+        calls.length === 1,
+        { none, unsavedId, unsavedSecret, unsavedRegion, calls }
+      );
+    }); // End of check "[cloudset] es: Probar el acceso a la nube with nothing saved..."
+
+    await check('[cloudset] es: the cloud save codes have Spanish texts — a secret without a Client ID, an implausible Client ID and a new Client ID without its secret are refused before sending; main\'s invalidCloudClientId / cloudClientIdRequired / cloudClientSecretRequired show the same texts', async () => {
+      const refusals = await playCloudSaveRefusals(session, 'es');
+      const shown = [];
+      for (const code of ['invalidCloudClientId', 'cloudClientIdRequired', 'cloudClientSecretRequired']) {
+        await configureStub(session, { saveResult: { success: false, error: code } });
+        await page.fill('#cloudClientIdInput', 'owm-cloud-1');
+        await page.fill('#cloudClientSecretInput', CLOUD_SECRETS[0]);
+        await saveExpectingToast(page, es.errors[code]);
+        shown.push(code);
+      } // End of the loop over main's cloud save codes
+      await configureStub(session, { saveResult: null });
+      const save = await latestSave(session);
+      const open = (await readCloudSection(page)).settingsOpen;
+      return verdict(
+        refusals.sent === 0 && refusals.open === true && shown.length === 3 && save.count === 3 && open === true &&
+        isDeepStrictEqual(withoutCloudSecret(save.payload), withoutCloudSecret({ ...base, language: 'es', cloudRegion: 'euw', cloudClientId: 'owm-cloud-1', cloudClientSecret: CLOUD_SECRETS[0] })),
+        { refusals, shown, count: save.count, payload: withoutCloudSecret(save.payload), open }
+      );
+    }); // End of check "[cloudset] es: the cloud save codes have Spanish texts"
+
+    await check('[cloudset] es: Save with Region "Asia-Pacífico", a Client ID and a Client Secret sends the three once (Client ID trimmed), closes, and main then reports the cloud flags (hasCloudSecret); the secret is in no CONFIG_LOAD result, input or DOM', async () => {
+      await page.selectOption('#cloudRegionSelect', 'aps');
+      await page.fill('#cloudClientIdInput', '  owm-cloud-1  ');
+      await page.fill('#cloudClientSecretInput', CLOUD_SECRETS[1]);
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      const leaks = await countCloudSecretLeaks(page);
+      return verdict(
+        save.count === 4 && isDeepStrictEqual(save.payload, { ...base, language: 'es', cloudRegion: 'aps', cloudClientId: 'owm-cloud-1', cloudClientSecret: CLOUD_SECRETS[1] }) &&
+        isDeepStrictEqual(save.config.cloudAccess, { ...NO_CLOUD_FLAGS, region: 'aps', clientId: 'owm-cloud-1', hasCloudSecret: true }) && leaks === 0,
+        { count: save.count, payload: withoutCloudSecret(save.payload), cloudAccess: save.config.cloudAccess, leaks }
+      );
+    }); // End of check "[cloudset] es: Save with Region..."
+
+    await check('[cloudset] es: reopened, the stored region and Client ID are shown and the empty secret says "(sin cambios)"; another region says "(obligatorio para la nueva región)", another Client ID "(obligatorio para el nuevo Client ID)", restoring both "(sin cambios)" again; Save then sends no cloud field', async () => {
+      await openSettingsWhenIdle(page);
+      const opened = await readCloudSection(page);
+      await page.selectOption('#cloudRegionSelect', 'use');
+      const newRegion = (await readCloudSection(page)).placeholder;
+      await page.selectOption('#cloudRegionSelect', 'aps');
+      await page.fill('#cloudClientIdInput', 'owm-cloud-2');
+      const newId = (await readCloudSection(page)).placeholder;
+      await page.fill('#cloudClientIdInput', 'owm-cloud-1');
+      const restored = (await readCloudSection(page)).placeholder;
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      return verdict(
+        opened.region === 'aps' && opened.clientId === 'owm-cloud-1' && !opened.secretTyped && opened.placeholder === es.unchanged &&
+        opened.removeDisabled === false && newRegion === es.newRegion && newId === es.newClientId && restored === es.unchanged &&
+        save.count === 5 && isDeepStrictEqual(save.payload, { ...base, language: 'es' }) && save.config.cloudAccess.hasCloudSecret === true,
+        { opened, newRegion, newId, restored, count: save.count, payload: withoutCloudSecret(save.payload) }
+      );
+    }); // End of check "[cloudset] es: reopened, the stored region and Client ID..."
+
+    await check('[cloudset] es: a successful test says "Probando el acceso a la nube…" (the button keeps focus and is aria-disabled; a second activation sends nothing), then lists the four controllers — name, version and status: available, offline, below 6.3 — with one cloud:test call and no argument; the other reasons and an incomplete list read in Spanish too', async () => {
+      await openSettingsWhenIdle(page);
+      await configureStub(session, { delays: { 'cloud:test': 600 }, cloudResult: null });
+      const before = (await cloudTestCalls(session)).length;
+      // Keyboard activation: Playwright's click waits while aria-disabled
+      await page.focus('#testCloudBtn');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => document.getElementById('cloudTestResult')?.dataset.result === 'testing', null, { timeout: WAIT_MS });
+      const running = await readCloudTest(page);
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => document.getElementById('cloudTestResult')?.dataset.result === 'ok', null, { timeout: WAIT_MS });
+      const four = await readCloudTest(page);
+      const calls = (await cloudTestCalls(session)).slice(before);
+      await configureStub(session, { delays: {}, cloudResult: CLOUD_OTHER_REASONS });
+      await page.click('#testCloudBtn');
+      await page.waitForFunction(() => document.querySelector('#cloudTestResult .cloud-test-note') !== null, null, { timeout: WAIT_MS });
+      const others = await readCloudTest(page);
+      await configureStub(session, { cloudResult: null });
+      return verdict(
+        running.summary === es.running && running.tone === 'busy' && running.ariaDisabled === 'true' && running.activeId === 'testCloudBtn' &&
+        four.summary === fmt(es.okMany, { count: 4 }) && four.tone === 'ok' && four.ariaDisabled === 'false' && four.listLabel === es.listLabel &&
+        isDeepStrictEqual(four.items, expectedFourItems('es')) && four.note === null && isDeepStrictEqual(calls, [[]]) &&
+        others.summary === fmt(es.okMany, { count: 4 }) && others.note === es.truncated &&
+        isDeepStrictEqual(others.items.map((item) => [item.reason, item.status, item.version]), [
+          ['notController', es.status.notController, 'Omada 6.3.0.45'], ['incompleteEntry', es.status.incompleteEntry, null],
+          ['unsupportedHost', es.status.unsupportedHost, 'Omada 6.3.0.45'], ['versionUnknown', es.status.versionUnknown, null],
+        ]),
+        { calls, running, items: four.items, note: four.note, others: others.items.map((item) => [item.reason, item.status, item.version]), othersNote: others.note }
+      );
+    }); // End of check "[cloudset] es: a successful test..."
+
+    await check('[cloudset] es: errors — rate limiting (-7132) and an expired or deleted credential (-52602) have their own Spanish texts with main\'s diagnostic; an unknown code shows the code and its message; superseded says the credential changed and lists nothing', async () => {
+      await configureStub(session, { cloudResult: CLOUD_RATE_LIMITED });
+      const rate = await runCloudTestFor(page, 'rateLimited');
+      await configureStub(session, { cloudResult: CLOUD_EXPIRED });
+      const expired = await runCloudTestFor(page, 'credentialExpired');
+      await configureStub(session, { cloudResult: { success: false, error: 'quotaExceeded', diagnostic: 'errorCode -90114 (exceeded the maximum allowed authentications)' } });
+      const unknown = await runCloudTestFor(page, 'unknownError');
+      await configureStub(session, { cloudResult: { success: false, error: 'superseded' } });
+      const superseded = await runCloudTestFor(page, 'superseded');
+      await configureStub(session, { cloudResult: null });
+      return verdict(
+        rate.summary === `${es.rateLimited} (rateLimited, errorCode -7132)` && rate.tone === 'off' && rate.items.length === 0 &&
+        expired.summary === `${es.expired} (credentialInvalid, errorCode -52602)` && expired.tone === 'off' && expired.items.length === 0 &&
+        unknown.summary === `${es.unknownError} (quotaExceeded: errorCode -90114 (exceeded the maximum allowed authentications))` && unknown.tone === 'off' &&
+        superseded.summary === es.superseded && superseded.tone === 'info' && superseded.items.length === 0,
+        { rate, expired, unknown, superseded }
+      );
+    }); // End of check "[cloudset] es: errors..."
+
+    await check('[cloudset] es: a test still running when Settings closes is discarded — reopened, no result is painted when the late reply arrives and the button is usable', async () => {
+      await configureStub(session, { delays: { 'cloud:test': 700 }, cloudResult: null });
+      const before = (await cloudTestCalls(session)).length;
+      await page.click('#testCloudBtn');
+      await page.waitForFunction(() => document.getElementById('cloudTestResult')?.dataset.result === 'testing', null, { timeout: WAIT_MS });
+      await page.click('#cancelSettingsBtn');
+      await waitForSettingsClosed(page);
+      await openSettingsWhenIdle(page);
+      await page.waitForTimeout(1200);
+      const late = await readCloudTest(page);
+      const calls = (await cloudTestCalls(session)).length - before;
+      await configureStub(session, { delays: {} });
+      return verdict(late.shown === false && late.result === null && late.summary === '' && late.ariaDisabled === 'false' && calls === 1, { late, calls });
+    }); // End of check "[cloudset] es: a test still running when Settings closes..."
+
+    await check('[cloudset] es: a cloud field edit discards the test — a Client ID edit while it runs paints no late result and frees the button; a Client Secret edit hides a shown success', async () => {
+      const storedClientId = await page.inputValue('#cloudClientIdInput');
+      await configureStub(session, { delays: { 'cloud:test': 700 }, cloudResult: null });
+      await page.click('#testCloudBtn');
+      await page.waitForFunction(() => document.getElementById('cloudTestResult')?.dataset.result === 'testing', null, { timeout: WAIT_MS });
+      await page.type('#cloudClientIdInput', 'x');
+      await page.waitForTimeout(1200);
+      const late = await readCloudTest(page);
+      await page.fill('#cloudClientIdInput', storedClientId);
+      await configureStub(session, { delays: {} });
+      const shown = await runCloudTestFor(page, 'ok');
+      await page.type('#cloudClientSecretInput', 'a');
+      const afterSecret = await readCloudTest(page);
+      await page.fill('#cloudClientSecretInput', '');
+      return verdict(late.shown === false && late.result === null && late.ariaDisabled === 'false' &&
+        shown.shown === true && afterSecret.shown === false && afterSecret.result === null, { late, shown, afterSecret });
+    }); // End of check "[cloudset] es: a cloud field edit discards the test"
+
+    await check('[cloudset] es: "Quitar el acceso a la nube" asks inline (focus on Cancelar, Escape cancels it and keeps Settings open); Quitar empties and disables the fields, clears the shown result, says "El acceso a la nube se quitará al guardar." and focuses "Mantener…", which undoes it; confirmed again, the test says "save first" and Save sends removeCloudAccess alone; reopened, nothing is stored', async () => {
+      const shownResult = await runCloudTestFor(page, 'ok');
+      await page.click('#removeCloudBtn');
+      await page.waitForFunction(() => document.activeElement?.id === 'cancelCloudRemoveBtn', null, { timeout: WAIT_MS });
+      const asking = await readCloudSection(page);
+      await page.keyboard.press('Escape');
+      const escaped = await readCloudSection(page);
+      await page.click('#removeCloudBtn');
+      await page.click('#confirmCloudRemoveBtn');
+      const staged = await readCloudSection(page);
+      const stagedTest = await readCloudTest(page);
+      await page.click('#undoCloudRemovalBtn');
+      const undone = await readCloudSection(page);
+      await page.click('#removeCloudBtn');
+      await page.click('#confirmCloudRemoveBtn');
+      const saveFirst = await runCloudTestFor(page, 'unsavedChanges');
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      await openSettingsWhenIdle(page);
+      const after = await readCloudSection(page);
+      await page.click('#cancelSettingsBtn');
+      await waitForSettingsClosed(page);
+      const strings = uiStrings.es;
+      return verdict(
+        shownResult.shown && asking.confirmShown === true && asking.confirmMessage === strings['#cloudRemoveMessage'] && asking.removeShown === false &&
+        escaped.confirmShown === false && escaped.removeShown === true && escaped.settingsOpen === true && escaped.activeId === 'removeCloudBtn' &&
+        staged.clientId === '' && staged.region === 'euw' && staged.idDisabled === true && staged.secretDisabled === true && staged.regionDisabled === true &&
+        staged.removalNote === strings['#cloudRemovalNote'] && staged.undoShown === true && staged.removeShown === false &&
+        staged.activeId === 'undoCloudRemovalBtn' && staged.placeholder === '' && stagedTest.shown === false &&
+        undone.clientId === 'owm-cloud-1' && undone.region === 'aps' && undone.idDisabled === false && undone.removalNote === null &&
+        undone.activeId === 'removeCloudBtn' && saveFirst.summary === es.unsaved &&
+        isDeepStrictEqual(save.payload, { ...base, language: 'es', removeCloudAccess: true }) && isDeepStrictEqual(save.config.cloudAccess, NO_CLOUD_FLAGS) &&
+        after.clientId === '' && after.region === 'euw' && after.placeholder === '' && after.removeDisabled === true,
+        { asking, escaped, staged, stagedTest, undone, saveFirst, payload: withoutCloudSecret(save.payload), cloudAccess: save.config.cloudAccess, after }
+      );
+    }); // End of check "[cloudset] es: Quitar el acceso a la nube..."
+
+    await check('[cloudset] es: switching the language to English is saved (no cloud field sent)', async () => {
+      await openSettingsWhenIdle(page);
+      await page.selectOption('#languageSelect', 'en');
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      const lang = await page.evaluate(() => document.documentElement.lang);
+      return verdict(isDeepStrictEqual(save.payload, { ...base, language: 'en' }) && lang === 'en', { payload: save.payload, lang });
+    }); // End of check "[cloudset] es: switching the language to English..."
+
+    await checkTranslations(session, 'en');
+
+    await check('[cloudset] en: the section in English ("TP-Link cloud (optional)", regions, the session-only note without safeStorage); the three save codes read in English; a saved Client ID + secret says "The cloud Client Secret is kept for this session only." and, reopened, the secret field says "(unchanged)"', async () => {
+      const current = (await stubState(session)).scenario.config;
+      await configureStub(session, { config: { ...current, cloudAccess: { ...current.cloudAccess, canPersistCloudSecret: false } } });
+      await openSettingsWhenIdle(page);
+      const before = await readCloudSection(page);
+      const refusals = await playCloudSaveRefusals(session, 'en');
+      await page.fill('#cloudClientIdInput', 'owm-cloud-en');
+      await page.fill('#cloudClientSecretInput', CLOUD_SECRETS[2]);
+      await clearToasts(page);
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      await waitForToast(page, 'info', en.savedSessionOnly);
+      const save = await latestSave(session);
+      await openSettingsWhenIdle(page);
+      const after = await readCloudSection(page);
+      const leaks = await countCloudSecretLeaks(page);
+      const strings = uiStrings.en;
+      return verdict(
+        before.heading === strings['#cloudHeading'] && before.help === strings['#cloudHelp'] && before.credentialHelp === strings['#cloudCredentialHelp'] &&
+        isDeepStrictEqual(before.regionOptions, [['aps', 'Asia-Pacific (APS)'], ['euw', 'Europe (EUW)'], ['use', 'United States (USE)']]) &&
+        before.regionLabel === 'Region' && before.removeText === strings['#removeCloudBtn'] && before.sessionNote === strings['#cloudSessionNote'] &&
+        before.secretDescribedBy === 'cloudSessionNote' && refusals.sent === 0 && refusals.open === true &&
+        isDeepStrictEqual(save.payload, { ...base, language: 'en', cloudRegion: 'euw', cloudClientId: 'owm-cloud-en', cloudClientSecret: CLOUD_SECRETS[2] }) &&
+        save.config.cloudAccess.cloudSecretSessionOnly === true && after.clientId === 'owm-cloud-en' && after.placeholder === en.unchanged &&
+        after.sessionNote === strings['#cloudSessionNote'] && leaks === 0,
+        { before, refusals, payload: withoutCloudSecret(save.payload), cloudAccess: save.config.cloudAccess, after, leaks }
+      );
+    }); // End of check "[cloudset] en: the section in English..."
+
+    await check('[cloudset] en: "Test cloud access" says "Save your changes first: …" for a typed secret; saved, it lists the four controllers with their English statuses; -7132 and -52602 read in English', async () => {
+      // Settings is still open from the previous check
+      await page.fill('#cloudClientSecretInput', CLOUD_SECRETS[3]);
+      const unsaved = await runCloudTestFor(page, 'unsavedChanges');
+      await page.fill('#cloudClientSecretInput', '');
+      const four = await runCloudTestFor(page, 'ok');
+      await configureStub(session, { cloudResult: CLOUD_RATE_LIMITED });
+      const rate = await runCloudTestFor(page, 'rateLimited');
+      await configureStub(session, { cloudResult: CLOUD_EXPIRED });
+      const expired = await runCloudTestFor(page, 'credentialExpired');
+      await configureStub(session, { cloudResult: null });
+      return verdict(
+        unsaved.summary === en.unsaved && four.summary === fmt(en.okMany, { count: 4 }) && four.listLabel === en.listLabel &&
+        isDeepStrictEqual(four.items, expectedFourItems('en')) &&
+        rate.summary === `${en.rateLimited} (rateLimited, errorCode -7132)` && expired.summary === `${en.expired} (credentialInvalid, errorCode -52602)`,
+        { unsaved, four, rate, expired }
+      );
+    }); // End of check "[cloudset] en: Test cloud access..."
+
+    await check('[cloudset] en: "Remove cloud access" asks inline in English; confirmed, it says "Cloud access will be removed when you save." and clears the result; Save sends removeCloudAccess alone; reopened, nothing is stored and no secret leaked', async () => {
+      await page.click('#removeCloudBtn');
+      await page.waitForFunction(() => document.activeElement?.id === 'cancelCloudRemoveBtn', null, { timeout: WAIT_MS });
+      const asking = await readCloudSection(page);
+      await page.click('#confirmCloudRemoveBtn');
+      const staged = await readCloudSection(page);
+      const stagedTest = await readCloudTest(page);
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      await openSettingsWhenIdle(page);
+      const after = await readCloudSection(page);
+      await page.click('#cancelSettingsBtn');
+      await waitForSettingsClosed(page);
+      const leaks = await countCloudSecretLeaks(page);
+      const strings = uiStrings.en;
+      return verdict(
+        asking.confirmMessage === strings['#cloudRemoveMessage'] && staged.removalNote === strings['#cloudRemovalNote'] &&
+        staged.undoText === strings['#undoCloudRemovalBtn'] && stagedTest.shown === false &&
+        isDeepStrictEqual(save.payload, { ...base, language: 'en', removeCloudAccess: true }) &&
+        isDeepStrictEqual(save.config.cloudAccess, { ...NO_CLOUD_FLAGS, canPersistCloudSecret: false }) &&
+        after.clientId === '' && after.removeDisabled === true && leaks === 0,
+        { asking, staged, stagedTest, payload: save.payload, cloudAccess: save.config.cloudAccess, after, leaks }
+      );
+    }); // End of check "[cloudset] en: Remove cloud access..."
+  } finally {
+    session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
+    await session.app.close().catch(() => {});
+  }
+} // End of function runCloudSettings()
 
 /**
  * Calls one window.omadaAPI method from the renderer and reports its value
@@ -10375,6 +11012,7 @@ async function main() {
     ['tofu', runCertificatePinning],
     ['mgmt', runManagementAccess],
     ['caps', runManagementCapabilities],
+    ['cloudset', runCloudSettings],
     ['groups', runApGroupManagement],
     ['nets', runManagedNetworks],
     ['netedit', runNetworkEditing],

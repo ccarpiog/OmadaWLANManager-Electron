@@ -126,6 +126,65 @@ export interface Translations {
   managementTestUnsaved: string;
   managementTestSuperseded: string;
   managementTestFailed: string;
+  // Optional TP-Link cloud access in the settings modal (inbox item I-1c1;
+  // cloud-settings.ts, rules in cloud-form.ts): the section, its region
+  // names, the cloud Client Secret placeholder and notes, the removal, and
+  // the three cloud save codes (ConfigSaveError)
+  cloudTitle: string;
+  cloudHelp: string;
+  cloudCredentialHelp: string;
+  cloudRegion: string;
+  cloudRegionAps: string;
+  cloudRegionEuw: string;
+  cloudRegionUse: string;
+  cloudSecretRequiredNewRegion: string;
+  cloudSessionOnly: string;
+  cloudRemove: string;
+  cloudRemoveConfirm: string;
+  cloudRemoveAction: string;
+  cloudRemovalPending: string;
+  cloudUndoRemoval: string;
+  cloudSavedSessionOnly: string;
+  invalidCloudClientId: string;
+  cloudClientIdRequired: string;
+  cloudClientSecretRequired: string;
+  // "Test cloud access" (cloud-settings.ts): the button, the line while it
+  // runs, the summary of a success (no / one / several controllers, and the
+  // note for a list that may be incomplete), one text per outcome (each
+  // CloudAccessError — a refused credential refined by TP-Link's errorCode —
+  // and the renderer-side outcomes), the list's accessible name and each
+  // controller's status (available, or why it cannot be used: one text per
+  // CloudControllerReason)
+  cloudTest: string;
+  cloudTestRunning: string;
+  cloudTestOkNone: string;
+  cloudTestOkOne: string;
+  cloudTestOkMany: string;
+  cloudTestTruncated: string;
+  cloudTestUnsaved: string;
+  cloudTestNotConfigured: string;
+  cloudTestSuperseded: string;
+  cloudTestCredentialExpired: string;
+  cloudTestCredentialDisabled: string;
+  cloudTestCredentialWrong: string;
+  cloudTestCredentialInvalid: string;
+  cloudTestTokenRejected: string;
+  cloudTestRateLimited: string;
+  cloudTestTimeout: string;
+  cloudTestNetworkError: string;
+  cloudTestMalformedResponse: string;
+  cloudTestHttpError: string;
+  cloudTestApiError: string;
+  cloudTestUnknownError: string;
+  cloudTestFailed: string;
+  cloudControllersLabel: string;
+  cloudControllerAvailable: string;
+  cloudReasonNotController: string;
+  cloudReasonIncompleteEntry: string;
+  cloudReasonUnsupportedHost: string;
+  cloudReasonVersionUnknown: string;
+  cloudReasonVersionTooOld: string;
+  cloudReasonOffline: string;
   // App shell (shell.ts, status.ts): the sidebar views and the header details
   wifiNetworks: string;
   viewNavLabel: string;
@@ -665,7 +724,7 @@ export const translations: Record<Language, Translations> = {
     emptyGroup: 'Sin redes Wi-Fi — silencia estos AP',
     more: 'más',
     connectionSettings: 'Ajustes de conexión',
-    settingsDescription: 'La conexión con el controlador, el idioma y el acceso de gestión opcional. No se guarda nada hasta que pulses Guardar.',
+    settingsDescription: 'La conexión con el controlador, el idioma, el acceso de gestión opcional y el acceso opcional a la nube de TP-Link. No se guarda nada hasta que pulses Guardar.',
     controllerUrl: 'URL del controlador',
     username: 'Usuario',
     password: 'Contraseña',
@@ -739,6 +798,54 @@ export const translations: Record<Language, Translations> = {
     managementTestUnsaved: 'Guarda primero los cambios: la prueba usa los ajustes guardados.',
     managementTestSuperseded: 'La conexión cambió durante la prueba. Vuelve a intentarlo.',
     managementTestFailed: 'No se pudo completar la prueba.',
+    cloudTitle: 'Nube de TP-Link (opcional)',
+    cloudHelp: 'Permite llegar a tus controladores Omada remotos a través de tu cuenta de la nube de TP-Link.',
+    cloudCredentialHelp: 'Crea la credencial en el portal de Omada en la nube de TP-Link: On Premise Systems → Open API (Account Level Open API), en modo de credenciales de cliente, y copia aquí su Client ID y su Client Secret. Para hacer cambios necesita acceso completo; con acceso de solo lectura solo se pueden consultar los datos. Si no ves esa página, TP-Link aún no la ha activado para tu cuenta.',
+    cloudRegion: 'Región',
+    cloudRegionAps: 'Asia-Pacífico (APS)',
+    cloudRegionEuw: 'Europa (EUW)',
+    cloudRegionUse: 'Estados Unidos (USE)',
+    cloudSecretRequiredNewRegion: '(obligatorio para la nueva región)',
+    cloudSessionOnly: 'Este equipo no puede guardar el Client Secret de la nube de forma segura: solo se conserva hasta que cierres la aplicación y tendrás que volver a introducirlo la próxima vez.',
+    cloudRemove: 'Quitar el acceso a la nube',
+    cloudRemoveConfirm: '¿Quitar el acceso a la nube? Al guardar se borrarán la región, el Client ID y el Client Secret, y el controlador local volverá a ser el activo.',
+    cloudRemoveAction: 'Quitar',
+    cloudRemovalPending: 'El acceso a la nube se quitará al guardar.',
+    cloudUndoRemoval: 'Mantener el acceso a la nube',
+    cloudSavedSessionOnly: 'El Client Secret de la nube solo se conserva durante esta sesión.',
+    invalidCloudClientId: 'El Client ID de la nube de TP-Link solo puede tener letras, números, puntos, guiones y guiones bajos (hasta 128 caracteres).',
+    cloudClientIdRequired: 'Introduce el Client ID de la nube de TP-Link. Para desactivar el acceso a la nube, usa "Quitar el acceso a la nube".',
+    cloudClientSecretRequired: 'Introduce el Client Secret de la nube de TP-Link: es obligatorio con un Client ID nuevo o con otra región.',
+    cloudTest: 'Probar el acceso a la nube',
+    cloudTestRunning: 'Probando el acceso a la nube…',
+    cloudTestOkNone: 'El acceso a la nube funciona, pero la cuenta no tiene ningún controlador.',
+    cloudTestOkOne: 'El acceso a la nube funciona: se encontró 1 controlador.',
+    cloudTestOkMany: 'El acceso a la nube funciona: se encontraron {count} controladores.',
+    cloudTestTruncated: 'Puede que la lista esté incompleta: no se pudo leer entera la respuesta de TP-Link.',
+    cloudTestUnsaved: 'Guarda primero los cambios: la prueba usa la credencial de la nube guardada.',
+    cloudTestNotConfigured: 'No hay ninguna credencial de la nube de TP-Link guardada. Elige la región, introduce el Client ID y el Client Secret y pulsa Guardar.',
+    cloudTestSuperseded: 'La credencial de la nube cambió durante la prueba. Vuelve a intentarlo.',
+    cloudTestCredentialExpired: 'TP-Link indica que esta credencial ha caducado o ya no existe. Crea otra en el portal de Omada en la nube de TP-Link y guárdala aquí.',
+    cloudTestCredentialDisabled: 'TP-Link indica que esta credencial está desactivada. Actívala en el portal de Omada en la nube de TP-Link o crea otra.',
+    cloudTestCredentialWrong: 'TP-Link rechazó el Client ID o el Client Secret. Comprueba que los copiaste bien y que la región es la correcta.',
+    cloudTestCredentialInvalid: 'TP-Link rechazó la credencial (incorrecta, caducada, eliminada o desactivada). Revísala en el portal de Omada en la nube de TP-Link y comprueba la región.',
+    cloudTestTokenRejected: 'TP-Link rechazó el token de acceso incluso después de renovarlo. Vuelve a intentarlo más tarde.',
+    cloudTestRateLimited: 'TP-Link está recibiendo demasiadas solicitudes con esta credencial (límite de frecuencia). Espera un momento y vuelve a intentarlo.',
+    cloudTestTimeout: 'La nube de TP-Link no respondió a tiempo. Comprueba la conexión a internet y vuelve a intentarlo.',
+    cloudTestNetworkError: 'No se pudo contactar con la nube de TP-Link. Comprueba la conexión a internet.',
+    cloudTestMalformedResponse: 'La nube de TP-Link envió una respuesta que la aplicación no entiende.',
+    cloudTestHttpError: 'La nube de TP-Link respondió con un error HTTP.',
+    cloudTestApiError: 'La nube de TP-Link rechazó la solicitud.',
+    cloudTestUnknownError: 'La prueba de la nube de TP-Link falló con un error desconocido.',
+    cloudTestFailed: 'No se pudo completar la prueba de la nube de TP-Link.',
+    cloudControllersLabel: 'Controladores de la cuenta de la nube de TP-Link',
+    cloudControllerAvailable: 'Disponible',
+    cloudReasonNotController: 'No se puede usar: no es un controlador Omada.',
+    cloudReasonIncompleteEntry: 'No se puede usar: TP-Link no envía todos los datos necesarios para conectar.',
+    cloudReasonUnsupportedHost: 'No se puede usar: usa un servidor de la nube que la aplicación no admite.',
+    cloudReasonVersionUnknown: 'No se puede usar: no indica una versión válida de Omada (se necesita la 6.3 o posterior).',
+    cloudReasonVersionTooOld: 'No se puede usar: es anterior a Omada 6.3.',
+    cloudReasonOffline: 'Sin conexión: el controlador no está en línea en la nube de TP-Link.',
     wifiNetworks: 'Redes Wi-Fi',
     viewNavLabel: 'Vistas',
     siteLabel: 'Sitio: {site}',
@@ -1203,7 +1310,7 @@ export const translations: Record<Language, Translations> = {
     emptyGroup: 'No Wi-Fi networks — silences these APs',
     more: 'more',
     connectionSettings: 'Connection settings',
-    settingsDescription: 'The controller connection, the language and the optional management access. Nothing is saved until you press Save.',
+    settingsDescription: 'The controller connection, the language, the optional management access and the optional TP-Link cloud access. Nothing is saved until you press Save.',
     controllerUrl: 'Controller URL',
     username: 'Username',
     password: 'Password',
@@ -1277,6 +1384,54 @@ export const translations: Record<Language, Translations> = {
     managementTestUnsaved: 'Save your changes first: the test uses the saved settings.',
     managementTestSuperseded: 'The connection changed during the test. Try again.',
     managementTestFailed: 'The test could not be completed.',
+    cloudTitle: 'TP-Link cloud (optional)',
+    cloudHelp: 'Lets the app reach your remote Omada controllers through your TP-Link cloud account.',
+    cloudCredentialHelp: 'Create the credential in the TP-Link Omada cloud portal: On Premise Systems → Open API (Account Level Open API), in client credentials mode, and copy its Client ID and Client Secret here. Changes need full access; with view-only access the data can only be viewed. If that page is missing, TP-Link has not enabled it for your account yet.',
+    cloudRegion: 'Region',
+    cloudRegionAps: 'Asia-Pacific (APS)',
+    cloudRegionEuw: 'Europe (EUW)',
+    cloudRegionUse: 'United States (USE)',
+    cloudSecretRequiredNewRegion: '(required for the new region)',
+    cloudSessionOnly: 'This computer cannot store the cloud Client Secret securely: it is kept only until you quit the app, and you will need to enter it again next time.',
+    cloudRemove: 'Remove cloud access',
+    cloudRemoveConfirm: 'Remove cloud access? The region, the Client ID and the Client Secret are deleted when you save, and the local controller becomes the active one again.',
+    cloudRemoveAction: 'Remove',
+    cloudRemovalPending: 'Cloud access will be removed when you save.',
+    cloudUndoRemoval: 'Keep cloud access',
+    cloudSavedSessionOnly: 'The cloud Client Secret is kept for this session only.',
+    invalidCloudClientId: 'The TP-Link cloud Client ID can only contain letters, digits, dots, hyphens and underscores (up to 128 characters).',
+    cloudClientIdRequired: 'Enter the TP-Link cloud Client ID. To turn off cloud access, use "Remove cloud access".',
+    cloudClientSecretRequired: 'Enter the TP-Link cloud Client Secret: it is required for a new Client ID or a different region.',
+    cloudTest: 'Test cloud access',
+    cloudTestRunning: 'Testing cloud access…',
+    cloudTestOkNone: 'Cloud access works, but the account has no controllers.',
+    cloudTestOkOne: 'Cloud access works: 1 controller found.',
+    cloudTestOkMany: 'Cloud access works: {count} controllers found.',
+    cloudTestTruncated: 'The list may be incomplete: TP-Link\'s answer could not be read in full.',
+    cloudTestUnsaved: 'Save your changes first: the test uses the saved cloud credential.',
+    cloudTestNotConfigured: 'No TP-Link cloud credential is saved. Choose the region, enter the Client ID and the Client Secret, and press Save.',
+    cloudTestSuperseded: 'The cloud credential changed during the test. Try again.',
+    cloudTestCredentialExpired: 'TP-Link says this credential has expired or no longer exists. Create a new one in the TP-Link Omada cloud portal and save it here.',
+    cloudTestCredentialDisabled: 'TP-Link says this credential is disabled. Enable it in the TP-Link Omada cloud portal, or create a new one.',
+    cloudTestCredentialWrong: 'TP-Link rejected the Client ID or the Client Secret. Check that both were copied correctly and that the region is right.',
+    cloudTestCredentialInvalid: 'TP-Link rejected the credential (wrong, expired, deleted or disabled). Check it in the TP-Link Omada cloud portal, and check the region.',
+    cloudTestTokenRejected: 'TP-Link rejected the access token even after renewing it. Try again later.',
+    cloudTestRateLimited: 'TP-Link is receiving too many requests for this credential (rate limit). Wait a moment and try again.',
+    cloudTestTimeout: 'The TP-Link cloud did not answer in time. Check the internet connection and try again.',
+    cloudTestNetworkError: 'Could not reach the TP-Link cloud. Check the internet connection.',
+    cloudTestMalformedResponse: 'The TP-Link cloud sent an answer the app does not understand.',
+    cloudTestHttpError: 'The TP-Link cloud answered with an HTTP error.',
+    cloudTestApiError: 'The TP-Link cloud refused the request.',
+    cloudTestUnknownError: 'The TP-Link cloud test failed with an unknown error.',
+    cloudTestFailed: 'The TP-Link cloud test could not be completed.',
+    cloudControllersLabel: 'Controllers of the TP-Link cloud account',
+    cloudControllerAvailable: 'Available',
+    cloudReasonNotController: 'Cannot be used: not an Omada controller.',
+    cloudReasonIncompleteEntry: 'Cannot be used: TP-Link does not report everything needed to connect.',
+    cloudReasonUnsupportedHost: 'Cannot be used: it uses a cloud server the app does not support.',
+    cloudReasonVersionUnknown: 'Cannot be used: it does not report a valid Omada version (6.3 or later is needed).',
+    cloudReasonVersionTooOld: 'Cannot be used: it runs a version older than Omada 6.3.',
+    cloudReasonOffline: 'Offline: the controller is not online in the TP-Link cloud.',
     wifiNetworks: 'Wi-Fi networks',
     viewNavLabel: 'Views',
     siteLabel: 'Site: {site}',

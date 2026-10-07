@@ -366,6 +366,52 @@
           </div>
           <p class="management-test-result" id="managementTestResult" role="status" hidden></p>
         </div>
+        <!-- Optional TP-Link cloud access (cloud-settings.ts, inbox item
+             I-1c1): Region, Client ID, Client Secret (never shown back:
+             "(unchanged)" when one is stored), the help and the note on
+             where the credential is created, the session-only note, "Remove
+             cloud access" with an inline confirmation (the removal is
+             applied by Save), and "Test cloud access" with its result (a
+             summary line and the controllers found, each with why it cannot
+             be used; main tests the saved credential) -->
+        <div class="form-group management-group cloud-group" role="group" aria-labelledby="cloudHeading" aria-describedby="cloudHelp cloudCredentialHelp">
+          <h3 class="form-section-title" id="cloudHeading"></h3>
+          <p class="form-help" id="cloudHelp"></p>
+          <p class="form-help" id="cloudCredentialHelp"></p>
+          <div class="form-field">
+            <label for="cloudRegionSelect" id="labelCloudRegion"></label>
+            <select id="cloudRegionSelect" class="form-select">
+              <option value="aps"></option>
+              <option value="euw"></option>
+              <option value="use"></option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="cloudClientIdInput" id="labelCloudClientId"></label>
+            <input type="text" id="cloudClientIdInput" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="form-field">
+            <label for="cloudClientSecretInput" id="labelCloudClientSecret"></label>
+            <input type="password" id="cloudClientSecretInput" autocomplete="off">
+          </div>
+          <p class="form-note" id="cloudSessionNote" hidden></p>
+          <p class="form-note" id="cloudRemovalNote" role="status" hidden></p>
+          <div class="form-actions">
+            <button class="btn btn-secondary btn-compact" id="removeCloudBtn"></button>
+            <button class="btn btn-secondary btn-compact" id="undoCloudRemovalBtn" hidden></button>
+          </div>
+          <div class="cert-reset-confirm" id="cloudRemoveConfirm" hidden>
+            <p id="cloudRemoveMessage"></p>
+            <div class="cert-reset-actions">
+              <button class="btn btn-secondary btn-compact" id="cancelCloudRemoveBtn" aria-describedby="cloudRemoveMessage"></button>
+              <button class="btn btn-danger btn-compact" id="confirmCloudRemoveBtn" aria-describedby="cloudRemoveMessage"></button>
+            </div>
+          </div>
+          <div class="form-actions management-test-actions">
+            <button class="btn btn-secondary btn-compact" id="testCloudBtn" aria-describedby="cloudTestResult"></button>
+          </div>
+          <div class="management-test-result cloud-test-result" id="cloudTestResult" role="status" hidden></div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="cancelSettingsBtn"></button>

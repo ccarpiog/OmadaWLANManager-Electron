@@ -4,6 +4,8 @@
 
 import type { ConfigSavePayload, Language, RendererConfig } from '../shared/types';
 import { applyTranslations } from './apply-translations';
+import { CLOUD_SAVE_ERROR_TEXT, cloudSaveErrorKey } from './cloud-form';
+import { cancelCloudRemovalIfOpen, clearCloudSecret, loadCloudSection, planCloudSettingsSave, resetCloudTest } from './cloud-settings';
 import { connect, disconnect, handleConnectionReset } from './connection';
 import {
   cancelCertResetBtn,
@@ -119,6 +121,7 @@ export async function openSettings(): Promise<void> {
   renderCertificatePin(config.pinnedFingerprint);
   hideCertificateResetConfirm();
   loadManagementSection(config);
+  loadCloudSection(config);
   document.addEventListener('keydown', settingsFocusTrap);
   settingsModal.classList.add('visible');
   updateBackgroundInert();
@@ -128,7 +131,9 @@ export async function openSettings(): Promise<void> {
 
 /**
  * Closes the settings modal (a no-op when it is not open), clears the typed
- * password and Client Secret, removes its Tab focus trap, lifts the
+ * password, Client Secret and cloud Client Secret, discards any "Test cloud
+ * access" run still in flight (resetCloudTest(): its late reply must not
+ * paint into a reopened Settings), removes its Tab focus trap, lifts the
  * background inertness, and restores keyboard focus to
  * the element that opened it (in that order: focus cannot enter an inert
  * subtree). Covers every close path: the close/cancel buttons, the overlay
@@ -137,10 +142,12 @@ export async function openSettings(): Promise<void> {
 export function closeSettings(): void {
   if (!settingsModal.classList.contains('visible')) return;
   settingsModal.classList.remove('visible');
-  // A typed password or Client Secret never lingers in the DOM once the
-  // modal is closed (saved or not)
+  // A typed password, Client Secret or cloud Client Secret never lingers in
+  // the DOM once the modal is closed (saved or not)
   passwordInput.value = '';
   clientSecretInput.value = '';
+  clearCloudSecret();
+  resetCloudTest();
   document.removeEventListener('keydown', settingsFocusTrap);
   updateBackgroundInert();
   state.settingsOpener?.focus();
@@ -331,7 +338,8 @@ export function cancelCertificateReset(): void {
 
 /**
  * Escape inside Settings (keyboard.ts): an open inline confirmation (reset
- * the trusted certificate, remove management access) is the top context, so
+ * the trusted certificate, remove management access, remove cloud access)
+ * is the top context, so
  * Escape cancels it — focus back on the button that asked — and Settings
  * stays open with what was typed; only the next Escape closes Settings.
  * @returns {boolean} True when an inline confirmation was cancelled.
@@ -346,7 +354,7 @@ export function cancelSettingsInlineConfirm(): boolean {
     cancelManagementRemoval();
     return true;
   }
-  return false;
+  return cancelCloudRemovalIfOpen();
 } // End of function cancelSettingsInlineConfirm()
 
 /**
@@ -406,7 +414,11 @@ export async function confirmCertificateReset(): Promise<void> {
  * The management-access fields follow planManagementSave()
  * (management-form.ts): the Client Secret is sent only when typed, a blank
  * one keeps the stored secret for the same controller and Client ID, and a
- * staged removal is sent as `removeManagementAccess`.
+ * staged removal is sent as `removeManagementAccess`. The TP-Link cloud
+ * fields follow planCloudSave() (cloud-form.ts) the same way: the region and
+ * the cloud Client ID with a typed cloud secret, nothing when unchanged, a
+ * staged removal as `removeCloudAccess`; the three cloud save codes
+ * (renderer- or main-side) have their own texts.
  * The URL is validated/normalized here and again in the main process. A save
  * that changed the controller URL makes the main process close the current
  * connection (reported as `connectionReset`): the connected UI is dropped
@@ -471,11 +483,21 @@ export async function saveSettings(): Promise<void> {
       return;
     }
 
+    // TP-Link cloud access (optional): the region, the cloud Client ID and a
+    // typed cloud secret, a staged removal, or nothing when unchanged
+    // (mirrors the main rules; the account is not tied to the URL)
+    const cloud = planCloudSettingsSave();
+    if (!cloud.ok) {
+      showToast(t(CLOUD_SAVE_ERROR_TEXT[cloud.error]), 'error');
+      return;
+    }
+
     const payload: ConfigSavePayload = {
       url: normalizedUrl,
       username,
       language: languageSelect.value as Language,
-      ...management.fields
+      ...management.fields,
+      ...cloud.fields
     };
     // Send the password only when the user typed a new one
     if (typedPassword) {
@@ -511,6 +533,10 @@ export async function saveSettings(): Promise<void> {
       if (payload.clientSecret !== undefined && result.managementAccess?.clientSecretSessionOnly === true) {
         showToast(t('managementSavedSessionOnly'), 'info');
       }
+      // The same for a typed cloud Client Secret
+      if (payload.cloudClientSecret !== undefined && result.cloudAccess?.cloudSecretSessionOnly === true) {
+        showToast(t('cloudSavedSessionOnly'), 'info');
+      }
     } else if (result.error === 'invalidUrl') {
       showToast(t('invalidUrl'), 'error');
     } else if (result.error === 'passwordRequired') {
@@ -518,7 +544,8 @@ export async function saveSettings(): Promise<void> {
     } else if (result.error === 'invalidClientId' || result.error === 'clientIdRequired' || result.error === 'clientSecretRequired') {
       showToast(t(MANAGEMENT_ERROR_KEYS[result.error]), 'error');
     } else {
-      showToast(t('saveError'), 'error');
+      // A cloud save code has its own text; anything else is a generic failure
+      showToast(t(cloudSaveErrorKey(result.error) ?? 'saveError'), 'error');
     }
   } finally {
     state.isSavingSettings = false;

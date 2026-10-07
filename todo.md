@@ -674,3 +674,77 @@ everything is built against the documented contract and fixtures.
     `cloudClientSecretRequired`) and the access errors.
   - A smoke launch `[cloud]` over the I-1a stub channels.
   - README, plus a cloud section in `docs/live-test-checklist.md` built from `docs/omada-cloud-openapi.md` §11.
+- **Split (2026-10-07, before starting — too big for one worker):**
+  - ✅ **I-1c1 (high):** the Settings "TP-Link cloud (optional)" section — Region, Client ID, Client Secret, the note on where
+    the credential is created (full access needed for changes), **Test cloud access** over `cloud:test` (the controllers
+    found and why any cannot be used; "save first" for unsaved edits), **Remove cloud access** over `config:save`
+    `removeCloudAccess: true`; es / en strings for the I-1a save codes and the cloud access errors (`-7132` rate limit,
+    `-52602` expired or deleted credential, offline); the smoke stub's config load reports the cloud flags; smoke es + en.
+    - **Done (I-1c1)** (renderer and smoke only; main unchanged):
+      - **Section:** a new group under "Management access" in `index.html` (es "Nube de TP-Link (opcional)"): Region
+        (`aps` / `euw` / `use`, the stored one preselected), Client ID, a password-type Client Secret that is never shown
+        back ("(unchanged)" while one is stored, "(required for the new region)" / "(required for the new Client ID)"
+        when it would not be kept), a help line, the credential note (TP-Link Omada cloud portal → On Premise Systems →
+        Open API, Account Level Open API, client credentials, full access for changes, the page may not be enabled yet)
+        and the session-only note. Settings' description mentions the cloud access.
+      - **Code:** new pure `src/renderer/cloud-form.ts` (the regions and the flags parser `parseCloudAccessStatus()`;
+        `planCloudSave()`, a mirror of main's `applyCloudAccessSave()` that is stricter only for a blank Client ID while
+        a credential is stored, like management; `cloudSecretAffordance()`; `hasUnsavedCloudChanges()`;
+        `parseCloudAccessResult()`, which fails closed on any malformed DTO; `cloudTestOutcome()`; the code / reason /
+        save-code text tables; `isCloudTestCurrent()`). New DOM module `src/renderer/cloud-settings.ts`, wired from
+        `settings-modal.ts` (open, close, Escape, save), `apply-translations.ts` and `renderer.ts`.
+      - **Save:** the cloud fields join the existing `config:save` payload: region + Client ID + typed secret, nothing
+        when unchanged, a region alone when nothing is stored. The three I-1a codes have es / en texts, renderer- and
+        main-side, and a session-only cloud secret gets its own info toast.
+      - **Remove cloud access:** an inline confirmation (Escape cancels it), then staged like "Remove management
+        access": the fields empty and disabled, "Keep cloud access" undoes it, any shown result is cleared, and Save
+        sends `removeCloudAccess: true` alone. **Choice:** staged and applied by Save, not an immediate save, for parity
+        with the management section and because `config:save` needs the URL / username / password of the form.
+      - **Test cloud access:** unsaved region / Client ID / secret edits or a staged removal → "save first" with no
+        call. Otherwise `cloud:test` (no argument, no connection needed) runs, and its result is one of these:
+        - a summary plus one row per controller (name, "Omada x.y", and "Available" or the reason text for
+          `notController` / `incompleteEntry` / `unsupportedHost` / `versionUnknown` / `versionTooOld` / `offline`),
+          plus a note when `truncated`;
+        - a specific text per code. `credentialInvalid` is refined by the diagnostic's errorCode: `-52602` / `-90112`
+          expired or deleted, `-90113` disabled, `-90106` wrong ID or secret. `rateLimited` (`-7132` / 429) gets its own
+          text. An unknown code shows as code + message, `notConfigured` as "no credential saved", and `superseded` as
+          "the credential changed, test again" with no list.
+      - **Stale results:** a run number is bumped by every run, every Settings open or close, every staged removal and
+        every region / Client ID / Client Secret edit (review fix), so a late reply never paints, not even in a reopened Settings. This is better than "Test management access",
+        whose 20a leftover is unchanged.
+      - **Smoke stub** (`tests/smoke/stub-main.cjs`, separate hunks; the user's `window-placement.cjs` lines untouched):
+        - config load reports `cloudAccess` (the scenario's `config.cloudAccess` fields over "nothing stored");
+        - CONFIG_SAVE takes the four cloud keys with the real shape guard and mirrors the cloud save rules on flags
+          (`applyCloudSave()`), and it replies `cloudAccess`;
+        - a cloud-credential change while the stub's target is cloud replies `connectionReset`.
+      - **Tests:**
+        - Unit 1248 → 1280: new `tests/unit/renderer-cloud-form.test.ts` (32). It covers the mirrors, the flags, the
+          save plan against main's `applyConfigSave()` over a 48-case matrix, the placeholder, dirty detection, reply
+          parsing (main's own fixture DTOs accepted), code → text, and es / en parity of every new text.
+        - Smoke 273 → 291: a new launch `[cloudset]` (18 checks, es then en; one added by the review fix) covering rendering, the flags, the save
+          codes (both sides), save and placeholders, "save first", no credential, the four controllers with reasons, the
+          other reasons with the truncated note, `-7132`, `-52602`, an unknown code, `superseded`, a late reply after
+          close / reopen, a cloud field edit during a run and after a shown success, the session-only note and toast, and
+          Remove. `ui-strings.json` gained the section's strings.
+      - **Review** (`docs/reviews/phaseI-1c1.md`, Codex, ship-with-fixes, 0 blockers): the one should-fix (a cloud field
+        edited while a test ran, or after it showed, left a result describing the old credential) was fixed by the
+        orchestrator: `handleCloudFieldEdit()` in `cloud-settings.ts` resets the run on every region, Client ID and
+        Client Secret edit; smoke check added.
+      - **For I-1c2:**
+        - `config:save` still needs a valid local URL, username and password, so a cloud-only user cannot save the
+          cloud credential yet: the cloud-only start must relax that path in main and in `saveSettings()`.
+        - The renderer gets `cloudAccess.activeController` but not `localOmadacId`, so Settings lists every organization,
+          the local duplicate included: the switcher needs main to expose it, or to hide the duplicate itself.
+        - Reusable for the switcher: `parseCloudAccessResult()` / `cloudTestOutcome()` (for `cloud:controllers`
+          failures too), `cloudControllerStatusKey()` and the `cloudReason…` texts.
+        - The stub's cloud channels ignore the `cloudAccess` flags (script `cloudResult`, e.g. `notConfigured`), and
+          `cloudConnectResult` is unchanged.
+        - The cloud certificate note in Settings is not done (I-1c2).
+  - **I-1c2 (high):** the controller switcher at the top of the sidebar over `switchController()` (local first as "This
+    network", cloud entries with a "Cloud" tag, the local duplicate hidden via `localOmadacId`, disabled entries with their
+    reason, disabled while a move or write runs, the renderer session invalidated before the call), the state reset, the
+    header controller name, the cloud error states, "Connect through TP-Link cloud" and a cloud-only start, the cloud
+    certificate note in Settings, an AP with no reported group shown as unknown rather than "Unassigned" (I-1b1 leftover),
+    smoke `[cloud]` es + en (four organizations: local duplicate hidden, one offline, one below 6.3, one connectable).
+  - **I-1c3 (routine):** README cloud section and a cloud section in `docs/live-test-checklist.md` from
+    `docs/omada-cloud-openapi.md` §11.

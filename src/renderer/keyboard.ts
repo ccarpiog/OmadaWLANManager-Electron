@@ -17,7 +17,8 @@
 // themselves on Escape through their own listeners (their pending promises
 // must settle through their cancel paths); the settings modal is closed here,
 // after an inline confirmation open inside it (reset the trusted
-// certificate, remove management access) was cancelled by an earlier Escape.
+// certificate, remove management access, remove cloud access) was cancelled
+// by an earlier Escape.
 // ============================================================================
 
 import { closeApDetails } from './ap-details';

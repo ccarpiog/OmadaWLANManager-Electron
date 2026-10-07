@@ -78,12 +78,29 @@ const MAX_USERNAME_LENGTH = 256;
 const MAX_PASSWORD_LENGTH = 512;
 const MAX_CLIENT_ID_LENGTH = 256;
 const MAX_CLIENT_SECRET_LENGTH = 512;
-const CONFIG_SAVE_KEYS = new Set(['url', 'username', 'language', 'password', 'clientId', 'clientSecret', 'removeManagementAccess']);
+const CONFIG_SAVE_KEYS = new Set([
+  'url', 'username', 'language', 'password', 'clientId', 'clientSecret', 'removeManagementAccess',
+  'cloudRegion', 'cloudClientId', 'cloudClientSecret', 'removeCloudAccess',
+]);
 // Mirrored from CLIENT_ID_REGEX in src/main/config-model.ts (keep in sync)
 const CLIENT_ID_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
 // The management-access flags of a RendererConfig with nothing stored
 // (ManagementAccessStatus in src/shared/types.ts)
 const NO_MANAGEMENT_ACCESS = { clientId: '', hasClientSecret: false, clientSecretSessionOnly: false };
+// The TP-Link cloud regions — mirrored from CLOUD_REGIONS / DEFAULT_CLOUD_REGION
+// in src/main/cloud-hosts.ts (keep in sync)
+const CLOUD_REGIONS = ['aps', 'euw', 'use'];
+const DEFAULT_CLOUD_REGION = 'euw';
+// The cloud-access flags of a RendererConfig with nothing stored
+// (CloudAccessStatus in src/shared/types.ts, inbox I-1c1)
+const NO_CLOUD_ACCESS = {
+  region: DEFAULT_CLOUD_REGION,
+  clientId: '',
+  hasCloudSecret: false,
+  cloudSecretSessionOnly: false,
+  canPersistCloudSecret: true,
+  activeController: 'local',
+};
 
 // ============================================================================
 // D4 guard: never run against the real home directory
@@ -113,7 +130,13 @@ function defaultScenario() {
     // clientSecretSessionOnly) default to "nothing stored", and
     // canPersistClientSecret to true; set it to false to play a session
     // without safeStorage (a typed Client Secret is then session-only). The
-    // stub never keeps a Client Secret, only these flags
+    // stub never keeps a Client Secret, only these flags. Its `cloudAccess`
+    // (inbox I-1c1; CloudAccessStatus: region, clientId, hasCloudSecret,
+    // cloudSecretSessionOnly, canPersistCloudSecret, activeController) is
+    // merged over "nothing stored" (NO_CLOUD_ACCESS): set any of its fields
+    // per launch, e.g. { cloudAccess: { clientId: 'x', hasCloudSecret: true } },
+    // or canPersistCloudSecret: false to play a session without safeStorage.
+    // The stub never keeps a cloud Client Secret either, only the flags
     config: { url: '', username: '', language: 'es', hasPassword: false, pinnedFingerprint: null },
     // Fingerprint of the self-signed certificate the fake controller presents,
     // or null when certificate pinning is not involved (as if CA-trusted).
@@ -377,16 +400,40 @@ function isValidConfigSavePayload(payload) {
   if (payload.removeManagementAccess !== undefined && (payload.removeManagementAccess !== true || payload.clientId !== undefined || payload.clientSecret !== undefined)) {
     return false;
   }
+  // The TP-Link cloud fields (inbox I-1a / I-1c1), as the real guard checks them
+  if (payload.cloudRegion !== undefined && !CLOUD_REGIONS.includes(payload.cloudRegion)) {
+    return false;
+  }
+  if (
+    payload.cloudClientId !== undefined &&
+    (typeof payload.cloudClientId !== 'string' || payload.cloudClientId.length === 0 || payload.cloudClientId.length > MAX_CLIENT_ID_LENGTH)
+  ) {
+    return false;
+  }
+  if (
+    payload.cloudClientSecret !== undefined &&
+    (typeof payload.cloudClientSecret !== 'string' || payload.cloudClientSecret.length === 0 || payload.cloudClientSecret.length > MAX_CLIENT_SECRET_LENGTH)
+  ) {
+    return false;
+  }
+  if (
+    payload.removeCloudAccess !== undefined &&
+    (payload.removeCloudAccess !== true || payload.cloudRegion !== undefined || payload.cloudClientId !== undefined || payload.cloudClientSecret !== undefined)
+  ) {
+    return false;
+  }
   return true;
 } // End of function isValidConfigSavePayload()
 
 /**
  * Returns the current RendererConfig with the management-access defaults
- * filled in (nothing stored; the secret can be persisted).
+ * filled in (nothing stored; the secret can be persisted) and the cloud-access
+ * flags (the scenario's `cloudAccess` fields over NO_CLOUD_ACCESS).
  * @returns {object} The RendererConfig.
  */
 function currentRendererConfig() {
-  return { pinnedFingerprint: null, ...NO_MANAGEMENT_ACCESS, canPersistClientSecret: true, ...stub.scenario.config };
+  const config = { pinnedFingerprint: null, ...NO_MANAGEMENT_ACCESS, canPersistClientSecret: true, ...stub.scenario.config };
+  return { ...config, cloudAccess: { ...NO_CLOUD_ACCESS, ...(stub.scenario.config.cloudAccess || {}) } };
 }
 
 /**
@@ -427,6 +474,58 @@ function applyManagementSave(payload, current, urlChanged) {
   }
   return { ok: false, error: 'clientSecretRequired' };
 } // End of function applyManagementSave()
+
+/**
+ * Mirrors applyCloudAccessSave() in src/main/config-model.ts on the
+ * cloud-access FLAGS only (the stub never keeps a cloud Client Secret; inbox
+ * I-1c1): a removal clears them (the local controller is active again); no
+ * cloud Client ID keeps everything for the same region, stores a new region
+ * alone when nothing is stored, and needs a typed secret for a stored Client
+ * ID in another region; a typed secret needs a valid Client ID and is
+ * session-only when the scenario cannot persist it; a blank secret keeps the
+ * stored one only for the same region and Client ID. The cloud account is not
+ * tied to the controller URL. `changed` mirrors cloudCredentialsChanged.
+ * @param {object} payload - The (shape-checked) ConfigSavePayload.
+ * @param {object} current - The current CloudAccessStatus.
+ * @returns {{ ok: true; cloud: object; changed: boolean } | { ok: false; error: string }} The outcome.
+ */
+function applyCloudSave(payload, current) {
+  const typedSecret = typeof payload.cloudClientSecret === 'string' && payload.cloudClientSecret.length > 0;
+  const persist = current.canPersistCloudSecret !== false;
+  const keep = { canPersistCloudSecret: current.canPersistCloudSecret !== false, activeController: current.activeController };
+  let cloud;
+  if (payload.removeCloudAccess === true) {
+    cloud = { ...NO_CLOUD_ACCESS, canPersistCloudSecret: keep.canPersistCloudSecret };
+  } else {
+    const region = payload.cloudRegion === undefined ? current.region : payload.cloudRegion;
+    const regionChanged = region !== current.region;
+    if (payload.cloudClientId === undefined) {
+      if (typedSecret) {
+        return { ok: false, error: 'cloudClientIdRequired' };
+      }
+      if (regionChanged && current.clientId) {
+        return { ok: false, error: 'cloudClientSecretRequired' };
+      }
+      cloud = regionChanged ? { ...NO_CLOUD_ACCESS, ...keep, region } : { ...current };
+    } else {
+      const clientId = payload.cloudClientId.trim();
+      if (!CLIENT_ID_REGEX.test(clientId)) {
+        return { ok: false, error: 'invalidCloudClientId' };
+      }
+      if (typedSecret) {
+        cloud = { ...keep, region, clientId, hasCloudSecret: true, cloudSecretSessionOnly: !persist };
+      } else if (!regionChanged && clientId === current.clientId) {
+        cloud = { ...current };
+      } else {
+        return { ok: false, error: 'cloudClientSecretRequired' };
+      }
+    } // End of the branch with a cloud Client ID in the payload
+  } // End of the save (not removal) branch
+  const changed =
+    typedSecret || cloud.region !== current.region || cloud.clientId !== current.clientId ||
+    cloud.hasCloudSecret !== current.hasCloudSecret || cloud.cloudSecretSessionOnly !== current.cloudSecretSessionOnly;
+  return { ok: true, cloud, changed };
+} // End of function applyCloudSave()
 
 /**
  * "Installs" a controller session like ConnectionManager.install() +
@@ -888,7 +987,11 @@ const handlers = {
    * scenario — nothing is written to disk. A URL change is also a controller
    * transition in main (ConnectionManager.applyConfigSave()): the controller
    * and any pending decision are dropped and the result carries
-   * connectionReset. A success carries managementAccess (flags only).
+   * connectionReset. A success carries managementAccess (flags only). The
+   * TP-Link cloud fields follow applyCloudSave() (flags only); a save that
+   * changes the cloud credential while the target is a cloud controller is a
+   * transition as well (connectionReset, like finishConfigSave()), and a
+   * success carries cloudAccess.
    * @param {unknown} payload - The ConfigSavePayload sent by the renderer.
    * @returns {object} The ConfigSaveResult.
    */
@@ -916,7 +1019,17 @@ const handlers = {
     if (!management.ok) {
       return { success: false, error: management.error };
     }
+    const cloud = applyCloudSave(payload, current.cloudAccess);
+    if (!cloud.ok) {
+      return { success: false, error: cloud.error };
+    }
+    const cloudReset = cloud.changed && stub.target.kind === 'cloud';
     let pinnedFingerprint = stub.scenario.config.pinnedFingerprint || null;
+    if (cloudReset) {
+      stub.pendingTrust = null;
+      stub.pendingSelection = null;
+      dropSession();
+    }
     if (urlChanged) {
       stub.storedSiteId = '';
       stub.pendingTrust = null;
@@ -932,9 +1045,11 @@ const handlers = {
       pinnedFingerprint,
       ...management.management,
       canPersistClientSecret: current.canPersistClientSecret,
+      cloudAccess: cloud.cloud,
     };
     const managementAccess = { ...management.management, canPersistClientSecret: current.canPersistClientSecret };
-    return urlChanged ? { success: true, connectionReset: true, managementAccess } : { success: true, managementAccess };
+    const cloudAccess = structuredClone(cloud.cloud);
+    return urlChanged || cloudReset ? { success: true, connectionReset: true, managementAccess, cloudAccess } : { success: true, managementAccess, cloudAccess };
   }, // End of the CONFIG_SAVE handler
 
   /**
@@ -1593,9 +1708,12 @@ const handlers = {
 // what /api/info would report; I-1c lists it once, as local), one offline,
 // one below 6.3 and one connectable. Knobs (stub.configure()): `cloudResult`
 // — returned verbatim by both channels (e.g. { success: false, error:
-// 'credentialInvalid', diagnostic: 'credentialInvalid, errorCode -52602' });
-// `cloudControllers` — replaces the DTO list. Nothing here sends a request
-// (D4: no tplinkcloud.com host is ever contacted).
+// 'credentialInvalid', diagnostic: 'credentialInvalid, errorCode -52602' },
+// or { success: false, error: 'notConfigured' } for main's answer without a
+// saved credential: the fakes do not read the config's cloudAccess flags);
+// `cloudControllers` — replaces the DTO list. A per-channel delay
+// (`delays`) plays a slow cloud. Nothing here sends a request (D4: no
+// tplinkcloud.com host is ever contacted).
 
 // The local controller's omadacId in the cloud fixtures
 const CLOUD_STUB_LOCAL_OMADAC_ID = 'c0ffee00c0ffee00c0ffee00c0ffee00';

@@ -1670,6 +1670,46 @@ body.platform-darwin .title-bar {
   border-left-color: var(--accent-color);
 }
 
+/* "Test cloud access" (cloud-settings.ts): the summary line, the list of the
+   account's controllers (name, version, and its status: available or why it
+   cannot be used) and the incomplete-list note, inside the result box */
+.cloud-test-summary,
+.cloud-test-note {
+  margin: 0;
+}
+
+.cloud-test-note {
+  margin-top: 6px;
+}
+
+.cloud-test-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.cloud-test-list li {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border-color);
+  overflow-wrap: anywhere;
+}
+
+.cloud-controller-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.cloud-controller-version {
+  color: var(--text-secondary);
+}
+
+.cloud-controller-status {
+  flex-basis: 100%;
+}
+
 /* Settings: the dialog's description (its aria-describedby, §4.7) */
 .settings-modal-message {
   font-size: 13px;

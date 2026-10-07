@@ -3,7 +3,17 @@
 // modules read and write `state.<field>` instead of reassigning their own
 // `let`s. Nothing else in src/renderer declares module-level mutable state.
 
-import type { AccessPoint, ApGroupSsidLimits, GroupModel, Language, ManagedApGroup, ManagedNetwork, ManagementCapabilities, WlanGroup } from '../shared/types';
+import type {
+  AccessPoint,
+  ApGroupSsidLimits,
+  CloudRegion,
+  GroupModel,
+  Language,
+  ManagedApGroup,
+  ManagedNetwork,
+  ManagementCapabilities,
+  WlanGroup,
+} from '../shared/types';
 import { GROUP_FILTER_ALL, STATUS_FILTER_ALL } from './ap-selection';
 import { apDetailsContent, apList, destinationList, groupDetail, groupList, networkDetail, networkList, refreshBtn } from './elements';
 import type { GroupFailure, ManagedGroupsStatus } from './group-management';
@@ -211,6 +221,25 @@ export interface RendererState {
   settingsCanPersistClientSecret: boolean;
   settingsRemoveManagement: boolean;
 
+  // TP-Link cloud access as main reported it when the settings modal opened
+  // (never the cloud Client Secret itself): the region, the stored cloud
+  // Client ID, whether a usable secret exists, whether it is held for this
+  // session only, and whether a newly typed one can be stored encrypted.
+  // `settingsRemoveCloud` is true once the user confirmed "Remove cloud
+  // access" (applied by Save)
+  settingsCloudRegion: CloudRegion;
+  settingsCloudClientId: string;
+  settingsHasCloudSecret: boolean;
+  settingsCloudSecretSessionOnly: boolean;
+  settingsCanPersistCloudSecret: boolean;
+  settingsRemoveCloud: boolean;
+  // True while a "Test cloud access" run waits for main (not an exclusive
+  // operation: it only reads the account), and the number of the latest run.
+  // The number is also bumped when Settings opens or closes and when a
+  // removal is staged, so a late reply never paints a stale result
+  isTestingCloud: boolean;
+  cloudTestRun: number;
+
   // The element that opened the settings modal (focus returns there on close)
   settingsOpener: HTMLElement | null;
   // True from the moment openSettings() starts until the modal is visible (or
@@ -283,6 +312,14 @@ export const state: RendererState = {
   settingsClientSecretSessionOnly: false,
   settingsCanPersistClientSecret: true,
   settingsRemoveManagement: false,
+  settingsCloudRegion: 'euw',
+  settingsCloudClientId: '',
+  settingsHasCloudSecret: false,
+  settingsCloudSecretSessionOnly: false,
+  settingsCanPersistCloudSecret: true,
+  settingsRemoveCloud: false,
+  isTestingCloud: false,
+  cloudTestRun: 0,
   settingsOpener: null,
   isSettingsOpening: false,
 };

@@ -157,6 +157,28 @@ export const confirmManagementRemoveBtn = document.getElementById('confirmManage
 export const testManagementBtn = document.getElementById('testManagementBtn') as HTMLButtonElement;
 export const managementTestResult = document.getElementById('managementTestResult') as HTMLElement;
 
+// Settings: optional TP-Link cloud access (Region, cloud Client ID / Client
+// Secret, Remove, "Test cloud access" and its result; cloud-settings.ts)
+export const cloudHeading = document.getElementById('cloudHeading') as HTMLElement;
+export const cloudHelp = document.getElementById('cloudHelp') as HTMLElement;
+export const cloudCredentialHelp = document.getElementById('cloudCredentialHelp') as HTMLElement;
+export const labelCloudRegion = document.getElementById('labelCloudRegion') as HTMLElement;
+export const cloudRegionSelect = document.getElementById('cloudRegionSelect') as HTMLSelectElement;
+export const labelCloudClientId = document.getElementById('labelCloudClientId') as HTMLElement;
+export const cloudClientIdInput = document.getElementById('cloudClientIdInput') as HTMLInputElement;
+export const labelCloudClientSecret = document.getElementById('labelCloudClientSecret') as HTMLElement;
+export const cloudClientSecretInput = document.getElementById('cloudClientSecretInput') as HTMLInputElement;
+export const cloudSessionNote = document.getElementById('cloudSessionNote') as HTMLElement;
+export const cloudRemovalNote = document.getElementById('cloudRemovalNote') as HTMLElement;
+export const removeCloudBtn = document.getElementById('removeCloudBtn') as HTMLButtonElement;
+export const undoCloudRemovalBtn = document.getElementById('undoCloudRemovalBtn') as HTMLButtonElement;
+export const cloudRemoveConfirm = document.getElementById('cloudRemoveConfirm') as HTMLElement;
+export const cloudRemoveMessage = document.getElementById('cloudRemoveMessage') as HTMLElement;
+export const cancelCloudRemoveBtn = document.getElementById('cancelCloudRemoveBtn') as HTMLButtonElement;
+export const confirmCloudRemoveBtn = document.getElementById('confirmCloudRemoveBtn') as HTMLButtonElement;
+export const testCloudBtn = document.getElementById('testCloudBtn') as HTMLButtonElement;
+export const cloudTestResult = document.getElementById('cloudTestResult') as HTMLElement;
+
 // Move dialog (review, progress, per-AP results)
 export const moveModal = document.getElementById('moveModal') as HTMLElement;
 export const moveModalTitle = document.getElementById('moveModalHeading') as HTMLElement;

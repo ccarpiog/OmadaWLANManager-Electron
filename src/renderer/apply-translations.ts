@@ -64,6 +64,7 @@ import {
   undoManagementRemovalBtn,
 } from './elements';
 import { renderApFilterOptions, renderApList } from './ap-list';
+import { applyCloudTranslations } from './cloud-settings';
 import { renderDestinationList } from './destination-pane';
 import { t } from './i18n';
 import { moveActionLabel } from './move-text';
@@ -146,6 +147,9 @@ export function applyTranslations() {
   cancelManagementRemoveBtn.textContent = t('cancel');
   confirmManagementRemoveBtn.textContent = t('managementRemoveAction');
   testManagementBtn.textContent = t('managementTest');
+  // TP-Link cloud section (the secret placeholder and the test's result are
+  // written per open / per run, see cloud-settings.ts)
+  applyCloudTranslations();
 
   // Move dialog: review defaults (move-dialog.ts rewrites the title and the
   // move button's label for each phase and plan)

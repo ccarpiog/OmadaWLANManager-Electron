@@ -1,0 +1,18 @@
+# Review brief — phase I-1c1 (Settings "TP-Link cloud (optional)" section)
+
+- **Repo:** `/Users/ccarpio/Dropbox/AA_Trabajo/InformáticaHispanoInglés/Nuevo/Development/Varios/omada-electron` (Electron 44 + TypeScript, esbuild renderer). Review the **uncommitted** working tree against `HEAD`.
+- **Phase goal:** the renderer's Settings section for the optional TP-Link cloud credential (Account Level Open API), over main-side channels that already exist since I-1a (`config:save` cloud fields + `removeCloudAccess: true`, guarded `cloud:test`). Region, Client ID, Client Secret (never echoed back), a note on where the credential is created, **Test cloud access** (saved credential only; unsaved edits → "save first"; controllers listed with why each cannot be used; specific texts for `-7132` rate limit and `-52602` expired / deleted credential; unknown codes as code + message; late / superseded replies never painted), **Remove cloud access** (inline confirmation, staged until Save like "Remove management access"), es + en strings for the I-1a save codes (`invalidCloudClientId`, `cloudClientIdRequired`, `cloudClientSecretRequired`). The smoke stub's config load now reports the cloud flags. No main-process change; no controller switcher (that is I-1c2).
+- **Spec:** `autoclaude/processed/10-tplink-cloud-controllers.md` ("UI", "Security"); plan `todo.md` §5 "I-1c" split + "Done (I-1c1)"; contract `docs/omada-cloud-openapi.md` §12–§13.
+- **Changed files:** new `src/renderer/cloud-form.ts`, `src/renderer/cloud-settings.ts`, `tests/unit/renderer-cloud-form.test.ts`; modified `src/renderer/{index.html,styles.css,elements.ts,state.ts,i18n-strings.ts,settings-modal.ts,apply-translations.ts,renderer.ts,keyboard.ts}`, `tests/smoke/stub-main.cjs`, `tests/smoke/run-smoke.mjs`, `tests/fixtures/smoke/ui-strings.json`, `docs/security-audit.md`, `todo.md`.
+- **Not phase work — ignore:** `tests/smoke/window-placement.cjs` (untracked), the hunks in `tests/smoke/stub-main.cjs` that load it, and all of `tests/tls-probe/app-main.cjs` are the user's own uncommitted edits. `PROGRESS.md` / `PROGRESS.json` are workflow records.
+- **Verification run (orchestrator, all exit 0):** `npm run build`; `npm test` 1280/1280 (was 1248); `ELECTRON_PATH=… npm run smoke` 290/290 (was 273, new `[cloudset]` launch es + en); worker also ran `npm run tls-probe` 29/29; `fd -H "conflicted copy"` empty.
+- **Risks to probe:**
+  1. Secret handling: can the Client Secret (or the stored blob) reach the DOM, a log, a toast, a test fixture output, or be re-sent unchanged on save? Does an empty secret field on save keep the stored one exactly as the management secret does?
+  2. Stale / late replies: the run-number guard on Test cloud access across Settings close / reopen, a save in between, a staged removal, and main's `superseded`.
+  3. Dirty detection: "save first" must trigger for any unsaved cloud edit (region, id, secret, staged removal) and not for unrelated edits; can a test run on a credential that differs from the saved one?
+  4. Remove cloud access: staged removal + Save sends `removeCloudAccess: true` and nothing contradictory (e.g. a new secret at the same time); Cancel restores state.
+  5. Error-code → text mapping and the organization reason codes match the DTO in `src/main/cloud-account-model.ts`; es / en parity in `i18n-strings.ts`; no untranslated key reachable.
+  6. Regressions in the existing Settings flows (management access, certificate reset, URL change) and keyboard handling (`keyboard.ts`).
+  7. Smoke stub: behavior matches main's real `config:save` / config-load semantics closely enough that smoke passes mean something.
+- **Review file:** `docs/reviews/phaseI-1c1.md`.
+- **Time budget:** 15 minutes.
