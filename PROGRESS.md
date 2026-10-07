@@ -33,6 +33,9 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 19a | 4.12 (first half) Open API SSID ↔ AP-group binding write (`PATCH …/ssids/{ssidId}/ap-groups`), pure binding plan + per-band capacity validation on fresh data, never for "All access points", guarded IPC, smoke stub — risk: high | pending |
 | 19b | 4.12 (second half) "Broadcast on" editor UI: searchable group checkboxes, before / after reach diff, capacity problems per group + band, confirmation, smoke es + en — risk: high | pending |
 | 20 | 4.13 Integration, hardening, docs, `docs/live-test-checklist.md` — risk: routine | pending |
+| I-1a | Inbox I-1 (spec `autoclaude/processed/10-tplink-cloud-controllers.md`, part A): cloud config fields, `CloudAccountClient`, `OpenApiClient` cloud route, redactor additions, guarded IPC `cloud:test` / `cloud:controllers`, smoke-stub channels, `docs/omada-cloud-openapi.md` — risk: high; position: after phase 20 | pending |
+| I-1b | Inbox I-1 part B: Open-API-only `ControllerSession` + `ConnectionManager` local / cloud targets, Open API moves verified by re-read, race tests — risk: high; position: after I-1a | pending |
+| I-1c | Inbox I-1 part C: Settings cloud section, controller switcher, state reset, cloud error states, "Connect through TP-Link cloud", smoke `[cloud]` es + en, README + checklist cloud section — risk: high; position: after I-1b | pending |
 
 **Phases 8–20 invariants (user decision D4, 2026-10-06):** no phase may contact the real controller (`192.168.1.130`) or read/write the real `~/.omada-wlan-manager/` config. Verification is `npm run build` + (from phase 9) `npm test` + `npm run smoke` against a stubbed main process with `HOME` pointed at a temp dir. Behaviors that need a live controller follow the defensive defaults in `docs/management-design.md` §5; the user runs `docs/live-test-checklist.md` manually after phase 20.
 
@@ -49,7 +52,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 - **User-facing text:** the app is bilingual (es/en via the i18n table in `renderer.ts`); every new user-facing string must be added to BOTH languages. Code comments/docs in English.
 - **todo.md upkeep:** each phase worker marks its completed items in `todo.md` (✅ + one line describing how).
 - **Management plan (2026-10-06, user decisions D1–D4 — full text in `docs/management-design.md` §1):** D1 hybrid architecture — internal username/password API stays for viewing and **all AP moves**; an optional Open API Client ID/Secret unlocks AP-group and Wi-Fi network management. D2 groundwork first (phases 8–11). D3 Wi-Fi network editing for Open + WPA-Personal only; Enterprise/PPSK view/enable/bind/delete only. D4 no live-controller tests in autoclaude runs. Defaults: controllers < 6.3 are assignment-only; "All devices" SSID bindings read-only; only empty, unbound, non-default AP groups can be deleted; Client Secret never stored in plaintext.
-- **Multi-controller dropped (2026-10-06):** the user's two OC200 controllers are not on their network, and TP-Link's cloud Open API does not reach local controllers (probe: "Controller ID not exist."). The app stays single-controller. Details: `docs/management-design.md` §7.
+- **Multi-controller dropped (2026-10-06):** the user's two OC200 controllers are not on their network, and TP-Link's cloud Open API does not reach local controllers (probe: "Controller ID not exist."). The app stays single-controller. Details: `docs/management-design.md` §7. **Revised 2026-10-07 by user decisions D5–D7** (inbox item I-1): the Account Level Open API (beta) tunnels to on-prem controllers, so after phase 20 a TP-Link cloud account adds remote controllers beside the direct local one (one switcher); D4 extends to no `tplinkcloud.com` request from tests, smoke or probes. Phases 8–20 stay single-controller.
 - **UI direction (2026-10-06):** sidebar with Access points (landing) / AP groups / Wi-Fi networks; the Wi-Fi networks view is the only place to edit SSID ↔ AP-group bindings; no "remove AP from group" (always "move to"). Spec §4 of `docs/management-design.md`.
 
 ## Environment
@@ -133,7 +136,11 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 - Acceptance met: build exit 0; `npm test` 903/903; smoke 219/219 (8th launch `[netedit]`, es + en: every action, cancel paths with nothing in `networkWrites`, refused writes with main's reason, Enterprise / PPSK not editable, hidden while management is off or re-checking, no sentinel passphrase in the DOM or any input after any dialog, stale data blocking writes, real `dblclick`); `npm run tls-probe` 25/25; no `innerHTML`; preload `electron`-only; no conflicted copies.
 - Review: Codex, `docs/reviews/phase18b.md`, ship-with-fixes. Blocker (writes, incl. Delete with its impact summary, could act on a known-stale snapshot) → `networkWriteBlock()` + `sameManagedNetwork()` + fresh re-read before Enable / Disable / Delete confirmations; should-fix (double-click on "Review changes" could save unreviewed) → multi-click and held-Enter guard. Fixed by an opus worker, every new test verified to fail on revert; orchestrator re-ran build, tests, smoke and probe, all green.
 
-## Plan status: ACTIVE — phases 8–18b done, phases 19a–20 pending
+## Inbox
+
+- 2026-10-07 10:09: triaged `10-tplink-cloud-controllers.md` → **queued** as I-1 (split I-1a / I-1b / I-1c per the item's own suggestion), after phase 20. The user's decisions D5–D7 in it match the session memory of 2026-10-07; the TP-Link portal's Open API page is not yet enabled for the account, so I-1 builds against the documented contract and fixtures only.
+
+## Plan status: ACTIVE — phases 8–18b done, phases 19a–20 pending, then inbox phases I-1a–I-1c
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
