@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T15:11:39Z",
+ "updated": "2026-10-07T15:12:56Z",
  "plan": "todo.md",
  "goal": "Add AP-group and Wi-Fi network management for Omada 6.3 to the Electron app, then remote controllers through the TP-Link cloud.",
  "phases": [
