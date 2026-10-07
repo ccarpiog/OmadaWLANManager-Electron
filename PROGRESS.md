@@ -266,4 +266,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 17a: `619d18f` ("Read Wi-Fi networks through the Open API with secrets stripped behind guarded IPC"), pushed to origin/main (`dbf07af..619d18f`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 17b: `9f52776` ("Show the managed Wi-Fi network list when management is on"), pushed to origin/main (`7b1e177..9f52776`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 18a: `985f6e2` ("Add Wi-Fi network create, edit, enable and delete behind guarded IPC"), pushed to origin/main (`fec4a4f..985f6e2`). A follow-up commit records this SHA. Tree clean after it.
-- Phase 18b: committed as "Add Wi-Fi network create, edit, password, enable and delete to the networks view" (SHA and push result recorded by the follow-up commit).
+- Phase 18b: `ecd9d3d` ("Add Wi-Fi network create, edit, password, enable and delete to the networks view"), pushed to origin/main (`a5c3e02..ecd9d3d`). A follow-up commit records this SHA. Tree clean after it.
