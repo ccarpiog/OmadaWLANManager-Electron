@@ -284,7 +284,8 @@
    "risk": "high",
    "summary": "Puts every IPC channel behind one sender-checked registrar, redacts errors and logs, fixes race and focus gaps and adds an accessibility smoke.",
    "review": "docs/reviews/phase20a.md",
-   "narrative": "docs/progress-archive/phase-20a.md"
+   "narrative": "docs/progress-archive/phase-20a.md",
+   "commit": "d92ed36"
   },
   {
    "id": "20b",
