@@ -18,12 +18,15 @@ import {
   OpenApiError,
   openApiPath,
   TOKEN_PATH,
+  validateApGroupLimits,
+  validateCreatedApGroup,
   validateOpenApiApGroup,
   validateOpenApiPage,
   validateOpenApiSite,
   validateTokenResult,
   type OpenApiErrorCode
 } from '../../src/main/openapi-client';
+import apGroupWriteFixtures from '../fixtures/openapi/ap-group-writes.json';
 import apGroupFixtures from '../fixtures/openapi/ap-groups.json';
 import siteFixtures from '../fixtures/openapi/sites.json';
 import tokenFixtures from '../fixtures/openapi/token.json';
@@ -704,3 +707,153 @@ describe('OpenApiClient.close() drops every token reference and ends operations 
     } // End of the loop over the race cases
   }); // End of test "a request racing with close() ends as clientClosed..."
 }); // End of describe 'OpenApiClient.close() drops every token reference...'
+
+/**
+ * Fills the placeholders of a fixture path with this file's ids.
+ * @param {string} template - e.g. '/openapi/v1/{omadacId}/sites/{siteId}/ap-groups'.
+ * @returns {string} The concrete path.
+ */
+function fixturePath(template: string): string {
+  return template
+    .replace('{omadacId}', OMADAC_ID)
+    .replace('{siteId}', apGroupWriteFixtures.siteId)
+    .replace('{apGroupId}', apGroupWriteFixtures.apGroupId);
+}
+
+/**
+ * Asserts the contract of one recorded AP-group write: method, versioned
+ * path (no query), the access-token header, and the exact JSON body (none
+ * for DELETE, with no Content-Type then).
+ * @param {RecordedRequest} request - The recorded request.
+ * @param {{ method: string; path: string; body?: unknown }} expected - The fixture contract.
+ */
+function assertWriteContract(request: RecordedRequest, expected: { method: string; path: string; body?: unknown }): void {
+  assert.equal(request.method, expected.method);
+  assert.equal(request.path, fixturePath(expected.path));
+  assert.ok(request.path.startsWith(`/openapi/v1/${OMADAC_ID}/`), 'explicit v1 path');
+  assert.equal(request.headers.Authorization, 'AccessToken=AT-1');
+  assert.equal(request.headers.Accept, 'application/json');
+  if (expected.body === undefined) {
+    assert.equal(request.body, undefined, 'no body');
+    assert.equal(request.headers['Content-Type'], undefined);
+  } else {
+    assert.deepEqual(request.body, expected.body, 'exactly the documented body');
+    assert.deepEqual(Object.keys(request.body as object), Object.keys(expected.body as object), 'no extra keys');
+    assert.equal(request.headers['Content-Type'], 'application/json');
+  }
+} // End of function assertWriteContract()
+
+describe('OpenApiClient: AP-group write contract (fixtures: tests/fixtures/openapi/ap-group-writes.json)', () => {
+  const { siteId, apGroupId } = apGroupWriteFixtures;
+  const create = apGroupWriteFixtures.create;
+  const rename = apGroupWriteFixtures.rename;
+  const remove = apGroupWriteFixtures.delete;
+
+  test('createApGroup(): POST /openapi/v1/{omadacId}/sites/{siteId}/ap-groups with exactly {name} and the AccessToken header; returns result.id', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('POST', fixturePath(create.path), { body: create.success });
+    assert.equal(await client.createApGroup(siteId, create.name), create.expectedId);
+    assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `POST ${fixturePath(create.path)}`]);
+    assertWriteContract(transport.requests[1], create);
+  });
+
+  test('createApGroup(): an answer without a usable id resolves null (never a guessed id)', async () => {
+    for (const answer of create.successWithoutUsableId) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('POST', fixturePath(create.path), { body: answer });
+      assert.equal(await client.createApGroup(siteId, create.name), null, JSON.stringify(answer));
+    }
+  });
+
+  test('renameApGroup(): PATCH …/ap-groups/{apGroupId} with exactly {name} (no AP lists); errorCode 0 is the confirmation', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('PATCH', fixturePath(rename.path), { body: rename.success });
+    assert.equal(await client.renameApGroup(siteId, apGroupId, rename.name), undefined);
+    assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `PATCH ${fixturePath(rename.path)}`]);
+    assertWriteContract(transport.requests[1], rename);
+  });
+
+  test('deleteApGroup(): DELETE …/ap-groups/{apGroupId} with no body and no Content-Type', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('DELETE', fixturePath(remove.path), { body: remove.success });
+    assert.equal(await client.deleteApGroup(siteId, apGroupId), undefined);
+    assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `DELETE ${fixturePath(remove.path)}`]);
+    assertWriteContract(transport.requests[1], { method: remove.method, path: remove.path });
+  });
+
+  test('the documented errorCodes of each write surface as apiError carrying the code (message scrubbed, never the body); HTTP 500 is httpError', async () => {
+    const calls: Array<[string, string, (client: OpenApiClient) => Promise<unknown>, Array<{ errorCode: number; msg: string }>]> = [
+      ['POST', create.path, (client) => client.createApGroup(siteId, create.name), create.errors],
+      ['PATCH', rename.path, (client) => client.renameApGroup(siteId, apGroupId, rename.name), rename.errors],
+      ['DELETE', remove.path, (client) => client.deleteApGroup(siteId, apGroupId), remove.errors]
+    ];
+    for (const [method, path, call, errors] of calls) {
+      for (const answer of errors) {
+        const { client, transport } = setup();
+        transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on(method, fixturePath(path), { body: answer });
+        const error = await expectOpenApiError(call(client), 'apiError');
+        assert.equal(error.controllerErrorCode, answer.errorCode);
+        assert.equal(transport.requestsTo(method, fixturePath(path)).length, 1, 'no retry of a refused write');
+      }
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on(method, fixturePath(path), { status: 500, body: '<html>oops</html>' });
+      const error = await expectOpenApiError(call(client), 'httpError');
+      assert.equal(error.httpStatus, 500);
+      assert.ok(!error.message.includes('oops'));
+    } // End of the loop over the three writes
+  }); // End of test "the documented errorCodes of each write..."
+
+  test('a rejected token on a write re-acquires once and resends the write once; a second rejection is tokenRejected (no loop)', async () => {
+    const { client, transport } = setup();
+    let token = 0;
+    transport
+      .on('POST', TOKEN_PATH, () => tokenReply(`AT-${++token}`))
+      .on('DELETE', fixturePath(remove.path), [EXPIRED, { body: remove.success }]);
+    await client.deleteApGroup(siteId, apGroupId);
+    assert.deepEqual(authorizationsTo(transport, `/openapi/v1/${OMADAC_ID}/sites`), ['AccessToken=AT-1', 'AccessToken=AT-2']);
+    const again = setup();
+    again.transport.on('POST', TOKEN_PATH, () => tokenReply(`AT-${++token}`)).on('POST', fixturePath(create.path), [EXPIRED, EXPIRED]);
+    await expectOpenApiError(again.client.createApGroup(siteId, create.name), 'tokenRejected');
+    assert.equal(again.transport.requestsTo('POST', fixturePath(create.path)).length, 2);
+  }); // End of test "a rejected token on a write re-acquires once..."
+
+  test('unusable arguments are refused before anything is sent (site / group ids, blank, untrimmed or over-long names)', async () => {
+    const { client, transport } = setup();
+    await assert.rejects(client.createApGroup('', create.name), /Invalid AP group create arguments/);
+    for (const name of ['', '  ', ' padded', 'x'.repeat(129)]) {
+      await assert.rejects(client.createApGroup(siteId, name), /Invalid AP group create arguments/);
+      await assert.rejects(client.renameApGroup(siteId, apGroupId, name), /Invalid AP group rename arguments/);
+    }
+    await assert.rejects(client.renameApGroup(siteId, '', rename.name), /Invalid AP group rename arguments/);
+    await assert.rejects(client.deleteApGroup(siteId, '..'.repeat(100)), /Invalid AP group delete arguments/);
+    await assert.rejects(client.deleteApGroup('', apGroupId), /Invalid AP group delete arguments/);
+    assert.deepEqual(transport.requests, []);
+  }); // End of test "unusable arguments are refused before anything..."
+
+  test('a write on a closed client fails as clientClosed without sending', async () => {
+    const { client, transport } = setup();
+    client.close();
+    await expectOpenApiError(client.deleteApGroup(siteId, apGroupId), 'clientClosed');
+    await expectOpenApiError(client.createApGroup(siteId, create.name), 'clientClosed');
+    assert.deepEqual(transport.requests, []);
+  });
+
+  test('listApGroups() also reports the first page\'s SSID limits (maxSsids2G/5G/6G/Mlo), insane or absent ones left out', async () => {
+    for (const fixture of [apGroupWriteFixtures.limits.valid, apGroupWriteFixtures.limits.insane, apGroupWriteFixtures.limits.absent]) {
+      assert.deepEqual(validateApGroupLimits(fixture.result), fixture.expected);
+    }
+    assert.deepEqual(validateApGroupLimits(null), {});
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', `${SITES}/site-a/ap-groups?page=1&pageSize=100`, ok(apGroupFixtures.page));
+    const list = await client.listApGroups('site-a');
+    assert.deepEqual(list.limits, { band2g: 8, band5g: 8, band6g: 8, mlo: 4 });
+    assert.equal(list.truncated, false);
+  });
+
+  test('validateCreatedApGroup(): result.id when usable, else null', () => {
+    assert.equal(validateCreatedApGroup(create.success.result), create.expectedId);
+    for (const answer of create.successWithoutUsableId) {
+      assert.equal(validateCreatedApGroup((answer as { result?: unknown }).result), null);
+    }
+  });
+}); // End of the describe block for the AP-group write contract

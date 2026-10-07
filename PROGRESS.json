@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T03:05:56Z",
+ "updated": "2026-10-07T03:41:25Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -165,9 +165,25 @@
   {
    "id": "16",
    "title": "AP group management",
+   "status": "in_progress",
+   "risk": "high",
+   "summary": "Split into 16a (main-side AP-group operations, IPC, contract tests) and 16b (AP groups view actions, capacity display, smoke)."
+  },
+  {
+   "id": "16a",
+   "title": "AP group operations and IPC",
+   "status": "done",
+   "risk": "high",
+   "summary": "Adds Open API create, rename and delete for AP groups, main-side policy on fresh data, guarded IPC channels and a capacity read path.",
+   "review": "docs/reviews/phase16a.md",
+   "narrative": "docs/progress-archive/phase-16a.md"
+  },
+  {
+   "id": "16b",
+   "title": "AP group management UI",
    "status": "queued",
    "risk": "high",
-   "summary": "Lets the user create, rename and delete empty AP groups and move APs into them."
+   "summary": "Adds create, rename and delete actions, per-band capacity and Move access points here to the AP groups view."
   },
   {
    "id": "17",

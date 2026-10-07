@@ -172,8 +172,9 @@ const AP = Object.fromEntries(data.accessPoints.map((ap) => [ap.name, ap]));
 const GROUP = Object.fromEntries(data.wlanGroups.map((group) => [group.wlanName, group]));
 const LEGACY_GROUP = Object.fromEntries(data.legacyWlanGroups.map((group) => [group.wlanName, group]));
 const EXPECTED_BRIDGE = [
-  'connect', 'disconnect', 'getAccessPoints', 'getManagementCapabilities', 'getWlanGroups', 'loadConfig', 'platform', 'resetCertificate',
-  'saveConfig', 'selectSite', 'setApWlanGroup', 'testManagementAccess', 'trustCertificate',
+  'connect', 'createApGroup', 'deleteApGroup', 'disconnect', 'getAccessPoints', 'getManagedApGroups', 'getManagementCapabilities',
+  'getWlanGroups', 'loadConfig', 'platform', 'renameApGroup', 'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup',
+  'testManagementAccess', 'trustCertificate',
 ];
 // One launch per run*() function in main()
 const EXPECTED_LAUNCHES = 5;
@@ -266,7 +267,10 @@ function fail(message) {
  * Ensures the build output the stub loads exists.
  */
 function assertBuilt() {
-  const required = ['dist/main/preload.js', 'dist/main/url.js', 'dist/main/controller-version.js', 'dist/shared/types.js', 'dist/renderer/index.html', 'dist/renderer/renderer.js'];
+  const required = [
+    'dist/main/preload.js', 'dist/main/url.js', 'dist/main/controller-version.js', 'dist/main/ap-group-policy.js', 'dist/main/ipc-guards.js',
+    'dist/shared/types.js', 'dist/renderer/index.html', 'dist/renderer/renderer.js',
+  ];
   const missing = required.filter((file) => !existsSync(path.join(projectRoot, file)));
   if (missing.length > 0) {
     fail(`missing build output (${missing.join(', ')}). Run \`npm run build\` first (\`npm run smoke\` does it for you).`);
@@ -4907,11 +4911,118 @@ async function runManagementCapabilities(electronInfo) {
         await waitForSettingsClosed(page);
       }
     }); // End of check "[caps] en: unsaved changes and a replaced session..."
+
+    await check('[caps] AP-group management bridge (phase 16a, no UI yet): the four new preload methods reach their channels with the session nonce, and the stub answers with the real guards, DTO and codes — list with per-band capacity; create (trimmed) → nameTaken (case-insensitive) / nameRequired; rename → nameUnchanged; delete refused for the default group, a group with APs, and the new group while fresh data shows APs, networks or no AP count, then deleted; management off, a stale nonce and malformed payloads refused', async () => {
+      return apGroupBridgeVerdict(session);
+    });
   } finally {
     session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
     await session.app.close().catch(() => {});
   }
 } // End of function runManagementCapabilities()
+
+/**
+ * Calls one window.omadaAPI method from the renderer and reports its value
+ * or the rejection message (never throws).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} method - The bridge method.
+ * @param {unknown} arg - Its single argument.
+ * @returns {Promise<{ value?: unknown; rejected?: string }>} The outcome.
+ */
+function callBridge(page, method, arg) {
+  return page.evaluate(async ({ name, argument }) => {
+    try {
+      return { value: await window.omadaAPI[name](argument) };
+    } catch (error) {
+      return { rejected: String(error && error.message ? error.message : error) };
+    }
+  }, { name: method, argument: arg });
+}
+
+/**
+ * The phase 16a AP-group bridge check of the [caps] launch: drives the four
+ * new preload methods against the stub (no UI involved) and restores the
+ * stub's groups afterwards (the created group is deleted again).
+ * @param {object} session - The launch.
+ * @returns {Promise<{ ok: boolean; detail: unknown }>} The verdict.
+ */
+async function apGroupBridgeVerdict(session) {
+  const { page } = session;
+  const before = await stubState(session);
+  const nonce = before.sessionNonce;
+  const groupsBefore = before.scenario.wlanGroups;
+  const defaultGroup = groupsBefore.find((group) => group.isDefault === true);
+  const busyGroup = groupsBefore.find((group) => group.isDefault !== true && before.scenario.accessPoints.some((ap) => ap.wlanGroup === group.wlanName));
+  const outcome = {};
+  try {
+    outcome.list = await callBridge(page, 'getManagedApGroups', nonce);
+    outcome.created = await callBridge(page, 'createApGroup', { sessionNonce: nonce, name: '  Grupo de prueba  ' });
+    const id = outcome.created.value && outcome.created.value.apGroupId;
+    outcome.duplicate = await callBridge(page, 'createApGroup', { sessionNonce: nonce, name: 'GRUPO DE PRUEBA' });
+    outcome.blank = await callBridge(page, 'createApGroup', { sessionNonce: nonce, name: '   ' });
+    outcome.renamed = await callBridge(page, 'renameApGroup', { sessionNonce: nonce, apGroupId: id, name: 'Grupo renombrado' });
+    outcome.unchanged = await callBridge(page, 'renameApGroup', { sessionNonce: nonce, apGroupId: id, name: ' Grupo renombrado ' });
+    outcome.deleteDefault = await callBridge(page, 'deleteApGroup', { sessionNonce: nonce, apGroupId: defaultGroup.wlanId });
+    outcome.deleteBusy = await callBridge(page, 'deleteApGroup', { sessionNonce: nonce, apGroupId: busyGroup.wlanId });
+    // Fresh data the renderer has not seen: APs, networks, no AP count, a
+    // network list with a non-string entry (unknown, never "no networks")
+    const freshCases = [
+      ['freshAps', { apNum: 2 }],
+      ['freshNetworks', { ssidNameList: ['Casa'] }],
+      ['freshUnknown', { apNum: null }],
+      ['freshBadNetworks', { ssidNameList: [null] }],
+    ];
+    for (const [key, fields] of freshCases) {
+      await configureStub(session, { apGroupOverrides: { [id]: fields } });
+      outcome[key] = await callBridge(page, 'deleteApGroup', { sessionNonce: nonce, apGroupId: id });
+    }
+    await configureStub(session, { apGroupOverrides: {}, managementReason: 'apGroupsMismatch' });
+    outcome.off = await callBridge(page, 'deleteApGroup', { sessionNonce: nonce, apGroupId: id });
+    await configureStub(session, { managementReason: null });
+    outcome.stale = await callBridge(page, 'getManagedApGroups', 'f'.repeat(32));
+    outcome.extraKey = await callBridge(page, 'deleteApGroup', { sessionNonce: nonce, apGroupId: id, force: true });
+    outcome.badId = await callBridge(page, 'deleteApGroup', { sessionNonce: nonce, apGroupId: 'Corrupto' });
+    outcome.badNonce = await callBridge(page, 'createApGroup', { sessionNonce: 'ABC', name: 'x' });
+    outcome.deleted = await callBridge(page, 'deleteApGroup', { sessionNonce: nonce, apGroupId: id });
+  } finally {
+    await configureStub(session, { apGroupOverrides: {}, managementReason: null });
+  }
+  const after = await stubState(session);
+  const id = outcome.created.value && outcome.created.value.apGroupId;
+  const list = outcome.list.value || {};
+  const groups = list.groups || [];
+  const empty = groups.find((group) => group.name === 'Exterior');
+  /**
+   * The error code of one recorded bridge outcome.
+   * @param {string} key - The outcome's key.
+   * @returns {string | undefined} The reply's `error`.
+   */
+  const code = (key) => outcome[key].value && outcome[key].value.error;
+  const ok =
+    list.success === true && groups.length === groupsBefore.length &&
+    isDeepStrictEqual(groups.map((group) => group.id).sort(), groupsBefore.map((group) => group.wlanId).sort()) &&
+    groups.filter((group) => group.isDefault).map((group) => group.id).join() === defaultGroup.wlanId &&
+    isDeepStrictEqual(empty, { id: empty && empty.id, name: 'Exterior', isDefault: false, apCount: 0, networkNames: [], remainingBinding: { band2g: 8, band5g: 8, band6g: 8 } }) &&
+    isDeepStrictEqual(list.ssidLimits, { band2g: 8, band5g: 8, band6g: 8, mlo: 4 }) &&
+    outcome.created.value && outcome.created.value.success === true && /^[0-9a-f]{24}$/.test(id) &&
+    code('duplicate') === 'nameTaken' && code('blank') === 'nameRequired' &&
+    outcome.renamed.value && outcome.renamed.value.success === true && code('unchanged') === 'nameUnchanged' &&
+    code('deleteDefault') === 'groupIsDefault' && code('deleteBusy') === 'groupNotEmpty' &&
+    code('freshAps') === 'groupNotEmpty' && code('freshNetworks') === 'groupHasNetworks' && code('freshUnknown') === 'groupStateUnknown' &&
+    code('freshBadNetworks') === 'groupStateUnknown' &&
+    code('off') === 'managementUnavailable' && code('stale') === 'superseded' &&
+    /invalid AP-group request keys/.test(outcome.extraKey.rejected || '') && /invalid AP group id format/.test(outcome.badId.rejected || '') &&
+    /invalid session nonce format/.test(outcome.badNonce.rejected || '') &&
+    outcome.deleted.value && outcome.deleted.value.success === true &&
+    isDeepStrictEqual(after.apGroupWrites, [
+      { op: 'create', apGroupId: id, name: 'Grupo de prueba' },
+      { op: 'rename', apGroupId: id, name: 'Grupo renombrado' },
+      { op: 'delete', apGroupId: id },
+    ]) &&
+    isDeepStrictEqual(after.scenario.wlanGroups, groupsBefore) &&
+    callsTo(after, 'management:ap-groups')[0].args[0] === nonce;
+  return verdict(ok, { outcome, writes: after.apGroupWrites });
+} // End of function apGroupBridgeVerdict()
 
 // ============================================================================
 // Whole-run checks

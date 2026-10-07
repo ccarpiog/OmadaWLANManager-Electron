@@ -23,12 +23,17 @@
 //   then ends as 'clientClosed' as soon as it resumes and sends nothing more.
 // - Paths: every call names its API version explicitly ('v1' | 'v2', no
 //   default) and its path segments, which are percent-encoded one by one.
+// - AP-group writes (todo.md 4.9): createApGroup() / renameApGroup() /
+//   deleteApGroup() send exactly the documented v1 calls; their only caller
+//   is ControllerSession, which checks the capabilities, the name rules and
+//   the delete policy (ap-group-policy.ts) on fresh data first.
 // - Errors: OpenApiError with a stable `code` and a sanitized diagnostic
 //   (redact.ts plus the client's own secret and tokens scrubbed by value);
 //   never a raw request or response body, the Client Secret or a token.
 // - The Client Secret and the token are private class fields (#…): they are
 //   not enumerable, so JSON.stringify() and util.inspect() never show them.
 
+import { MAX_AP_GROUP_NAME_LENGTH } from './ap-group-policy';
 import { HttpMethod, OmadaHttpRequest, OmadaHttpResponse, OmadaTransport } from './omada-transport';
 import { redactText } from './redact';
 
@@ -169,6 +174,9 @@ export interface OpenApiListOptions {
   maxPages?: number;
   // Extra query parameters (page and pageSize are the client's)
   query?: OpenApiQuery;
+  // Called with each page's raw `result` (after its shape was validated), for
+  // page-level fields a listing also carries (e.g. the AP-group SSID limits)
+  onPage?: (result: unknown, page: number) => void;
 }
 
 /** The result of a paginated listing: deduplicated items and whether the page cap cut it. */
@@ -194,7 +202,9 @@ export interface OpenApiSite {
  * An AP group as listed by `GET /openapi/v1/{omadacId}/sites/{siteId}/ap-groups`.
  * Optional fields are present only when the controller reports them sanely:
  * `isDefault` only as `true` (`primary: true`), `apNum` as a non-negative
- * integer, `ssidNameList` with its string entries, `remainingBinding` with its
+ * integer, `ssidNameList` only as an array of strings (an array with any other
+ * entry, or anything but an array, is left out: the bindings are unknown, never
+ * "none" — the delete policy refuses such a group), `remainingBinding` with its
  * non-negative integer entries (per band; the spec keys them 0: 2.4 GHz,
  * 1: 5 GHz, 2: 6 GHz).
  */
@@ -205,6 +215,23 @@ export interface OpenApiApGroup {
   apNum?: number;
   ssidNameList?: string[];
   remainingBinding?: Record<string, number>;
+}
+
+/**
+ * The per-group SSID limits a `GET …/ap-groups` page reports next to its data
+ * (`maxSsids2G`, `maxSsids5G`, `maxSsids6G`, `maxSsidsMlo`), each kept only as
+ * a non-negative integer.
+ */
+export interface OpenApiApGroupLimits {
+  band2g?: number;
+  band5g?: number;
+  band6g?: number;
+  mlo?: number;
+}
+
+/** The AP groups of a site plus the SSID limits of its first page. */
+export interface OpenApiApGroupList extends PagedList<OpenApiApGroup> {
+  limits: OpenApiApGroupLimits;
 }
 
 /** Constructor options of OpenApiClient. */
@@ -373,7 +400,8 @@ export function validateOpenApiSite(entry: unknown): OpenApiSite {
 /**
  * Validates one AP-group entry of `GET …/sites/{siteId}/ap-groups`: `id` is
  * required; the name is normalized ('' when missing); the optional fields are
- * kept only when sane (see OpenApiApGroup) and otherwise left out.
+ * kept only when sane (see OpenApiApGroup) and otherwise left out — an SSID
+ * list is kept whole or not at all (never filtered into a shorter one).
  * @param {unknown} entry - One raw entry of `result.data`.
  * @returns {OpenApiApGroup} The AP group.
  * @throws {OpenApiError} 'malformedResponse' when the entry or its id is unusable.
@@ -393,8 +421,10 @@ export function validateOpenApiApGroup(entry: unknown): OpenApiApGroup {
   if (isCount(raw.apNum)) {
     group.apNum = raw.apNum;
   }
-  if (Array.isArray(raw.ssidNameList)) {
-    group.ssidNameList = raw.ssidNameList.filter((name): name is string => typeof name === 'string');
+  // Fail closed: filtering out the insane entries could turn `[null]` into
+  // `[]` ("no networks bound") and let the delete policy pass
+  if (Array.isArray(raw.ssidNameList) && raw.ssidNameList.every((name) => typeof name === 'string')) {
+    group.ssidNameList = [...(raw.ssidNameList as string[])];
   }
   if (raw.remainingBinding !== null && typeof raw.remainingBinding === 'object' && !Array.isArray(raw.remainingBinding)) {
     const bindings: Record<string, number> = {};
@@ -409,6 +439,60 @@ export function validateOpenApiApGroup(entry: unknown): OpenApiApGroup {
   } // End of the remainingBinding normalization
   return group;
 } // End of function validateOpenApiApGroup()
+
+/**
+ * Reads the page-level SSID limits of an AP-group page `result`
+ * (`maxSsids2G` / `5G` / `6G` / `Mlo`); a missing or insane value is left out.
+ * @param {unknown} result - Raw `result` of a `GET …/ap-groups` page.
+ * @returns {OpenApiApGroupLimits} The limits that were reported sanely.
+ */
+export function validateApGroupLimits(result: unknown): OpenApiApGroupLimits {
+  const limits: OpenApiApGroupLimits = {};
+  if (result === null || typeof result !== 'object') {
+    return limits;
+  }
+  const raw = result as Record<string, unknown>;
+  const fields: ReadonlyArray<readonly [string, keyof OpenApiApGroupLimits]> = [
+    ['maxSsids2G', 'band2g'],
+    ['maxSsids5G', 'band5g'],
+    ['maxSsids6G', 'band6g'],
+    ['maxSsidsMlo', 'mlo']
+  ];
+  for (const [field, key] of fields) {
+    if (isCount(raw[field])) {
+      limits[key] = raw[field] as number;
+    }
+  }
+  return limits;
+} // End of function validateApGroupLimits()
+
+/**
+ * Validates the `result` of `POST …/ap-groups` (ops doc: `{id}`, the new AP
+ * group's id). Unverified live: a missing or unusable id is reported as null
+ * (the caller then identifies the group from a fresh list), never guessed.
+ * @param {unknown} result - Raw `result` of the create response.
+ * @returns {string | null} The new group's id, or null when not usable.
+ */
+export function validateCreatedApGroup(result: unknown): string | null {
+  if (result === null || typeof result !== 'object') {
+    return null;
+  }
+  const id = (result as Record<string, unknown>).id;
+  return isUsableId(id) ? id : null;
+}
+
+/**
+ * Sanity check of an AP-group name handed to the client: a non-empty string
+ * of at most MAX_AP_GROUP_NAME_LENGTH characters with no surrounding white
+ * space. The name rules proper live in ap-group-policy.ts (applied by
+ * ControllerSession); this only keeps a programming error from reaching the
+ * controller.
+ * @param {unknown} name - The name.
+ * @returns {boolean} True when sane.
+ */
+function isSaneApGroupName(name: unknown): name is string {
+  return typeof name === 'string' && name !== '' && name === name.trim() && name.length <= MAX_AP_GROUP_NAME_LENGTH;
+}
 
 /**
  * Checks the caller's extra headers: valid names, no CR/LF/NUL in values, and
@@ -618,6 +702,7 @@ export class OpenApiClient {
       // Closed meanwhile: neither this page nor a next one is used
       this.#assertOpen();
       const pageData = validateOpenApiPage(result, what);
+      options.onPage?.(result, page);
       for (const entry of pageData.data) {
         const item = validateEntry(entry);
         const id = idOf(item);
@@ -655,17 +740,88 @@ export class OpenApiClient {
   }
 
   /**
-   * Lists the AP groups of one site (v1, paged), with `apNum`, `ssidNameList`
-   * and `remainingBinding` when reported.
+   * Lists the AP groups of one site (`GET /openapi/v1/{omadacId}/sites/{siteId}/ap-groups`,
+   * paged), with `apNum`, `ssidNameList` and `remainingBinding` when reported,
+   * plus the per-group SSID limits of the first page.
    * @param {string} siteId - The site id (percent-encoded into the path).
-   * @returns {Promise<PagedList<OpenApiApGroup>>} The AP groups.
+   * @returns {Promise<OpenApiApGroupList>} The AP groups and the limits.
    * @throws {OpenApiError} On any failure; Error on an unusable site id.
    */
-  listApGroups(siteId: string): Promise<PagedList<OpenApiApGroup>> {
+  async listApGroups(siteId: string): Promise<OpenApiApGroupList> {
     if (!isUsableId(siteId)) {
-      return Promise.reject(new Error('Invalid site id'));
+      throw new Error('Invalid site id');
     }
-    return this.listAll('v1', ['sites', siteId, 'ap-groups'], validateOpenApiApGroup, (group) => group.id);
+    let limits: OpenApiApGroupLimits = {};
+    const list = await this.listAll('v1', ['sites', siteId, 'ap-groups'], validateOpenApiApGroup, (group) => group.id, {
+      onPage: (result, page) => {
+        if (page === 1) {
+          limits = validateApGroupLimits(result);
+        }
+      }
+    });
+    return { ...list, limits };
+  } // End of function listApGroups()
+
+  /**
+   * Creates an empty AP group: `POST /openapi/v1/{omadacId}/sites/{siteId}/ap-groups`
+   * with exactly the body `{name}` (the optional `apMacs` is not sent: the
+   * group starts empty and APs are moved in through the internal move path).
+   * Callers (ControllerSession) validate the name and the app policy first.
+   * Unverified live (phase 20): that the body without `apMacs` is accepted,
+   * and that `result.id` is the new group's id (the same value the internal
+   * setting/wlans list reports).
+   * @param {string} siteId - The site id.
+   * @param {string} name - The validated, trimmed name.
+   * @returns {Promise<string | null>} The new group's id, or null when the
+   *   answer carries no usable id (see validateCreatedApGroup()).
+   * @throws {OpenApiError} On any failure (an errorCode such as -33200 / -33201
+   *   is an 'apiError' carrying it); Error on an unusable argument.
+   */
+  async createApGroup(siteId: string, name: string): Promise<string | null> {
+    if (!isUsableId(siteId) || !isSaneApGroupName(name)) {
+      throw new Error('Invalid AP group create arguments');
+    }
+    const result = await this.request('POST', 'v1', ['sites', siteId, 'ap-groups'], { body: { name } });
+    return validateCreatedApGroup(result);
+  }
+
+  /**
+   * Renames an AP group: `PATCH /openapi/v1/{omadacId}/sites/{siteId}/ap-groups/{apGroupId}`
+   * with exactly the body `{name}` (the ops doc requires only `name`;
+   * `addApMacs` / `removeApMacs` are optional and not sent, so no read-merge-
+   * write is needed). The answer carries no result: errorCode 0 is the
+   * confirmation. Unverified live (phase 20): that omitting the two AP lists
+   * leaves the group's APs untouched.
+   * @param {string} siteId - The site id.
+   * @param {string} apGroupId - The group id.
+   * @param {string} name - The validated, trimmed new name.
+   * @returns {Promise<void>} Resolves once the controller confirmed it.
+   * @throws {OpenApiError} On any failure (-33200 is an 'apiError' carrying it);
+   *   Error on an unusable argument.
+   */
+  async renameApGroup(siteId: string, apGroupId: string, name: string): Promise<void> {
+    if (!isUsableId(siteId) || !isUsableId(apGroupId) || !isSaneApGroupName(name)) {
+      throw new Error('Invalid AP group rename arguments');
+    }
+    await this.request('PATCH', 'v1', ['sites', siteId, 'ap-groups', apGroupId], { body: { name } });
+  }
+
+  /**
+   * Deletes an AP group: `DELETE /openapi/v1/{omadacId}/sites/{siteId}/ap-groups/{apGroupId}`,
+   * no body. Callers (ControllerSession) re-check the app's delete policy on
+   * fresh data right before. The answer carries no result: errorCode 0 is the
+   * confirmation.
+   * @param {string} siteId - The site id.
+   * @param {string} apGroupId - The group id.
+   * @returns {Promise<void>} Resolves once the controller confirmed it.
+   * @throws {OpenApiError} On any failure (-33203, the default group, is an
+   *   'apiError' carrying it); Error on an unusable argument.
+   */
+  async deleteApGroup(siteId: string, apGroupId: string): Promise<void> {
+    if (!isUsableId(siteId) || !isUsableId(apGroupId)) {
+      throw new Error('Invalid AP group delete arguments');
+    }
+    await this.request('DELETE', 'v1', ['sites', siteId, 'ap-groups', apGroupId]);
   }
 
   /**

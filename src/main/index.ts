@@ -15,15 +15,33 @@ import {
 } from './config';
 import { CertificateTrustSource, ControllerTlsSessions, installCertificateVerifyProc, isCertificateErrorAllowed } from './cert-verify';
 import { ConnectionManager } from './connection-manager';
-import { applyManagementAccessChange, ControllerSession, getSessionCapabilities, testManagementAccess } from './controller-session';
+import {
+  applyManagementAccessChange,
+  ControllerSession,
+  createApGroupReply,
+  deleteApGroupReply,
+  getSessionCapabilities,
+  managedApGroupsReply,
+  renameApGroupReply,
+  testManagementAccess
+} from './controller-session';
+import {
+  NONCE_REGEX,
+  parseApGroupCreateRequest,
+  parseApGroupDeleteRequest,
+  parseApGroupRenameRequest,
+  requireSessionNonce
+} from './ipc-guards';
 import { createNetTransport } from './net-transport';
 import {
+  ApGroupActionResult,
   CertificateActionResult,
   ConfigSavePayload,
   ConfigSaveResult,
   IPC_CHANNELS,
   ConnectionResult,
   GroupListing,
+  ManagedApGroupsResult,
   ManagementCapabilitiesResult,
   RendererConfig
 } from '../shared/types';
@@ -102,10 +120,10 @@ const RENDERER_HTML_PATH = path.normalize(path.join(__dirname, '../renderer/inde
 const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
 const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
-// Format guard for the opaque nonces (site selection, certificate trust, the
-// controller session): exactly 32 lowercase hex characters (16 random bytes —
-// see createNonce() in connection-manager.ts)
-const NONCE_REGEX = /^[0-9a-f]{32}$/;
+// The opaque nonces (site selection, certificate trust, the controller
+// session) are checked with NONCE_REGEX, and the session-owned management
+// payloads with the guards of ipc-guards.ts (pure, unit-tested, shared with
+// the smoke stub)
 
 // Length caps for strings arriving over IPC (defense against absurd payloads)
 const MAX_URL_LENGTH = 2048;
@@ -534,24 +552,6 @@ ipcMain.handle(IPC_CHANNELS.CERT_RESET, async (event, ...extra: unknown[]): Prom
   return connectionManager.resetCertificate();
 }); // End of the CERT_RESET handler
 
-/**
- * Shape guard shared by the management-access channels: exactly one argument,
- * the session nonce of a connect result (32 lowercase hex characters).
- * @param {unknown} sessionNonce - The first argument.
- * @param {unknown[]} extra - Any further arguments (must be none).
- * @returns {string} The nonce.
- * @throws {Error} On extra arguments or a malformed nonce.
- */
-function requireSessionNonce(sessionNonce: unknown, extra: unknown[]): string {
-  if (extra.length > 0) {
-    throw new Error('IPC call rejected: unexpected arguments');
-  }
-  if (typeof sessionNonce !== 'string' || !NONCE_REGEX.test(sessionNonce)) {
-    throw new Error('IPC call rejected: invalid session nonce format');
-  }
-  return sessionNonce;
-}
-
 // The management capabilities of the installed controller session (spec
 // §2.2: flags plus a reason code, never a raw response). Session-owned like a
 // site selection: the renderer echoes the session nonce of its connect
@@ -572,3 +572,39 @@ ipcMain.handle(IPC_CHANNELS.MANAGEMENT_TEST, async (event, sessionNonce: unknown
   assertTrustedIpcSender(event);
   return testManagementAccess(connectionManager, requireSessionNonce(sessionNonce, extra));
 }); // End of the MANAGEMENT_TEST handler
+
+// AP-group management (todo.md 4.9; spec §3, §4.4). Every channel: the trusted
+// sender, then a strict shape guard (ipc-guards.ts: exactly the listed keys,
+// the 32-hex session nonce, 24-hex AP-group ids, a raw length cap on names),
+// then the installed session named by the nonce (notConnected / superseded
+// otherwise, also when it changes while the call runs). The session refuses
+// unless the capabilities say AP-group management is on, validates names and
+// re-checks the delete policy on fresh Open API data right before writing
+// (ControllerSession in controller-session.ts). Replies carry stable codes
+// and codes-only diagnostics, never controller text.
+
+// The site's AP groups with their per-band capacity (read; one argument: the
+// session nonce)
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_AP_GROUPS, async (event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagedApGroupsResult> => {
+  assertTrustedIpcSender(event);
+  return managedApGroupsReply(connectionManager, requireSessionNonce(sessionNonce, extra));
+}); // End of the MANAGEMENT_AP_GROUPS handler
+
+// Create an empty AP group ({sessionNonce, name})
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_AP_GROUP_CREATE, async (event, payload: unknown, ...extra: unknown[]): Promise<ApGroupActionResult> => {
+  assertTrustedIpcSender(event);
+  return createApGroupReply(connectionManager, parseApGroupCreateRequest(payload, extra));
+}); // End of the MANAGEMENT_AP_GROUP_CREATE handler
+
+// Rename an AP group ({sessionNonce, apGroupId, name})
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_AP_GROUP_RENAME, async (event, payload: unknown, ...extra: unknown[]): Promise<ApGroupActionResult> => {
+  assertTrustedIpcSender(event);
+  return renameApGroupReply(connectionManager, parseApGroupRenameRequest(payload, extra));
+}); // End of the MANAGEMENT_AP_GROUP_RENAME handler
+
+// Delete an AP group ({sessionNonce, apGroupId}) under the app's delete
+// policy, re-checked in main on fresh data right before the DELETE
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_AP_GROUP_DELETE, async (event, payload: unknown, ...extra: unknown[]): Promise<ApGroupActionResult> => {
+  assertTrustedIpcSender(event);
+  return deleteApGroupReply(connectionManager, parseApGroupDeleteRequest(payload, extra));
+}); // End of the MANAGEMENT_AP_GROUP_DELETE handler

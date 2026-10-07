@@ -10,10 +10,12 @@
 //
 // Invariant D4 (docs/management-design.md §1): this file never loads
 // dist/main/index.js, config.js, net-transport.js or anything else that does
-// network or touches the user's config. It only requires three pure compiled
+// network or touches the user's config. It only requires five pure compiled
 // modules (shared/types.js for the channel table, main/url.js for URL
 // normalization and the same-controller check, main/controller-version.js for
-// the version -> group-model rule), refuses to start unless HOME points away from the real
+// the version -> group-model rule, main/ap-group-policy.js and
+// main/ipc-guards.js for the AP-group name rules, delete policy, DTO and IPC
+// shape guards), refuses to start unless HOME points away from the real
 // home directory, keeps Electron's userData under that temp HOME, writes no
 // files, and cancels every non-file: request the window makes.
 
@@ -34,6 +36,12 @@ const RENDERER_HTML_PATH = path.normalize(path.join(distDir, 'renderer', 'index.
 const { IPC_CHANNELS } = require(path.join(distDir, 'shared', 'types.js'));
 const { isSameControllerUrl, normalizeControllerUrl } = require(path.join(distDir, 'main', 'url.js'));
 const { groupModelForVersion, normalizeControllerVersion } = require(path.join(distDir, 'main', 'controller-version.js'));
+const { checkApGroupDeletion, hasApGroupNameConflict, toApGroupSsidLimits, toManagedApGroup, validateApGroupName } = require(
+  path.join(distDir, 'main', 'ap-group-policy.js')
+);
+const { parseApGroupCreateRequest, parseApGroupDeleteRequest, parseApGroupRenameRequest, requireSessionNonce } = require(
+  path.join(distDir, 'main', 'ipc-guards.js')
+);
 
 // Format guards mirrored from src/main/index.ts (keep in sync)
 const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
@@ -109,6 +117,28 @@ function defaultScenario() {
     // When set, both management channels return this verbatim (e.g.
     // { success: false, error: 'superseded' })
     managementResult: null,
+    // AP-group management (management:ap-groups / -create / -rename /
+    // -delete). The fake controller's AP groups ARE `wlanGroups` (what
+    // OMADA_GET_WLANS lists), so a create / rename / delete shows on the next
+    // reload as on a real controller. Each group's Open API view is derived
+    // (openApiGroups()): apNum = the fixture APs reporting its name,
+    // ssidNameList = its ssidList names, primary = isDefault, and per band
+    // remainingBinding = apGroupSsidLimits minus its networks.
+    // apGroupOverrides (group id -> fields) replaces any of them; null
+    // removes one ("not reported"), e.g. { '<id>': { apNum: 2 } } plays fresh
+    // data showing APs in a group the renderer thought empty. An insane value
+    // (e.g. ssidNameList: [null]) reaches the real rules unvalidated; they
+    // fail closed on it like OpenApiClient's validator (groupStateUnknown,
+    // left out of the DTO)
+    apGroupOverrides: {},
+    // The per-group SSID limits the fake ap-groups page reports (DTO shape)
+    apGroupSsidLimits: { band2g: 8, band5g: 8, band6g: 8, mlo: 4 },
+    // Per AP-group channel, a reply returned verbatim once the guards, the
+    // session, capability, name and policy checks passed — i.e. the
+    // controller's answer to the write (e.g. { 'management:ap-group-create':
+    // { success: false, error: 'groupLimitReached', diagnostic: 'apiError,
+    // errorCode -33201' } }); nothing is applied then
+    apGroupResults: {},
     accessPoints: [],
     // The controllerVer the fake controller's /api/info reports (null = absent:
     // the legacy group model, like the real defensive default). OMADA_GET_WLANS
@@ -162,6 +192,9 @@ const stub = {
   // selection, in order
   sessionNonce: null,
   issuedSessionNonces: [],
+  // AP-group writes the fake controller applied, in order:
+  // { op: 'create' | 'rename' | 'delete', apGroupId, name? }
+  apGroupWrites: [],
   registeredChannels: [],
   environment: { home: os.homedir(), userData: app.getPath('userData'), platform: process.platform },
   // BrowserWindow options used by createWindow() (checked against the real app's)
@@ -196,6 +229,7 @@ const stub = {
       issuedTrustNonces: this.issuedTrustNonces,
       sessionNonce: this.sessionNonce,
       issuedSessionNonces: this.issuedSessionNonces,
+      apGroupWrites: this.apGroupWrites,
       registeredChannels: this.registeredChannels,
       environment: this.environment,
       windowOptions: this.windowOptions,
@@ -387,6 +421,83 @@ function managementReply(sessionNonce, extra) {
   }
   return { success: true, capabilities: currentCapabilities() };
 } // End of function managementReply()
+
+/**
+ * The fake controller's AP groups as `GET …/ap-groups` would list them after
+ * OpenApiClient validation (see apGroupOverrides in the scenario).
+ * @returns {object[]} The groups (PolicyApGroup shape of ap-group-policy.ts).
+ */
+function openApiGroups() {
+  const limits = stub.scenario.apGroupSsidLimits || {};
+  const overrides = stub.scenario.apGroupOverrides || {};
+  return stub.scenario.wlanGroups.map((group) => {
+    const networks = (group.ssidList || []).map((ssid) => ssid.ssidName);
+    const remainingBinding = {};
+    for (const [key, band] of [['0', 'band2g'], ['1', 'band5g'], ['2', 'band6g']]) {
+      if (typeof limits[band] === 'number') {
+        remainingBinding[key] = Math.max(0, limits[band] - networks.length);
+      }
+    }
+    const view = {
+      id: group.wlanId,
+      name: group.wlanName,
+      apNum: stub.scenario.accessPoints.filter((ap) => ap.wlanGroup === group.wlanName).length,
+      ssidNameList: networks,
+      remainingBinding,
+    };
+    if (group.isDefault === true) {
+      view.isDefault = true;
+    }
+    for (const [field, value] of Object.entries(overrides[group.wlanId] || {})) {
+      if (value === null) {
+        delete view[field];
+      } else {
+        view[field] = structuredClone(value);
+      }
+    }
+    return view;
+  }); // End of the per-group mapping
+} // End of function openApiGroups()
+
+/**
+ * The session-ownership and capability checks of an AP-group call, like
+ * apGroupReply() + ControllerSession's management context in
+ * src/main/controller-session.ts, with the name of a create / rename
+ * validated between the two, in the same order as there.
+ * @param {string} sessionNonce - The shape-checked nonce.
+ * @param {string | null} rawName - The name to validate first (create/rename), or null.
+ * @returns {{ failure: object } | { name: string | null }} The failure reply, or the trimmed name.
+ */
+function apGroupPreconditions(sessionNonce, rawName) {
+  if (!stub.connected || stub.sessionNonce === null) {
+    return { failure: { success: false, error: 'notConnected' } };
+  }
+  if (sessionNonce !== stub.sessionNonce) {
+    return { failure: { success: false, error: 'superseded' } };
+  }
+  let name = null;
+  if (rawName !== null) {
+    const checked = validateApGroupName(rawName);
+    if (!checked.ok) {
+      return { failure: { success: false, error: checked.error } };
+    }
+    name = checked.name;
+  }
+  if (!currentCapabilities().manageApGroups) {
+    return { failure: { success: false, error: 'managementUnavailable' } };
+  }
+  return { name };
+} // End of function apGroupPreconditions()
+
+/**
+ * The scenario's verbatim controller answer for an AP-group channel, if any.
+ * @param {string} channel - The IPC channel.
+ * @returns {object | null} The reply, or null.
+ */
+function scriptedApGroupResult(channel) {
+  const result = (stub.scenario.apGroupResults || {})[channel];
+  return result ? structuredClone(result) : null;
+}
 
 /**
  * Returns a copy of a list sorted by a string field with localeCompare, like
@@ -709,6 +820,128 @@ const handlers = {
    * @returns {object} The ManagementCapabilitiesResult.
    */
   [IPC_CHANNELS.MANAGEMENT_TEST]: (sessionNonce, ...extra) => managementReply(sessionNonce, extra),
+
+  /**
+   * MANAGEMENT_AP_GROUPS: the real shape guard (requireSessionNonce()), the
+   * session and capability checks, then the fake controller's groups as the
+   * real DTO (toManagedApGroup()) plus the SSID limits.
+   * @param {unknown} sessionNonce - The session nonce echoed by the renderer.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The ManagedApGroupsResult.
+   */
+  [IPC_CHANNELS.MANAGEMENT_AP_GROUPS]: (sessionNonce, ...extra) => {
+    const nonce = requireSessionNonce(sessionNonce, extra);
+    const checked = apGroupPreconditions(nonce, null);
+    if (checked.failure) {
+      return checked.failure;
+    }
+    const scripted = scriptedApGroupResult(IPC_CHANNELS.MANAGEMENT_AP_GROUPS);
+    if (scripted) {
+      return scripted;
+    }
+    const reply = { success: true, groups: openApiGroups().map(toManagedApGroup) };
+    const ssidLimits = toApGroupSsidLimits(stub.scenario.apGroupSsidLimits || undefined);
+    if (ssidLimits) {
+      reply.ssidLimits = ssidLimits;
+    }
+    return reply;
+  }, // End of the MANAGEMENT_AP_GROUPS handler
+
+  /**
+   * MANAGEMENT_AP_GROUP_CREATE: the real shape guard, the session, name and
+   * capability checks, the name-conflict rule on the current groups; then a
+   * new empty group with a fresh 24-hex id joins wlanGroups.
+   * @param {unknown} payload - { sessionNonce, name }.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The ApGroupActionResult.
+   */
+  [IPC_CHANNELS.MANAGEMENT_AP_GROUP_CREATE]: (payload, ...extra) => {
+    const request = parseApGroupCreateRequest(payload, extra);
+    const checked = apGroupPreconditions(request.sessionNonce, request.name);
+    if (checked.failure) {
+      return checked.failure;
+    }
+    if (hasApGroupNameConflict(checked.name, openApiGroups())) {
+      return { success: false, error: 'nameTaken' };
+    }
+    const scripted = scriptedApGroupResult(IPC_CHANNELS.MANAGEMENT_AP_GROUP_CREATE);
+    if (scripted) {
+      return scripted;
+    }
+    const apGroupId = randomBytes(12).toString('hex');
+    stub.scenario.wlanGroups.push({ wlanId: apGroupId, wlanName: checked.name, ssidList: [] });
+    stub.apGroupWrites.push({ op: 'create', apGroupId, name: checked.name });
+    return { success: true, apGroupId };
+  }, // End of the MANAGEMENT_AP_GROUP_CREATE handler
+
+  /**
+   * MANAGEMENT_AP_GROUP_RENAME: the real shape guard, the session, name and
+   * capability checks, then groupNotFound / nameUnchanged / nameTaken on the
+   * current groups; the rename also renames the group in the APs reporting it.
+   * @param {unknown} payload - { sessionNonce, apGroupId, name }.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The ApGroupActionResult.
+   */
+  [IPC_CHANNELS.MANAGEMENT_AP_GROUP_RENAME]: (payload, ...extra) => {
+    const request = parseApGroupRenameRequest(payload, extra);
+    const checked = apGroupPreconditions(request.sessionNonce, request.name);
+    if (checked.failure) {
+      return checked.failure;
+    }
+    const groups = openApiGroups();
+    const target = groups.find((group) => group.id === request.apGroupId);
+    if (!target) {
+      return { success: false, error: 'groupNotFound' };
+    }
+    if (target.name === checked.name) {
+      return { success: false, error: 'nameUnchanged' };
+    }
+    if (hasApGroupNameConflict(checked.name, groups, request.apGroupId)) {
+      return { success: false, error: 'nameTaken' };
+    }
+    const scripted = scriptedApGroupResult(IPC_CHANNELS.MANAGEMENT_AP_GROUP_RENAME);
+    if (scripted) {
+      return scripted;
+    }
+    const group = stub.scenario.wlanGroups.find((candidate) => candidate.wlanId === request.apGroupId);
+    for (const accessPoint of stub.scenario.accessPoints) {
+      if (accessPoint.wlanGroup === group.wlanName) {
+        accessPoint.wlanGroup = checked.name;
+      }
+    }
+    group.wlanName = checked.name;
+    stub.apGroupWrites.push({ op: 'rename', apGroupId: request.apGroupId, name: checked.name });
+    return { success: true };
+  }, // End of the MANAGEMENT_AP_GROUP_RENAME handler
+
+  /**
+   * MANAGEMENT_AP_GROUP_DELETE: the real shape guard, the session and
+   * capability checks, then the real delete policy (checkApGroupDeletion())
+   * on the current groups — overrides included, so "fresh data says it has
+   * APs" refuses although the renderer showed it empty; the group then leaves
+   * wlanGroups.
+   * @param {unknown} payload - { sessionNonce, apGroupId }.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The ApGroupActionResult.
+   */
+  [IPC_CHANNELS.MANAGEMENT_AP_GROUP_DELETE]: (payload, ...extra) => {
+    const request = parseApGroupDeleteRequest(payload, extra);
+    const checked = apGroupPreconditions(request.sessionNonce, null);
+    if (checked.failure) {
+      return checked.failure;
+    }
+    const refusal = checkApGroupDeletion(openApiGroups().find((group) => group.id === request.apGroupId));
+    if (refusal) {
+      return { success: false, error: refusal };
+    }
+    const scripted = scriptedApGroupResult(IPC_CHANNELS.MANAGEMENT_AP_GROUP_DELETE);
+    if (scripted) {
+      return scripted;
+    }
+    stub.scenario.wlanGroups = stub.scenario.wlanGroups.filter((group) => group.wlanId !== request.apGroupId);
+    stub.apGroupWrites.push({ op: 'delete', apGroupId: request.apGroupId });
+    return { success: true };
+  }, // End of the MANAGEMENT_AP_GROUP_DELETE handler
 }; // End of the fake handlers table
 
 // Every channel of the shared table must have a fake, and vice versa: a

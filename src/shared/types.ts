@@ -208,8 +208,8 @@ export interface SiteInfo {
 // single-site controller and a remembered site), and `sessionNonce`, an
 // opaque token identifying the installed controller session: the renderer
 // echoes it back verbatim with the management-access calls
-// (getManagementCapabilities(), testManagementAccess()), so they only ever
-// act on the session it is showing.
+// (getManagementCapabilities(), testManagementAccess() and the AP-group
+// calls), so they only ever act on the session it is showing.
 // When authentication succeeds but the controller manages several sites and
 // none could be picked automatically, `success` is false with no `error`,
 // `needsSiteSelection` is true, `sites` lists the authorized sites, and
@@ -286,6 +286,116 @@ export interface ManagementCapabilitiesResult {
   capabilities?: ManagementCapabilities;
 }
 
+// Why an AP-group management call (todo.md 4.9) failed. Main decides every
+// one of them from fresh controller data; the renderer maps them to text.
+// Session: 'notConnected' / 'superseded' as for the capabilities (the nonce
+//   names no installed session, or the session was replaced, closed or
+//   re-checked while the call ran — a late result is discarded);
+// 'managementUnavailable' — the capabilities say AP-group management is off;
+// Names (create, rename): 'nameRequired' (blank after trimming), 'nameTooLong'
+//   (over 128 characters), 'nameInvalid' (control or bidirectional-control
+//   characters), 'nameTaken' (another group already has this name, compared
+//   case-insensitively — same-named groups cannot be move targets — or the
+//   controller reported it as already created), 'nameUnchanged' (a rename to
+//   the group's current name: nothing is sent);
+// Groups: 'groupNotFound' (the id is not in the controller's AP-group list),
+//   'groupIsDefault' (the default group cannot be deleted), 'groupNotEmpty'
+//   (it has access points), 'groupHasNetworks' (Wi-Fi networks are bound to
+//   it), 'groupStateUnknown' (the controller did not report its AP count or
+//   its networks sanely — e.g. a network list with a non-string entry — so
+//   the delete policy cannot be verified), 'groupLimitReached'
+//   (the controller's AP-group limit), 'groupListIncomplete' (the AP-group list
+//   could not be read completely, so the name or delete rules cannot be
+//   verified);
+// 'requestFailed' — the controller could not be asked or refused for another
+//   reason (`diagnostic` carries error codes only).
+export type ApGroupOperationError =
+  | ManagementCheckError
+  | 'managementUnavailable'
+  | 'nameRequired'
+  | 'nameTooLong'
+  | 'nameInvalid'
+  | 'nameTaken'
+  | 'nameUnchanged'
+  | 'groupNotFound'
+  | 'groupIsDefault'
+  | 'groupNotEmpty'
+  | 'groupHasNetworks'
+  | 'groupStateUnknown'
+  | 'groupLimitReached'
+  | 'groupListIncomplete'
+  | 'requestFailed';
+
+// Per-band numbers of one AP group (2.4, 5 and 6 GHz). A band is present only
+// when the controller reported a sane non-negative integer for it.
+export interface ApGroupBandValues {
+  band2g?: number;
+  band5g?: number;
+  band6g?: number;
+}
+
+// The controller's per-group SSID limits (the same for every group of the
+// site), per band plus MLO; each present only when reported sanely.
+export interface ApGroupSsidLimits extends ApGroupBandValues {
+  mlo?: number;
+}
+
+// One AP group as the management views see it (Open API data, validated in
+// main). `id` addresses the group (the same value as the internal `wlanId`:
+// the capability checks verified the two id sets are equal). `isDefault` is
+// true only when the controller flags the group as the default one.
+// `apCount` (APs in the group), `networkNames` (the Wi-Fi networks bound to
+// it) and `remainingBinding` (how many more networks each band can take) are
+// absent when the controller did not report them sanely — never invented.
+export interface ManagedApGroup {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  apCount?: number;
+  networkNames?: string[];
+  remainingBinding?: ApGroupBandValues;
+}
+
+// Result of getManagedApGroups(): the site's AP groups with their capacity,
+// plus the per-group SSID limits when reported.
+export interface ManagedApGroupsResult {
+  success: boolean;
+  error?: ApGroupOperationError;
+  diagnostic?: string;
+  groups?: ManagedApGroup[];
+  ssidLimits?: ApGroupSsidLimits;
+}
+
+// Payloads of the AP-group write calls. Each carries the session nonce of the
+// connect result (echoed back verbatim) and nothing else than listed here;
+// main trims and validates the name and checks every rule itself.
+export interface ApGroupCreateRequest {
+  sessionNonce: string;
+  name: string;
+}
+
+export interface ApGroupRenameRequest {
+  sessionNonce: string;
+  apGroupId: string;
+  name: string;
+}
+
+export interface ApGroupDeleteRequest {
+  sessionNonce: string;
+  apGroupId: string;
+}
+
+// Result of createApGroup() / renameApGroup() / deleteApGroup(). A successful
+// create carries `apGroupId` when main could identify the new group (from the
+// controller's answer, else from a fresh list); without it the renderer
+// reloads and finds the group by its name.
+export interface ApGroupActionResult {
+  success: boolean;
+  error?: ApGroupOperationError;
+  diagnostic?: string;
+  apGroupId?: string;
+}
+
 // Data loaded from controller
 export interface ControllerData {
   accessPoints: AccessPoint[];
@@ -311,6 +421,10 @@ export interface OmadaAPI {
   resetCertificate(): Promise<CertificateActionResult>;
   getManagementCapabilities(sessionNonce: string): Promise<ManagementCapabilitiesResult>;
   testManagementAccess(sessionNonce: string): Promise<ManagementCapabilitiesResult>;
+  getManagedApGroups(sessionNonce: string): Promise<ManagedApGroupsResult>;
+  createApGroup(request: ApGroupCreateRequest): Promise<ApGroupActionResult>;
+  renameApGroup(request: ApGroupRenameRequest): Promise<ApGroupActionResult>;
+  deleteApGroup(request: ApGroupDeleteRequest): Promise<ApGroupActionResult>;
 }
 
 // IPC channel names (type-safe)
@@ -335,6 +449,13 @@ export const IPC_CHANNELS = {
   // and "Test management access" (runs the checks again)
   MANAGEMENT_CAPABILITIES: 'management:capabilities',
   MANAGEMENT_TEST: 'management:test',
+
+  // AP-group management (Open API, management on only): the site's AP groups
+  // with their capacity, and create / rename / delete
+  MANAGEMENT_AP_GROUPS: 'management:ap-groups',
+  MANAGEMENT_AP_GROUP_CREATE: 'management:ap-group-create',
+  MANAGEMENT_AP_GROUP_RENAME: 'management:ap-group-rename',
+  MANAGEMENT_AP_GROUP_DELETE: 'management:ap-group-delete',
 } as const;
 
 // Type for IPC channel values

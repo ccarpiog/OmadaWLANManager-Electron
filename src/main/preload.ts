@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  ApGroupActionResult,
+  ApGroupCreateRequest,
+  ApGroupDeleteRequest,
+  ApGroupRenameRequest,
   CertificateActionResult,
   ConfigSavePayload,
   ConfigSaveResult,
@@ -7,6 +11,7 @@ import type {
   AccessPoint,
   GroupListing,
   IPC_CHANNELS as SHARED_IPC_CHANNELS,
+  ManagedApGroupsResult,
   ManagementCapabilitiesResult,
   OmadaAPI,
   RendererConfig
@@ -32,6 +37,10 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
   CERT_RESET: 'cert:reset',
   MANAGEMENT_CAPABILITIES: 'management:capabilities',
   MANAGEMENT_TEST: 'management:test',
+  MANAGEMENT_AP_GROUPS: 'management:ap-groups',
+  MANAGEMENT_AP_GROUP_CREATE: 'management:ap-group-create',
+  MANAGEMENT_AP_GROUP_RENAME: 'management:ap-group-rename',
+  MANAGEMENT_AP_GROUP_DELETE: 'management:ap-group-delete',
 };
 
 // Expose a safe API to the renderer process. `satisfies OmadaAPI` (type-only,
@@ -113,5 +122,26 @@ contextBridge.exposeInMainWorld('omadaAPI', {
 
   testManagementAccess: (sessionNonce: string): Promise<ManagementCapabilitiesResult> => {
     return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_TEST, sessionNonce);
+  },
+
+  // AP-group management (management on only): the site's AP groups with
+  // their capacity, and create / rename / delete. Each sends the session
+  // nonce of the connect result (echoed back verbatim) and the request as
+  // given; main trims and validates names and re-checks every rule (the
+  // delete policy on fresh controller data) itself
+  getManagedApGroups: (sessionNonce: string): Promise<ManagedApGroupsResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_AP_GROUPS, sessionNonce);
+  },
+
+  createApGroup: (request: ApGroupCreateRequest): Promise<ApGroupActionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_AP_GROUP_CREATE, request);
+  },
+
+  renameApGroup: (request: ApGroupRenameRequest): Promise<ApGroupActionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_AP_GROUP_RENAME, request);
+  },
+
+  deleteApGroup: (request: ApGroupDeleteRequest): Promise<ApGroupActionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_AP_GROUP_DELETE, request);
   }
 } satisfies OmadaAPI);

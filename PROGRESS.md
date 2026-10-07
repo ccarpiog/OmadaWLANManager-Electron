@@ -24,7 +24,8 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 14b | 4.7 (second half) §4.6 states, read-only banner with reason, §4.7 responsive breakpoints, Cmd/Ctrl+F and Escape — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-14b.md` |
 | 15a | 4.8 (first half) Management-access credentials in config + Settings, Electron-free `OpenApiClient`, central redactor — risk: high; worker: opus | **done** — `docs/progress-archive/phase-15a.md` |
 | 15b | 4.8 (second half) `ControllerSession` facade, capability detection + §2.2 reason codes, "Test management access", `readOnlyReason()` inputs — risk: high; worker: opus | **done** — `docs/progress-archive/phase-15b.md` |
-| 16 | 4.9 AP group management (create/rename/delete-if-empty, move APs here) — risk: high | pending |
+| 16a | 4.9 (first half) Open API create/rename/delete of AP groups, main-side policy on fresh data, guarded IPC + `ManagedApGroup` capacity read path, smoke-stub channels — risk: high; worker: opus | **done** — `docs/progress-archive/phase-16a.md` |
+| 16b | 4.9 (second half) AP groups view actions (New / Rename / Delete with refusal reasons), per-band capacity, "Move access points here", smoke — risk: high | pending |
 | 17 | 4.10 Wi-Fi network read model via Open API (secrets stripped) — risk: routine | pending |
 | 18 | 4.11 Wi-Fi network editing, Open + WPA-Personal (read-merge-write, change password) — risk: high | pending |
 | 19 | 4.12 "Broadcast on" SSID ↔ AP-group binding editor with capacity checks — risk: high | pending |
@@ -59,138 +60,11 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 
 ## Completed
 
-### Phase 1 — renderer/main bug fixes (2026-08-24)
-- Items 1.1, 1.4, 1.5, 1.12, 1.13, 1.14 (minimal), 1.15, 3.9 implemented in `src/renderer/renderer.ts` and `src/main/index.ts`; details marked per-item in `todo.md`.
-- Acceptance: `npm run build` exit 0 (verified twice, incl. after review fix). No test suite exists.
-- Codex review: `.claude/reviews/phase1-aggregate.md`. One P1 found (the `{success:false}` branch of `connect()` skipped `clearData()` + IPC disconnect) — fixed before commit; verdict otherwise clean.
-- New helper `clearData()` in renderer.ts centralizes data/selection/filter reset; new i18n key `passwordRequired` (es+en).
+### Phases 1–7, GUI smoke, item 1.10, releases v1.0.0 / v1.1.0 (2026-08-24 → 2026-08-29)
 
-### Phase 2 — API client robustness (2026-08-24)
-- Items 1.3, 1.6, 1.7, 1.8, 3.13 implemented in `src/main/omada-api.ts` + `src/main/index.ts`; details per-item in `todo.md`.
-- Key mechanics: cookie jar is a `Map` with per-name merge honoring deletions; `rawRequest()` rejects non-2xx with a 200-char excerpt, 15 s abort timer, 5 MB body cap, all settle paths clear the timer; session expiry (`errorCode -1200`) triggers ONE shared re-login (`sharedRelogin()` + `reloginPromise`) with a single retry via `rawRequest()`; `logout()` (best-effort POST + `clearSessionState()`) runs on `OMADA_DISCONNECT` and `before-quit` (3 s bound, guarded re-entry of `app.quit()`); validators throw `Unsupported API response (...)` on missing required ids, normalize only display fields.
-- Acceptance: `npm run build` exit 0 (after fixes). Orchestrator spot-read of the relogin path.
-- Codex review: `.claude/reviews/phase2-aggregate.md` — 4 findings (1 high: relogin race; 2 medium; 1 low), ALL fixed in a second worker round before commit.
-
-### Phase 3 — config & credential security (2026-08-24)
-- Items 2.1, 2.4, 2.5, 1.14-final, 2.7, 3.6 implemented; `src/main/config.ts` rewritten around an in-memory cache. Details per-item in `todo.md`.
-- Key mechanics: password stored as base64 `safeStorage` blob (`encryptedPassword`), decrypted only in main via `getConnectionCredentials()`; one-time plaintext migration with documented plaintext fallback (+ permission tightening) when encryption is unavailable; TLS callbacks read `getConfiguredUrl()` from cache; `CONFIG_LOAD` returns `{url, username, language, hasPassword}` (hasPassword = blob actually decryptable); renderer omits the password field when blank & stored, main keeps the stored blob and rejects blank-new with `passwordRequired`; atomic writes (temp+rename, dir 0o700 / file 0o600); URL normalized/validated https-only in both renderer (`validateControllerUrl()`) and main (`normalizeControllerUrl()`); new i18n keys `passwordUnchanged`, `invalidUrl`, `saveError` (es+en); `AppConfig` replaced by `RendererConfig`/`ConfigSavePayload`/`ConfigSaveResult` in `src/shared/types.ts`.
-- Acceptance: `npm run build` exit 0; no `readFileSync` in `index.ts`; password never received by renderer (rg-verified).
-- Codex review: `.claude/reviews/phase3-aggregate.md` — 1 high (legacy plaintext file perms when safeStorage unavailable), 1 low (corrupt blob reported as usable). Both fixed by orchestrator before commit (`tightenPermissions()` helper; decryptability-based `hasPassword` + save check).
-- Note: `OMADA_CONNECT`'s hardcoded Spanish error strings predate this work and were left as-is (out of scope; candidate for phase 6 polish).
-
-### Phase 4 — renderer/IPC/cert hardening (2026-08-24)
-- Items 1.9, 2.2, 2.3a, 2.6, 3.14 implemented in `src/renderer/renderer.ts`, `src/renderer/index.html`, `src/renderer/styles.css`, `src/main/index.ts`, `src/main/preload.ts`; details per-item in `todo.md`.
-- Key mechanics: list/selection/empty-state DOM built via `createElement`/`textContent`/`dataset` + `replaceChildren` (helpers `createApListItem`/`createWlanListItem`/`createEmptyState`; `escapeHtml` deleted); MAC/WLAN-id regexes enforced renderer- and main-side (kept in sync — see comments); `sandbox: true` with a sandbox-safe preload (no runtime require of project files; `IPC_CHANNELS` local copy typed `typeof SHARED_IPC_CHANNELS` for drift detection); `certificate-error` compares parsed origins in try/catch; every `ipcMain.handle` starts with `assertTrustedIpcSender()` (sender frame must resolve to the packaged index.html) and `CONFIG_SAVE`/`OMADA_SET_WLAN` payloads are shape-guarded; CSP: `default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'`.
-- Acceptance: `npm run build` exit 0 (verified twice, incl. after review fixes); no `innerHTML`/`insertAdjacentHTML`/inline styles in renderer (rg-verified); compiled preload requires only `electron`.
-- Codex review: `.claude/reviews/phase4-aggregate.md` — 1 P2 (verify-proc accepts any port on the configured hostname) + 1 CSP regression (`data:` SVG select arrow blocked). Both addressed by orchestrator before commit: CSP got `img-src 'self' data:`; the verify-proc bypass was narrowed to self-signed failure classes (`isSelfSignedVerificationResult()`). Full origin scoping in the verify proc is IMPOSSIBLE (Electron's request has no port) and the bypass cannot be removed (the API client uses `net.request`, which `certificate-error` does not cover) — residual same-host-other-port risk documented, closes only with deferred 2.3b TOFU pinning.
-- Not GUI-tested: the sandboxed preload was verified statically (compiled output requires only `electron`); a quick `npm start` smoke test is recommended when a display is available.
-
-### Phase 5 — packaging & platform (2026-08-24)
-- Items 1.2, 3.5, 3.15 implemented in `package.json`, `assets/icon.ico` (new), `src/main/index.ts`, `src/main/preload.ts`, `src/renderer/renderer.ts`, `src/renderer/styles.css`; details per-item in `todo.md`.
-- Key mechanics: `assets/icon.ico` generated from `icon.png` (7 PNG-compressed frames 16–256 px; `file` confirms a valid MS Windows icon resource) so `build.win.icon` resolves; `build.files` excludes `dist/**/*.map` and `dist/**/*.d.ts`; `titleBarStyle` is `'hiddenInset'` on darwin only (`'default'` elsewhere); sandbox-safe preload exposes `platform: process.platform` on the contextBridge; renderer `applyPlatformClass()` tags `<body>` with `platform-<os>` before first paint and the 80 px traffic-light padding lives under `body.platform-darwin .title-bar`. Drag-region CSS intentionally left unscoped (benign on framed windows).
-- Acceptance: `npm run build` exit 0 (worker + orchestrator re-run); no packaging run performed (per phase constraints — `npm run package:win` etc. still untested end-to-end).
-- Codex review: `.claude/reviews/phase5-aggregate.md` — clean, "ready to proceed", no findings.
-
-### Phase 6 — UX improvements (2026-08-24)
-- Items 3.1, 3.2, 3.7, 3.8 + OMADA_CONNECT i18n error codes implemented in `src/renderer/renderer.ts`, `index.html`, `styles.css`, `src/main/index.ts`, `src/shared/types.ts`; details per-item in `todo.md`.
-- Key mechanics: `showToast()` toasts (top-right below header, click-through, aria-live, stack capped at 3, 4 s auto-dismiss) replace all `alert()` calls; header Refresh button + panel spinners (`refreshData()` restores old lists on failure); Enter submits settings (per-field handlers — CSP `form-action 'none'` forbids forms); index.html ships textless and `<body class="pre-init">` hides the UI until `applyTranslations()` (no Spanish/blank flash; init failure paths still reveal the UI); AP/WLAN lists are `role="listbox"`/`role="option"` with roving tabindex, ArrowUp/Down, Enter/Space toggle; modals have `role="dialog"`/`aria-modal`, a Tab focus trap, opener-focus restore, and background `inert` (`updateBackgroundInert()`); async safety via `sessionGeneration` + `invalidateSession()` (every post-await UI commit generation-checked) and per-operation flags behind `isOperationInProgress()` (connect/disconnect/save/apply/refresh mutually exclusive); `OMADA_CONNECT` returns `ConnectionErrorCode` codes mapped in the renderer. New i18n keys (es+en, parity enforced by the `Translations` interface): `refresh`, `loading`, `loadError`, `close`, `configIncomplete`, `connectFailed`, `configureHint`, `configLoadError`.
-- Acceptance: `npm run build` exit 0 (after each round); greps clean (no `alert(`, no inline styles, no `.style.` writes, no Spanish in `src/main/index.ts`).
-- Codex review: `.claude/reviews/phase6-aggregate.md` — first pass found 2 P1 races + 4 P2s (fixed in a worker round); a focused Codex verification pass then confirmed 4/6 closed and re-flagged disconnect serialization + a settings-open race, closed in a second worker round (orchestrator spot-verified). Intentionally untranslated: technical error `detail`, product name, input placeholders, language autonyms.
-
-### Phase 7 — connection flow & multi-site (2026-08-24) — FINAL PHASE
-- Items 1.11, 3.12 implemented in `src/main/omada-api.ts`, `src/main/index.ts`, `src/main/config.ts`, `src/main/preload.ts`, `src/shared/types.ts`, `src/renderer/renderer.ts`, `index.html`, `styles.css`; details per-item in `todo.md`.
-- Key mechanics: `OmadaController.connect(preferredSiteId?)` loads ALL authorized sites (paginated, 100/page, 50-page defensive cap, deduped by id) and never picks silently — auto-select only with exactly one site or a still-authorized stored `config.siteId` (dropped when the URL changes); otherwise `OMADA_CONNECT` parks the controller in a pending `{controller, generation, nonce}` record (NOT installed) and returns `needsSiteSelection` + sites + a 16-byte hex nonce; the renderer's site-selection modal (DOM-built, focus trap, inert background, Escape/Cancel → disconnected) completes via `OMADA_SELECT_SITE` (sender assert, id + nonce format guards, exact pending-record match) which installs the controller and persists the site. Main-process serialization via `connectGeneration`: stale attempts are logged out and reported `connectionSuperseded` (renderer resets local UI only — no IPC); `OMADA_DISCONNECT` takes an optional ownership nonce; pending record cleared+released on newer connect, disconnect, and quit. New i18n keys: `siteSelectionTitle`, `siteSelectionMessage`, `siteSelectError`, `connectionSuperseded` (es+en).
-- Acceptance: `npm run build` exit 0 (after each round); invariant greps clean (no inline styles/innerHTML, 8/8 handlers assert sender, preload sandbox-safe, no Spanish in main).
-- Codex review: `.claude/reviews/phase7-aggregate.md` — 3 P2s (superseded-attempt cleanup disconnecting the newer controller; OMADA_SELECT_SITE not bound to a pending selection; site pagination), all fixed in a worker round per the review's own recommended designs; orchestrator spot-verified the pending-record mechanics.
-- Not tested against a live controller (single- or multi-site) — see Open risks.
-
-### GUI smoke test (2026-08-29)
-
-First real launch of the app since phase 4. Driven with Playwright's
-`_electron` API; script kept at `scratchpad/smoke.mjs` (26 assertions:
-window/preload/sandbox, translations, modal focus + trap + inert, URL
-validation, connect-without-config, console/main-process errors).
-
-- **Verified working:** single window loads the packaged renderer; the
-  sandboxed preload exposes all 9 `omadaAPI` members with no `require`/
-  `process` leaking into the renderer; `platform-darwin` body class; every
-  string translated with no blank/Spanish flash; the `data:` select-arrow
-  renders (phase-4 CSP fix holds); non-https URL rejected renderer-side with
-  no config file written; Tab/Shift+Tab focus trap holds in both directions;
-  zero console errors, zero page errors, zero main-process output.
-- **Bug found and fixed:** opening any modal left keyboard focus on `<body>`.
-  `.modal-overlay` used `transition: all`, so `visibility` was still computed
-  as `hidden` at the instant `openSettings()` called `urlInput.focus()`, and a
-  `visibility: hidden` subtree is not focusable — the call was a silent no-op
-  on every open path, including the first-run auto-open. Confirmed by probe
-  (identical `focus()` call succeeds once the transition finishes). Fixed in
-  `styles.css` by transitioning `opacity`/`visibility` explicitly and
-  overriding `visibility 0s` in `.modal-overlay.visible`. One fix covers all
-  three modals (settings, confirm, site selection). 26/26 checks pass after.
-- Environment gotchas (both caused by the repo living in Dropbox, which
-  strips symlinks and exec bits): `node_modules/electron/dist` unpacks
-  broken — Electron must be extracted to `/private/tmp` and launched from
-  there; and `node_modules/app-builder-bin/mac/app-builder_arm64` loses its
-  executable bit, which fails electron-builder with `EACCES` until re-chmodded.
-
-### Release v1.0.0 (2026-08-29)
-
-- Artifacts: `Omada WLAN Manager-1.0.0-arm64.dmg` (93 MB) and a matching
-  `-mac.zip`, built by `electron-builder --mac` from commit `3918c8d`.
-  **arm64 only** — no Intel or universal build.
-- Signed with `Developer ID Application: Carlos Carpio García (CXVKS8ZNCD)`,
-  hardened runtime on. The `.app` and the `.dmg` are each notarized and
-  stapled; both report `accepted / source=Notarized Developer ID`, and the app
-  still does so when checked from inside the mounted image.
-- Notarization runs through the `AC_NOTARY_PROFILE` notarytool keychain
-  profile (see `SIGN_AND_NOTARIZE.md` in the user's OneDrive). In
-  `package.json`, `mac.notarize` MUST stay a plain `true`: adding a `teamId`
-  makes @electron/notarize read it as password credentials, which collides
-  with the keychain profile and aborts the build.
-- Packaged-app smoke test: 10/10 (runs from inside `app.asar`, preload bridge
-  intact, focus fix present in the shipped build).
-- **Published** on GitHub 2026-08-29:
-  https://github.com/ccarpiog/OmadaWLANManager-Electron/releases/tag/v1.0.0 —
-  tag `v1.0.0` points at commit `a209965`. Published after the user confirmed
-  the app works against a live controller.
-- Build must NOT use the default `./release` output dir: it lives in Dropbox,
-  which strips the symlinks inside `Electron.app` and produces a broken
-  bundle. Build to `/private/tmp` and copy the finished `.dmg` back if needed.
-  For the same reason `codesign` must select the identity by SHA-1 hash, not
-  by name — the "í" in the name is mangled under a non-UTF-8 locale.
-
-### Item 1.10 — AP status-category mapping (2026-08-29, post-v1.0.0)
-
-- `isOnline` (categories 1 and 2 green, everything else red) replaced by an
-  `AP_STATUS` table + `getApStatus()` in `renderer.ts`: 0 disconnected (red),
-  1 connected (green), 2 pending/adopting (blue), 3 heartbeat missed and
-  4 isolated (orange, distinguished by label), unknown → grey fallback so a
-  category added by future firmware cannot look like a dead AP. The status dot
-  gained `title` + `role="img"`/`aria-label`, so state is no longer
-  colour-only. Six new `statusAp*` i18n keys (es+en).
-- Verified with `scratchpad/smoke-status.mjs` (23/23): the main-process IPC
-  handlers are stubbed so the renderer walks its real connect → loadData →
-  renderApList path over one AP per category. **Not** verified against live
-  hardware — the numeric → meaning mapping remains the documented Omada one.
-- **Test isolation matters now:** the user has a real config in
-  `~/.omada-wlan-manager/`, so the app auto-connects to their live controller
-  on startup. Every smoke script launches Electron with `HOME` pointed at
-  `scratchpad/fakehome` to keep tests off that controller and off the real
-  config. Do not drop that override.
-
-### Release v1.1.0 (2026-08-29)
-
-- Ships item 1.10 (AP status categories) plus the modal focus fix that v1.0.0
-  already contained. Minor, not patch: the status states are user-visible new
-  behaviour, not a silent correction.
-- `Omada WLAN Manager-1.1.0-arm64.dmg`, arm64 only. App and disk image both
-  signed, notarized and stapled; both report
-  `accepted / source=Notarized Developer ID`.
-- Verified before publishing: source-tree smoke 26/26, packaged-app smoke
-  10/10, status-category rendering 23/23 **against the packaged app**
-  (`PACKAGED=1 node smoke-status.mjs`).
-- `notarize-dmg.sh` now globs the `.dmg` instead of hard-coding a version, so
-  it survives future releases.
+- Full narratives moved to `docs/progress-archive/phases-1-7-and-releases.md` (reviews in `.claude/reviews/`).
+- Release gotchas still in force: build to `/private/tmp`, never `./release` (Dropbox strips the symlinks in `Electron.app`); `codesign` selects the identity by SHA-1 hash (the "í" in the name breaks under a non-UTF-8 locale); `mac.notarize` stays a plain `true` (notarytool keychain profile `AC_NOTARY_PROFILE`, see `SIGN_AND_NOTARIZE.md` in the user's OneDrive); `notarize-dmg.sh` globs the `.dmg`. Releases are arm64 only. Smoke scripts must keep `HOME` on a temp dir: the user's real config auto-connects to the live controller.
+- v1.0.0 (tag at `a209965`) and v1.1.0 are published on GitHub; the user confirmed v1.0.0 against a live controller on 2026-08-29.
 
 ### Phase 8 — renderer modularization with esbuild (2026-10-06)
 
@@ -275,7 +149,15 @@ validation, connect-without-config, console/main-process errors).
 - Acceptance met: build exit 0; `npm test` 580/580; smoke 144/144 (new `[caps]` launch: banner per reason, Test results, es + en); `npm run tls-probe` 25/25 (nothing reaches the server before trust; the token request follows `/api/info` + login on the controller session; reset drops the token; a credentials save + reconnect makes exactly one token request); no `innerHTML`; preload `electron`-only.
 - Review: Codex, `docs/reviews/phase15b.md`, ship-with-fixes, 2 blockers (a new connect left the old Open API session usable until the new login; `close()` kept tokens in `#knownTokens`) + 1 should-fix (a credentials save started a probe overlapping the reconnect's), all fixed by an opus worker, each with a test that fails when reverted; orchestrator re-ran build, tests, smoke and probe, all green.
 
-## Plan status: ACTIVE — phases 8–15b done, phases 16–20 pending
+### Phase 16a — AP group operations and IPC (2026-10-07)
+
+- Risk: high. Workers: opus (phase), opus (review fixes). Full narrative, incl. the unverified API behaviors for the phase 20 checklist: `docs/progress-archive/phase-16a.md`.
+- Phase 16 (todo 4.9) was split before starting: 16a = main-side operations + IPC + contract tests, 16b = UI + smoke (recorded in `todo.md` 4.9).
+- New: `OpenApiClient.createApGroup/renameApGroup/deleteApGroup` (v1; POST/PATCH body `{name}`, DELETE no body); pure `ap-group-policy.ts` (names 1–128, no control/bidi, no case-insensitive duplicate; delete codes `groupIsDefault`, `groupNotEmpty`, `groupHasNetworks`, `groupNotFound`, `groupStateUnknown`); `ControllerSession` re-reads the list before every write, `managementUnavailable` when off, writes serialized, `superseded` on invalidation; pure `ipc-guards.ts`; channels `management:ap-groups` (read: `ManagedApGroup` + `ssidLimits`) and `management:ap-group-create|rename|delete`; preload `getManagedApGroups`/`createApGroup`/`renameApGroup`/`deleteApGroup`; stub channels with `apGroupOverrides`/`apGroupSsidLimits`/`apGroupResults`/`apGroupWrites`. No user-facing strings.
+- Acceptance met: build exit 0; `npm test` 638/638; smoke 145/145; `npm run tls-probe` 25/25; preload `electron`-only; no conflicted copies.
+- Review: Codex, `docs/reviews/phase16a.md`, ship-with-fixes. Blocker (`ssidNameList: [null]` filtered to "no bindings" allowed a delete) → lists kept only when all strings, else unknown → `groupStateUnknown`; should-fix (create's missing-id fallback turned `superseded` into success) → propagated. Fixed by an opus worker with tests that fail on revert; orchestrator re-ran build, tests, smoke and probe, all green.
+
+## Plan status: ACTIVE — phases 8–16a done, phases 16b–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -334,14 +216,20 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
   the probe's proof that Open API calls use the controller session leans on Electron caching a first-use
   rejection in the default session; that internal and Open API site / AP-group ids are the same values is
   unverified live — add it to the phase 20 checklist.
+- Phase 16a leftovers (none blocking): six unverified AP-group API behaviors (POST without `apMacs` and its
+  `result.id`, PATCH name-only, error codes -33200/-33201/-33203, duplicate-name handling, what `apNum` /
+  `ssidNameList` count, `remainingBinding` keys and `maxSsids*`, the 128-character rule) — listed in
+  `docs/progress-archive/phase-16a.md`, add them to the phase 20 checklist; groups with a non-24-hex id are
+  listed but not writable (16b must mirror the rule); the new smoke check prints stack traces for its
+  deliberately malformed IPC calls (expected, the run still passes).
 
 ## Next action
 
-**Phase 16 — todo 4.9: AP group management (risk: high).** First read `todo.md` item 4.9, then `docs/management-design.md` §3 (IPC rules), §4 (the AP groups view, the "Move access points here" flow) and §5 (defensive defaults) only, `docs/omada-openapi-ops.md` for the AP-group create / rename / delete operations, and `docs/progress-archive/phase-15b.md` (what `ControllerSession`, the capabilities and the two management IPC channels already provide). Consider splitting it (e.g. 16a main-side operations + contract tests, 16b UI + smoke) before starting if one worker cannot finish it coherently; record any split in `todo.md` 4.9.
+**Phase 16b — todo 4.9 second half: AP group management UI (risk: high).** First read `todo.md` item 4.9 (incl. its "Done (16a)" paragraph), then `docs/management-design.md` §4.1 (vocabulary), §4.4 (AP groups view) and §4.6–§4.7 (states, keyboard, widths) only, and `docs/progress-archive/phase-16a.md` (the channels, the `ManagedApGroup` DTO, the policy codes, the stub knobs). Do not re-read the ops doc unless a code is unclear.
 
-- Create (empty, name only), rename, delete — delete only when the group is non-default, has 0 APs and no SSID bindings (app policy, spec §2/§5) — through the `ControllerSession`'s `OpenApiClient` (pinned session, same invalidation). Show per-band capacity (`remainingBinding`, already validated by `listApGroups()` in 15a; phase 14a leftover). "Move access points here" reuses the phase-13 move flow over the internal API (`OMADA_SET_WLAN`), not the Open API.
-- New IPC channels follow spec §3: `assertTrustedIpcSender()`, shape-guarded payloads, the session nonce from 15b, stable error codes, no raw responses or secrets in replies; the preload stays `electron`-only. All actions are available only when the capabilities say management is on; otherwise the UI is hidden or explained by the existing `readOnlyReason()` banner. After each change, reload so the AP groups view, the destination pane and the capabilities' id-set check stay consistent. Renaming can resolve the phase 13b leftover (same-named groups disabled as move targets).
-- Acceptance (todo 4.9): contract tests against fixtures for each Open API call (method, path version, body); smoke (stubbed main): create → rename → delete blocked when non-empty → delete empty; UI hidden/explained when the capability is off; es + en. No live controller (D4). `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
+- In the AP groups view, only when the capabilities say management is on (otherwise the existing `readOnlyReason()` banner explains it and no action is shown): **New group** (name only), **Rename**, **Delete** — delete disabled with the reason (default / has APs / has networks / state unknown) mapped from the 16a policy codes, with a confirmation dialog; every 16a error code (incl. `managementUnavailable`, `superseded`, name rules, duplicates, `groupNotFound`) mapped to es + en text. Groups whose id is not 24 hex digits get no write actions (mirror the main-side rule). Fetch `getManagedApGroups()` with the session nonce for per-band capacity (`remainingBinding`, `ssidLimits`) and show it in the group detail; absent fields stay absent ("not reported"), never invented.
+- **Move access points here** in the group detail reuses the phase-13 move flow over the internal API (`OMADA_SET_WLAN`), e.g. navigate to Access points with this group as the destination; never the Open API. After each create / rename / delete, reload so the AP groups view, the destination pane and the capabilities stay consistent; renaming resolves the phase 13b same-name leftover. Dialogs follow the existing `modal-focus.ts` pattern (focus trap, inert background, Escape = Cancel, focus restored); the Escape order uses the `isEditModeActive()` / `exitEditMode()` stubs from 14b if inline editing is used. Mind the < 800 px single-pane layout.
+- Acceptance (todo 4.9): smoke (stubbed main, knobs `apGroupOverrides` / `apGroupSsidLimits` / `apGroupResults` / `apGroupWrites`): create → rename → delete blocked when non-empty → delete empty; actions hidden / explained when the capability is off; es + en; capacity shown; Move access points here reaches the review dialog. `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0. No live controller (D4). When 16b closes, mark todo 4.9 ✅ and phase 16 done.
 
 ## Key paths
 
@@ -353,7 +241,7 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - `src/main/index.ts` — window creation, IPC handlers, cert verification
 - `src/main/omada-api.ts` — OmadaController HTTP client (`getWlanGroups()` → `GroupListing`: `setting/wlans` outer-joined with `setting/ssids`, legacy fallback); `src/main/controller-version.ts` — `controllerVer` → `groupModel`
 - `src/main/config.ts` — config persistence (save rules in the pure `config-model.ts`, incl. the Client ID / Client Secret rules and `secureSecretStorageAvailable()`)
-- `src/main/controller-session.ts` — `ControllerSession` facade (internal client + Open API client, capability checks and reason codes); `src/renderer/management.ts` — capabilities state + "Test management access"
+- `src/main/controller-session.ts` — `ControllerSession` facade (internal client + Open API client, capability checks and reason codes, AP-group writes); `src/main/ap-group-policy.ts` (pure name + delete policy), `src/main/ipc-guards.ts` (pure IPC shape / nonce / id guards); `src/renderer/management.ts` — capabilities state + "Test management access"
 - `src/main/openapi-client.ts` — Electron-free Open API client (token lifecycle, v1/v2 paths, pagination, `listSites()` / `listApGroups()`); `src/main/redact.ts` — central redactor; `src/renderer/management-form.ts` — Settings "Management access (optional)"
 - `src/main/cert-pinning.ts` (pure pin decision + fingerprint), `cert-verify.ts` (verify proc, `certificate-error`, `ControllerTlsSessions`), `connection-manager.ts` (connect / site selection / trust / reset / `invalidateControllerState()`, Electron-free); `src/renderer/cert-modal.ts`
 - `tests/tls-probe/` — opt-in `npm run tls-probe` (local HTTPS servers, real Electron)
@@ -376,3 +264,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 14b: `b68ea14` ("Add view states, the read-only banner and the responsive layout"), pushed to origin/main (`9567098..b68ea14`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 15a: `a14415d` ("Add optional Open API credentials, an Open API client and a central redactor"), pushed to origin/main (`72faed9..a14415d`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 15b: `1bcc5ea` ("Add the controller session, management capability checks and a test button"), pushed to origin/main (`4a259f6..1bcc5ea`). A follow-up commit records this SHA. Tree clean after it.
+- Phase 16a: committed and pushed with this checkpoint; the SHA is recorded by the follow-up commit.

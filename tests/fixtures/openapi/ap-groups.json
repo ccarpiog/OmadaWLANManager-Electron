@@ -32,7 +32,7 @@
       "expected": { "id": "6501c0ffee0000000000b003", "name": "" }
     },
     {
-      "name": "insane optional fields are dropped or filtered (primary not true, negative or fractional apNum, non-string SSID names, bad bindings)",
+      "name": "insane optional fields are dropped (primary not true, negative apNum, an SSID list with non-string entries is left out whole, never filtered), bad bindings filtered",
       "entry": {
         "id": "6501c0ffee0000000000b004",
         "name": "Aulas",
@@ -44,14 +44,28 @@
       "expected": {
         "id": "6501c0ffee0000000000b004",
         "name": "Aulas",
-        "ssidNameList": ["Aulas", "Profes"],
         "remainingBinding": { "0": 2 }
       }
     },
     {
-      "name": "fractional apNum and a remainingBinding array are left out",
+      "name": "fractional apNum, a non-array SSID list and a remainingBinding array are left out",
       "entry": { "id": "6501c0ffee0000000000b005", "name": "Patio", "apNum": 2.5, "ssidNameList": "Casa", "remainingBinding": [1, 2] },
       "expected": { "id": "6501c0ffee0000000000b005", "name": "Patio" }
+    },
+    {
+      "name": "an SSID list of only null is unknown (left out), not an empty list",
+      "entry": { "id": "6501c0ffee0000000000b007", "name": "Patio", "apNum": 0, "ssidNameList": [null] },
+      "expected": { "id": "6501c0ffee0000000000b007", "name": "Patio", "apNum": 0 }
+    },
+    {
+      "name": "an SSID list of only numbers is unknown (left out), not an empty list",
+      "entry": { "id": "6501c0ffee0000000000b008", "name": "Patio", "apNum": 0, "ssidNameList": [42] },
+      "expected": { "id": "6501c0ffee0000000000b008", "name": "Patio", "apNum": 0 }
+    },
+    {
+      "name": "a string apNum is left out (unknown, never 0)",
+      "entry": { "id": "6501c0ffee0000000000b009", "name": "Patio", "apNum": "0", "ssidNameList": [] },
+      "expected": { "id": "6501c0ffee0000000000b009", "name": "Patio", "ssidNameList": [] }
     }
   ],
   "invalid": [

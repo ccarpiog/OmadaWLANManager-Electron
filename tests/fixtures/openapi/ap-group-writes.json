@@ -1,0 +1,60 @@
+{
+  "description": "The documented contract of the Open API AP-group write calls (docs/omada-openapi-ops.md, controller 6.3.0.45 spec) used by the OpenApiClient contract tests: method, versioned path, exact request body, documented success answers, answers whose id is unusable, and the documented operation-specific errorCodes. Paths use {omadacId}, {siteId} and {apGroupId} placeholders.",
+  "siteId": "64f0c0ffee0000000000a001",
+  "apGroupId": "6501c0ffee0000000000b002",
+  "create": {
+    "method": "POST",
+    "path": "/openapi/v1/{omadacId}/sites/{siteId}/ap-groups",
+    "name": "Aulas planta 2",
+    "body": { "name": "Aulas planta 2" },
+    "success": { "errorCode": 0, "msg": "Success.", "result": { "id": "6501c0ffee0000000000b0aa" } },
+    "expectedId": "6501c0ffee0000000000b0aa",
+    "successWithoutUsableId": [
+      { "errorCode": 0, "msg": "Success.", "result": {} },
+      { "errorCode": 0, "msg": "Success." },
+      { "errorCode": 0, "msg": "Success.", "result": null },
+      { "errorCode": 0, "msg": "Success.", "result": { "id": 42 } },
+      { "errorCode": 0, "msg": "Success.", "result": { "id": "" } },
+      { "errorCode": 0, "msg": "Success.", "result": "6501c0ffee0000000000b0aa" }
+    ],
+    "errors": [
+      { "errorCode": -33000, "msg": "This site does not exist." },
+      { "errorCode": -33200, "msg": "This WLAN group has been already created." },
+      { "errorCode": -33201, "msg": "The number of WLAN groups has reached the limit." },
+      { "errorCode": -33202, "msg": "This WLAN group is not in the same site." }
+    ]
+  },
+  "rename": {
+    "method": "PATCH",
+    "path": "/openapi/v1/{omadacId}/sites/{siteId}/ap-groups/{apGroupId}",
+    "name": "Aulas planta 3",
+    "body": { "name": "Aulas planta 3" },
+    "success": { "errorCode": 0, "msg": "Success." },
+    "errors": [
+      { "errorCode": -33000, "msg": "This site does not exist." },
+      { "errorCode": -33200, "msg": "This WLAN group has been already created." }
+    ]
+  },
+  "delete": {
+    "method": "DELETE",
+    "path": "/openapi/v1/{omadacId}/sites/{siteId}/ap-groups/{apGroupId}",
+    "success": { "errorCode": 0, "msg": "Success." },
+    "errors": [
+      { "errorCode": -33203, "msg": "The default WLAN group cannot be deleted." }
+    ]
+  },
+  "limits": {
+    "valid": {
+      "result": { "totalRows": 0, "currentPage": 1, "currentSize": 100, "data": [], "maxSsids2G": 8, "maxSsids5G": 8, "maxSsids6G": 16, "maxSsidsMlo": 4 },
+      "expected": { "band2g": 8, "band5g": 8, "band6g": 16, "mlo": 4 }
+    },
+    "insane": {
+      "result": { "data": [], "maxSsids2G": -1, "maxSsids5G": 2.5, "maxSsids6G": "8", "maxSsidsMlo": 0 },
+      "expected": { "mlo": 0 }
+    },
+    "absent": {
+      "result": { "data": [] },
+      "expected": {}
+    }
+  }
+}

@@ -41,22 +41,50 @@
 // every reply built here carry flags, reason codes and a diagnostic made of
 // error codes and counts only — never the Client Secret, a token or
 // controller text. Electron-free (unit-tested in
-// tests/unit/controller-session.test.ts).
+// tests/unit/controller-session.test.ts and tests/unit/ap-group-management.test.ts).
+//
+// AP-group management (todo.md 4.9; spec §3, §4.4): listManagedApGroups(),
+// createApGroup(), renameApGroup() and deleteApGroup() are the only callers
+// of the Open API client's AP-group calls. Each one is bound to this session
+// and to the Open API client of its latest successful check run: it refuses
+// unless the capabilities say AP-group management is on
+// ('managementUnavailable'), and after every await it stops — sending nothing
+// more and discarding a late answer ('superseded') — once the session is
+// closed or no longer installed, or its Open API client was dropped (a new
+// check run, a management-credentials save): the 15b invalidation, nothing
+// parallel. The name rules and the delete policy (ap-group-policy.ts) are
+// decided here on FRESH Open API data read right before the write, never on
+// what the renderer believed; the writes of one session run one at a time,
+// so two of them cannot both pass the same check.
 
 import type {
   AccessPoint,
+  ApGroupActionResult,
+  ApGroupCreateRequest,
+  ApGroupDeleteRequest,
+  ApGroupOperationError,
+  ApGroupRenameRequest,
   ConfigSavePayload,
   GroupListing,
   GroupModel,
+  ManagedApGroupsResult,
   ManagementCapabilities,
   ManagementCapabilitiesResult,
   ManagementReason,
   SiteInfo
 } from '../shared/types';
+import {
+  AP_GROUP_ID_REGEX,
+  checkApGroupDeletion,
+  hasApGroupNameConflict,
+  toApGroupSsidLimits,
+  toManagedApGroup,
+  validateApGroupName
+} from './ap-group-policy';
 import { ConnectionManager, createNonce, InstalledDetails, ManagedController } from './connection-manager';
 import { ConnectOutcome, OmadaController } from './omada-api';
 import type { OmadaTransport } from './omada-transport';
-import { OpenApiClient, OpenApiClientOptions, OpenApiError } from './openapi-client';
+import { OpenApiApGroupList, OpenApiClient, OpenApiClientOptions, OpenApiError } from './openapi-client';
 import { redactText } from './redact';
 
 /** The Open API credentials (main process only — never over IPC or in a log). */
@@ -209,6 +237,84 @@ export function applyManagementAccessChange(manager: ConnectionManager<Controlle
   }
 }
 
+/** The AP-group write operations (diagnostics and the controller error-code table). */
+export type ApGroupWriteOperation = 'create' | 'rename' | 'delete';
+
+/** A failed AP-group reply (assignable to both ManagedApGroupsResult and ApGroupActionResult). */
+export interface ApGroupFailure {
+  success: false;
+  error: ApGroupOperationError;
+  diagnostic?: string;
+}
+
+// The documented, operation-specific controller errorCodes of the AP-group
+// write endpoints (docs/omada-openapi-ops.md) and the stable codes they map
+// to; every other failure is 'requestFailed'. Unverified live (phase 20)
+const AP_GROUP_CONTROLLER_ERRORS: Record<ApGroupWriteOperation, ReadonlyMap<number, ApGroupOperationError>> = {
+  // -33200 "This WLAN group has been already created", -33201 "The number of
+  // WLAN groups has reached the limit"
+  create: new Map<number, ApGroupOperationError>([
+    [-33200, 'nameTaken'],
+    [-33201, 'groupLimitReached']
+  ]),
+  rename: new Map<number, ApGroupOperationError>([[-33200, 'nameTaken']]),
+  // -33203 "The default WLAN group cannot be deleted"
+  delete: new Map<number, ApGroupOperationError>([[-33203, 'groupIsDefault']])
+};
+
+/**
+ * Builds a failed AP-group reply.
+ * @param {ApGroupOperationError} error - The stable error code.
+ * @param {string} [diagnostic] - Codes-only technical detail.
+ * @returns {ApGroupFailure} The reply.
+ */
+export function apGroupFailure(error: ApGroupOperationError, diagnostic?: string): ApGroupFailure {
+  return diagnostic ? { success: false, error, diagnostic } : { success: false, error };
+}
+
+/**
+ * Tells whether an intermediate value of an AP-group operation is a failed reply.
+ * @param {unknown} value - The value.
+ * @returns {value is ApGroupFailure} True for a failure.
+ */
+function isApGroupFailure(value: unknown): value is ApGroupFailure {
+  return typeof value === 'object' && value !== null && (value as { success?: unknown }).success === false;
+}
+
+/**
+ * Maps a failed Open API call of an AP-group operation to a stable code and a
+ * codes-only diagnostic: a closed client is 'superseded' (the session moved
+ * on; its late answer is not reported), a documented errorCode of the write
+ * maps per operation (AP_GROUP_CONTROLLER_ERRORS), anything else is
+ * 'requestFailed' — never controller text.
+ * @param {ApGroupWriteOperation | 'list'} operation - The failed call ('list': the AP-group read).
+ * @param {unknown} error - The thrown value.
+ * @returns {ApGroupFailure} The failed reply.
+ */
+export function describeApGroupFailure(operation: ApGroupWriteOperation | 'list', error: unknown): ApGroupFailure {
+  if (error instanceof OpenApiError && error.code === 'clientClosed') {
+    return apGroupFailure('superseded');
+  }
+  const diagnostic = describeOpenApiFailure(error);
+  if (operation !== 'list' && error instanceof OpenApiError && error.code === 'apiError' && error.controllerErrorCode !== null) {
+    const mapped = AP_GROUP_CONTROLLER_ERRORS[operation].get(error.controllerErrorCode);
+    if (mapped !== undefined) {
+      return apGroupFailure(mapped, diagnostic);
+    }
+  }
+  return apGroupFailure('requestFailed', operation === 'list' ? `ap-groups: ${diagnostic}` : diagnostic);
+} // End of function describeApGroupFailure()
+
+/**
+ * One AP-group operation's view of management access: the verified Open API
+ * client, the site, and whether the operation may still act.
+ */
+interface ManagementContext {
+  client: OpenApiClient;
+  siteId: string;
+  isCurrent(): boolean;
+}
+
 /**
  * One connected controller: the internal client, the Open API client once
  * management access is verified, and the capabilities (see the header).
@@ -238,6 +344,9 @@ export class ControllerSession implements ManagedController {
   // of phases 16–19), and the client of the run in flight
   #openApi: OpenApiClient | null = null;
   #checkClient: OpenApiClient | null = null;
+  // The tail of this session's AP-group writes: each write starts once the
+  // previous one settled (#serializeWrite())
+  #writeChain: Promise<unknown> = Promise.resolve();
 
   /**
    * Creates the session. Nothing is sent until connect().
@@ -415,6 +524,76 @@ export class ControllerSession implements ManagedController {
    */
   setApWlanGroup(mac: string, wlanId: string): Promise<boolean> {
     return this.#internal.setApWlanGroup(mac, wlanId);
+  }
+
+  /**
+   * The site's AP groups for the management views (Open API, management on
+   * only): each group's id, name, default flag and — when reported sanely —
+   * AP count, bound network names and per-band remaining capacity, plus the
+   * per-group SSID limits. A truncated list is refused ('groupListIncomplete').
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<ManagedApGroupsResult>} The reply.
+   */
+  async listManagedApGroups(isInstalled: () => boolean): Promise<ManagedApGroupsResult> {
+    return this.#guarded('list', async () => {
+      const context = await this.#managementContext(isInstalled);
+      if (isApGroupFailure(context)) {
+        return context;
+      }
+      const list = await this.#readApGroups(context);
+      if (isApGroupFailure(list)) {
+        return list;
+      }
+      const reply: ManagedApGroupsResult = { success: true, groups: list.items.map(toManagedApGroup) };
+      const ssidLimits = toApGroupSsidLimits(list.limits);
+      if (ssidLimits !== undefined) {
+        reply.ssidLimits = ssidLimits;
+      }
+      return reply;
+    }); // End of the guarded list operation
+  } // End of function listManagedApGroups()
+
+  /**
+   * Creates an empty AP group (name only). The name is trimmed and validated
+   * first (no request for an invalid one), then — on a fresh AP-group list —
+   * refused when another group has it; the POST follows. The new group's id
+   * comes from the answer, or (unverified answer shape) from a fresh list:
+   * the one group with this name that was not listed before; when that is
+   * not exactly one group, or that read fails, the reply carries no id —
+   * unless the operation was invalidated meanwhile: then it is 'superseded'.
+   * @param {string} rawName - The name as typed (shape-checked by the IPC guard).
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<ApGroupActionResult>} The reply.
+   */
+  createApGroup(rawName: string, isInstalled: () => boolean): Promise<ApGroupActionResult> {
+    return this.#serializeWrite(() => this.#guarded('create', () => this.#create(rawName, isInstalled)));
+  }
+
+  /**
+   * Renames an AP group. On a fresh AP-group list: the id must be listed
+   * ('groupNotFound'), the name must differ from its current one
+   * ('nameUnchanged', nothing sent) and from every other group's name
+   * ('nameTaken'); then the PATCH carries the name only.
+   * @param {string} apGroupId - The group id (format-checked by the IPC guard).
+   * @param {string} rawName - The new name as typed.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<ApGroupActionResult>} The reply.
+   */
+  renameApGroup(apGroupId: string, rawName: string, isInstalled: () => boolean): Promise<ApGroupActionResult> {
+    return this.#serializeWrite(() => this.#guarded('rename', () => this.#rename(apGroupId, rawName, isInstalled)));
+  }
+
+  /**
+   * Deletes an AP group under the app's delete policy, re-checked on a fresh
+   * AP-group list read right before the DELETE (checkApGroupDeletion():
+   * groupNotFound, groupIsDefault, groupNotEmpty, groupHasNetworks,
+   * groupStateUnknown) — whatever the renderer showed.
+   * @param {string} apGroupId - The group id (format-checked by the IPC guard).
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<ApGroupActionResult>} The reply.
+   */
+  deleteApGroup(apGroupId: string, isInstalled: () => boolean): Promise<ApGroupActionResult> {
+    return this.#serializeWrite(() => this.#guarded('delete', () => this.#delete(apGroupId, isInstalled)));
   }
 
   /**
@@ -618,6 +797,256 @@ export class ControllerSession implements ManagedController {
       }
     }
   } // End of function #check()
+
+  /**
+   * Runs this session's AP-group writes one at a time: `operation` starts once
+   * every earlier write settled, so the fresh-data checks of one write always
+   * see the result of the previous one.
+   * @param {() => Promise<T>} operation - The write (never rejects: see #guarded()).
+   * @returns {Promise<T>} Its result.
+   */
+  #serializeWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.#writeChain.then(operation);
+    this.#writeChain = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Runs one AP-group operation, turning an unexpected exception into
+   * 'requestFailed' (logged by its name only, through the redactor).
+   * @param {ApGroupWriteOperation | 'list'} operation - The operation (for the log).
+   * @param {() => Promise<T>} body - The operation.
+   * @returns {Promise<T | ApGroupFailure>} Its reply, or the failure.
+   */
+  async #guarded<T>(operation: ApGroupWriteOperation | 'list', body: () => Promise<T>): Promise<T | ApGroupFailure> {
+    try {
+      return await body();
+    } catch (error) {
+      console.warn(redactText(`AP group ${operation} failed unexpectedly: ${error instanceof Error ? error.name : 'unknown error'}`));
+      return apGroupFailure('requestFailed', 'unexpected');
+    }
+  } // End of function #guarded()
+
+  /**
+   * Logs a failed AP-group request (stable code + codes-only diagnostic,
+   * through the redactor) and returns the failure.
+   * @param {ApGroupWriteOperation | 'list'} operation - The operation.
+   * @param {ApGroupFailure} failure - The failure.
+   * @returns {ApGroupFailure} The same failure.
+   */
+  #logFailure(operation: ApGroupWriteOperation | 'list', failure: ApGroupFailure): ApGroupFailure {
+    if (failure.error !== 'superseded') {
+      console.warn(redactText(`AP group ${operation} failed: ${failure.error}${failure.diagnostic ? ` (${failure.diagnostic})` : ''}`));
+    }
+    return failure;
+  }
+
+  /**
+   * The management context of one AP-group operation: waits for the
+   * capabilities (a run in flight, or one started when none is known), then
+   * requires AP-group management on and takes the Open API client of that
+   * run. `isCurrent()` is false once the session is closed or no longer
+   * installed, or that client was dropped or closed (any newer check run,
+   * a management-credentials save, close()).
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<ManagementContext | ApGroupFailure>} The context, or
+   *   'superseded' / 'managementUnavailable'.
+   */
+  async #managementContext(isInstalled: () => boolean): Promise<ManagementContext | ApGroupFailure> {
+    if (this.#closed || !isInstalled()) {
+      return apGroupFailure('superseded');
+    }
+    const capabilities = await this.waitForCapabilities();
+    if (capabilities === null || this.#closed || !isInstalled()) {
+      return apGroupFailure('superseded');
+    }
+    if (!capabilities.manageApGroups) {
+      return apGroupFailure('managementUnavailable');
+    }
+    const client = this.#openApi;
+    const site = this.site;
+    if (client === null || client.isClosed || site === null) {
+      // The capabilities were replaced meanwhile (a newer check run)
+      return apGroupFailure('superseded');
+    }
+    return {
+      client,
+      siteId: site.id,
+      /**
+       * Whether the operation may still act (see above).
+       * @returns {boolean} True while this session and its client are current.
+       */
+      isCurrent: () => !this.#closed && isInstalled() && this.#openApi === client && !client.isClosed
+    };
+  } // End of function #managementContext()
+
+  /**
+   * Reads the site's AP groups fresh from the Open API. A truncated list is
+   * refused: the name and delete rules need the complete list.
+   * @param {ManagementContext} context - The operation's context.
+   * @returns {Promise<OpenApiApGroupList | ApGroupFailure>} The list, or the failure.
+   */
+  async #readApGroups(context: ManagementContext): Promise<OpenApiApGroupList | ApGroupFailure> {
+    let list: OpenApiApGroupList;
+    try {
+      list = await context.client.listApGroups(context.siteId);
+    } catch (error) {
+      if (!context.isCurrent()) {
+        return apGroupFailure('superseded');
+      }
+      return this.#logFailure('list', describeApGroupFailure('list', error));
+    }
+    if (!context.isCurrent()) {
+      return apGroupFailure('superseded');
+    }
+    if (list.truncated) {
+      return this.#logFailure('list', apGroupFailure('groupListIncomplete', 'ap-groups truncated'));
+    }
+    return list;
+  } // End of function #readApGroups()
+
+  /**
+   * Turns the failure of an AP-group write into its reply: 'superseded' when
+   * the operation is no longer current (its late answer is discarded),
+   * otherwise the mapped, logged failure.
+   * @param {ApGroupWriteOperation} operation - The write.
+   * @param {ManagementContext} context - The operation's context.
+   * @param {unknown} error - The thrown value.
+   * @returns {ApGroupFailure} The failure.
+   */
+  #writeFailed(operation: ApGroupWriteOperation, context: ManagementContext, error: unknown): ApGroupFailure {
+    if (!context.isCurrent()) {
+      return apGroupFailure('superseded');
+    }
+    return this.#logFailure(operation, describeApGroupFailure(operation, error));
+  }
+
+  /**
+   * The create operation (see createApGroup()).
+   * @param {string} rawName - The name as typed.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<ApGroupActionResult>} The reply.
+   */
+  async #create(rawName: string, isInstalled: () => boolean): Promise<ApGroupActionResult> {
+    const checked = validateApGroupName(rawName);
+    if (!checked.ok) {
+      return apGroupFailure(checked.error);
+    }
+    const context = await this.#managementContext(isInstalled);
+    if (isApGroupFailure(context)) {
+      return context;
+    }
+    const before = await this.#readApGroups(context);
+    if (isApGroupFailure(before)) {
+      return before;
+    }
+    if (hasApGroupNameConflict(checked.name, before.items)) {
+      return apGroupFailure('nameTaken');
+    }
+
+    let returnedId: string | null;
+    try {
+      returnedId = await context.client.createApGroup(context.siteId, checked.name);
+    } catch (error) {
+      return this.#writeFailed('create', context, error);
+    }
+    if (!context.isCurrent()) {
+      return apGroupFailure('superseded');
+    }
+    if (returnedId !== null && AP_GROUP_ID_REGEX.test(returnedId)) {
+      return { success: true, apGroupId: returnedId };
+    }
+
+    // The answer carried no usable id (unverified answer shape): identify the
+    // group from a fresh list — the one group with exactly this name that was
+    // not listed before — or report the create without an id. An
+    // invalidation meanwhile (session closed or replaced, a credentials save,
+    // a newer check run) discards the answer like after any other await:
+    // only a read that failed by itself still reports the create, without id
+    const after = await this.#readApGroups(context);
+    if (isApGroupFailure(after)) {
+      // #readApGroups() reports every invalidation as 'superseded'
+      return after.error === 'superseded' ? apGroupFailure('superseded') : { success: true };
+    }
+    const beforeIds = new Set(before.items.map((group) => group.id));
+    const created = after.items.filter((group) => group.name === checked.name && !beforeIds.has(group.id) && AP_GROUP_ID_REGEX.test(group.id));
+    return created.length === 1 ? { success: true, apGroupId: created[0].id } : { success: true };
+  } // End of function #create()
+
+  /**
+   * The rename operation (see renameApGroup()).
+   * @param {string} apGroupId - The group id.
+   * @param {string} rawName - The new name as typed.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<ApGroupActionResult>} The reply.
+   */
+  async #rename(apGroupId: string, rawName: string, isInstalled: () => boolean): Promise<ApGroupActionResult> {
+    const checked = validateApGroupName(rawName);
+    if (!checked.ok) {
+      return apGroupFailure(checked.error);
+    }
+    const context = await this.#managementContext(isInstalled);
+    if (isApGroupFailure(context)) {
+      return context;
+    }
+    const list = await this.#readApGroups(context);
+    if (isApGroupFailure(list)) {
+      return list;
+    }
+    const group = list.items.find((candidate) => candidate.id === apGroupId);
+    if (group === undefined) {
+      return apGroupFailure('groupNotFound');
+    }
+    if (group.name === checked.name) {
+      return apGroupFailure('nameUnchanged');
+    }
+    if (hasApGroupNameConflict(checked.name, list.items, apGroupId)) {
+      return apGroupFailure('nameTaken');
+    }
+
+    try {
+      await context.client.renameApGroup(context.siteId, apGroupId, checked.name);
+    } catch (error) {
+      return this.#writeFailed('rename', context, error);
+    }
+    if (!context.isCurrent()) {
+      return apGroupFailure('superseded');
+    }
+    return { success: true };
+  } // End of function #rename()
+
+  /**
+   * The delete operation (see deleteApGroup()).
+   * @param {string} apGroupId - The group id.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<ApGroupActionResult>} The reply.
+   */
+  async #delete(apGroupId: string, isInstalled: () => boolean): Promise<ApGroupActionResult> {
+    const context = await this.#managementContext(isInstalled);
+    if (isApGroupFailure(context)) {
+      return context;
+    }
+    // Fresh data right before the DELETE: the policy never trusts the
+    // renderer's view (an AP may have been moved in meanwhile)
+    const list = await this.#readApGroups(context);
+    if (isApGroupFailure(list)) {
+      return list;
+    }
+    const refusal = checkApGroupDeletion(list.items.find((candidate) => candidate.id === apGroupId));
+    if (refusal !== null) {
+      return apGroupFailure(refusal);
+    }
+
+    try {
+      await context.client.deleteApGroup(context.siteId, apGroupId);
+    } catch (error) {
+      return this.#writeFailed('delete', context, error);
+    }
+    if (!context.isCurrent()) {
+      return apGroupFailure('superseded');
+    }
+    return { success: true };
+  } // End of function #delete()
 } // End of class ControllerSession
 
 /**
@@ -681,4 +1110,81 @@ export function getSessionCapabilities(manager: ConnectionManager<ControllerSess
  */
 export function testManagementAccess(manager: ConnectionManager<ControllerSession>, sessionNonce: string): Promise<ManagementCapabilitiesResult> {
   return capabilitiesReply(manager, sessionNonce, (session) => session.refreshCapabilities());
+}
+
+/**
+ * Runs an AP-group call for the installed session the renderer names by its
+ * session nonce, with the ownership rules of capabilitiesReply():
+ * notConnected without an installed session or when it is closed already (a
+ * newer connect attempt is in flight), superseded for another session's nonce
+ * — and superseded when the session is no longer the installed one (or
+ * closed) once `run` settles, so a late result is never reported.
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {string} sessionNonce - The nonce the renderer echoed (format-checked by the IPC guard).
+ * @param {(session: ControllerSession, isInstalled: () => boolean) => Promise<T>} run - The operation.
+ * @returns {Promise<T | ApGroupFailure>} Its reply, or the ownership failure.
+ */
+async function apGroupReply<T extends ManagedApGroupsResult | ApGroupActionResult>(
+  manager: ConnectionManager<ControllerSession>,
+  sessionNonce: string,
+  run: (session: ControllerSession, isInstalled: () => boolean) => Promise<T>
+): Promise<T | ApGroupFailure> {
+  const session = manager.controller;
+  if (session === null || session.isClosed) {
+    return apGroupFailure('notConnected');
+  }
+  if (session.sessionNonce !== sessionNonce) {
+    return apGroupFailure('superseded');
+  }
+  /**
+   * Whether the session is still the installed, open one.
+   * @returns {boolean} True while it is.
+   */
+  const isInstalled = (): boolean => manager.controller === session && !session.isClosed;
+  const reply = await run(session, isInstalled);
+  if (!isInstalled()) {
+    return apGroupFailure('superseded');
+  }
+  return reply;
+} // End of function apGroupReply()
+
+/**
+ * MANAGEMENT_AP_GROUPS: the installed session's AP groups with their capacity
+ * (ControllerSession.listManagedApGroups()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {string} sessionNonce - The session nonce from the connect result.
+ * @returns {Promise<ManagedApGroupsResult>} The reply.
+ */
+export function managedApGroupsReply(manager: ConnectionManager<ControllerSession>, sessionNonce: string): Promise<ManagedApGroupsResult> {
+  return apGroupReply(manager, sessionNonce, (session, isInstalled) => session.listManagedApGroups(isInstalled));
+}
+
+/**
+ * MANAGEMENT_AP_GROUP_CREATE (ControllerSession.createApGroup()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {ApGroupCreateRequest} request - The shape-checked request.
+ * @returns {Promise<ApGroupActionResult>} The reply.
+ */
+export function createApGroupReply(manager: ConnectionManager<ControllerSession>, request: ApGroupCreateRequest): Promise<ApGroupActionResult> {
+  return apGroupReply(manager, request.sessionNonce, (session, isInstalled) => session.createApGroup(request.name, isInstalled));
+}
+
+/**
+ * MANAGEMENT_AP_GROUP_RENAME (ControllerSession.renameApGroup()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {ApGroupRenameRequest} request - The shape-checked request.
+ * @returns {Promise<ApGroupActionResult>} The reply.
+ */
+export function renameApGroupReply(manager: ConnectionManager<ControllerSession>, request: ApGroupRenameRequest): Promise<ApGroupActionResult> {
+  return apGroupReply(manager, request.sessionNonce, (session, isInstalled) => session.renameApGroup(request.apGroupId, request.name, isInstalled));
+}
+
+/**
+ * MANAGEMENT_AP_GROUP_DELETE (ControllerSession.deleteApGroup()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {ApGroupDeleteRequest} request - The shape-checked request.
+ * @returns {Promise<ApGroupActionResult>} The reply.
+ */
+export function deleteApGroupReply(manager: ConnectionManager<ControllerSession>, request: ApGroupDeleteRequest): Promise<ApGroupActionResult> {
+  return apGroupReply(manager, request.sessionNonce, (session, isInstalled) => session.deleteApGroup(request.apGroupId, isInstalled));
 }
