@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T15:40:41Z",
+ "updated": "2026-10-07T16:17:26Z",
  "plan": "todo.md",
  "goal": "Add AP-group and Wi-Fi network management for Omada 6.3 to the Electron app, then remote controllers through the TP-Link cloud.",
  "phases": [
@@ -351,9 +351,25 @@
   {
    "id": "I-1b2b",
    "title": "Cloud connection targets and wiring",
+   "status": "in_progress",
+   "risk": "high",
+   "summary": "Split into I-1b2b1 (connection targets in main) and I-1b2b2 (switch IPC, nonce-bound data channels, smoke stub)."
+  },
+  {
+   "id": "I-1b2b1",
+   "title": "Connection targets in main",
+   "status": "done",
+   "risk": "high",
+   "summary": "Lets the connection manager target the local or a cloud controller, persists the choice with a local fallback, and adds race tests.",
+   "review": "docs/reviews/phaseI-1b2b1.md",
+   "narrative": "docs/progress-archive/phase-i-1b2b1.md"
+  },
+  {
+   "id": "I-1b2b2",
+   "title": "Controller switch IPC and nonce-bound data channels",
    "status": "queued",
    "risk": "high",
-   "summary": "Adds local and cloud connection targets, switching over guarded IPC, persistence with a local fallback, nonce-bound data channels and race tests."
+   "summary": "Adds a guarded controller-switch channel, binds the AP, group and move channels to the session nonce, and extends the smoke stub."
   },
   {
    "id": "I-1c",

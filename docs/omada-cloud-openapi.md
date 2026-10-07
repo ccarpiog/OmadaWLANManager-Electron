@@ -1,8 +1,8 @@
 # TP-Link cloud controllers — the Account Level Open API contract the app follows
 
 Inbox item I-1 (spec: `autoclaude/processed/10-tplink-cloud-controllers.md`, user decisions D5–D7). This file is the
-contract the main-process code of phases I-1a (`src/main/cloud-*.ts`, the `OpenApiClient` cloud route) and I-1b1 (the
-cloud controller session, §12) follows. Every
+contract the main-process code of phases I-1a (`src/main/cloud-*.ts`, the `OpenApiClient` cloud route), I-1b1 (the
+cloud controller session, §12) and I-1b2b1 (the connection targets, §13) follows. Every
 detail marked **UNVERIFIED** is taken from the documentation only and is a live-test item (I-1c adds them to
 `docs/live-test-checklist.md`).
 
@@ -151,8 +151,8 @@ The template is `{serverHost}/v1/cloudaccess/{deviceId}/**`, followed by the sel
     identifiers by value: the tunnel base URL, the `serverHost` origin and bare host, and the `deviceId`.
     `describeOpenApiFailure()` appends it to the codes, e.g. `apiError, errorCode -44121 (…)`. The local route never
     keeps controller text.
-- The cloud controller session (§12, phase I-1b1) uses the cloud route for all its calls. `ConnectionManager` does
-  not install it yet (phase I-1b2).
+- The cloud controller session (§12, phase I-1b1) uses the cloud route for all its calls. `ConnectionManager`
+  installs it for a cloud target (§13).
 - **UNVERIFIED:** whether the tunnel forwards `/openapi/v2/…` paths (the SSID catalog and create) and every v1 path
   the app uses (spec: each failure shows its own diagnostic); which token-error codes the tunnel answers; whether
   `-44121` ("no permission to access this organization") is what a credential limited to other organizations gets.
@@ -229,9 +229,10 @@ Other outcomes:
   - `cloudRegion` (default `euw`) and `cloudClientId` (the management Client ID's format) are stored in plain text.
   - `encryptedCloudClientSecret` is a safeStorage blob only. Without secure storage the secret is session-only, the
     management Client Secret's fallback, and is never plaintext on disk.
-  - `localOmadacId` is dropped when the controller URL changes. Learning it on a local connect is phase I-1b.
-  - `activeController` is `'local'` (also when absent) or an `omadacId`.
-  - `cloudSites` maps `omadacId` to a site id; malformed entries are dropped, at most 64 are kept.
+  - `localOmadacId` is learned on a successful local connect and dropped when the controller URL changes (§13).
+  - `activeController` is `'local'` (also when absent) or an `omadacId`; a target switch persists it (§13).
+  - `cloudSites` maps `omadacId` to a site id; malformed entries are dropped, at most 64 are kept (a new choice goes
+    last and the oldest goes first, §13).
 - **Save rules:**
   - The cloud account is not tied to the controller URL, so a URL change keeps it.
   - A different region or cloud Client ID drops the stored secret: a typed one must come with it, otherwise
@@ -301,7 +302,8 @@ Other outcomes:
 `new ControllerSession({kind: 'cloud', omadacId, name, orgVersion, createOpenApiClient, sleep?})`
 (`src/main/controller-session.ts`; its data side is `CloudControllerBackend` in `src/main/cloud-controller-session.ts`).
 It is Electron-free and unit-tested on fixtures (`tests/unit/cloud-controller-session.test.ts`,
-`tests/fixtures/cloud/controller-tunnel.json`). `ConnectionManager` and IPC do not use it yet (phase I-1b2).
+`tests/fixtures/cloud/controller-tunnel.json`). `ConnectionManager` installs it for a cloud target (§13); no IPC
+channel switches to one yet (phase I-1b2b2).
 
 - **Inputs** (main only):
   - the organization's `omadacId`, name and `orgVersion`, from the organization list, never `/api/info`;
@@ -369,5 +371,49 @@ It is Electron-free and unit-tested on fixtures (`tests/unit/cloud-controller-se
   - Afterwards every data call is `notConnected`; a call whose client closes while it runs is `superseded`.
 - **Errors:** `CloudSessionError` carries a stable code (`CLOUD_SESSION_ERROR_CODES`; each has an es / en text
   `cloudSessionError…` in `src/renderer/i18n-strings.ts`), a sanitized diagnostic and `openApiCode`: the failed call's
-  `OpenApiError` code, e.g. `invalidCredentials` or `rateLimited`, for the I-1b2 / I-1c messages. Its message is
-  `<code> (<diagnostic>)`.
+  `OpenApiError` code, e.g. `invalidCredentials` or `rateLimited`, for the I-1c messages. Its message is
+  `<code> (<diagnostic>)` (`describeCloudSessionError()`: the `openApiCode` is added in front of the diagnostic when
+  the diagnostic does not name it already). The connect `detail` and the move rejection carry this text, code first.
+
+## 13. Connection targets (phase I-1b2b1)
+
+`ConnectionManager` (`src/main/connection-manager.ts`) connects to a target (`src/main/connection-target.ts`):
+`{kind: 'local'}` (the configured controller, reached directly; the default) or `{kind: 'cloud', omadacId}`. Main
+only, Electron-free, unit-tested in `tests/unit/connection-targets.test.ts`. No IPC channel switches the target yet,
+and the app starts local (phase I-1b2b2 wires both).
+
+- **`switchTarget(target)`:** in one synchronous step, before any await, the target changes and the transition of a
+  URL change runs (`invalidateControllerState()`): every in-flight connect, the pending site choice and trust
+  decision, and the installed session (its Open API clients and tokens, its managed reads and writes) are superseded,
+  and their late results are dropped. Then `activeController` is persisted and the new target connects. Switching
+  to the current target is a plain reconnect through the same transition. An invalid target (an `omadacId` that
+  fails `isOmadacId()`) is refused before any state change.
+- **Cloud connect:** `CloudAccessService.findOrganization()` reads a fresh organization list (the account token is
+  reused). Each refusal is `connectError` with a code-first `detail`, before any session or cloud-route client
+  exists:
+  - `notConfigured`: no usable cloud credential;
+  - the account's codes (`credentialInvalid (errorCode -52602)`, `rateLimited`, …, as in §9);
+  - `listIncomplete (organization list incomplete)`: the list is truncated — refused even when the `omadacId` is on
+    a page that was read (fail-closed, like a truncated site list);
+  - `unknownController`: the complete list does not hold the `omadacId`;
+  - the organization's reason (`cloudControllerReason()`): `notController`, `incompleteEntry`, `unsupportedHost`,
+    `versionUnknown`, `versionTooOld`, `offline`.
+
+  Otherwise `createCloudControllerLookup()` (`src/main/cloud-connect.ts`) builds the §12 session, with
+  `createOpenApiClient: () => new OpenApiClient({route: 'cloud', target, tokenProvider: account, throttle:
+  account.throttle, transport})`, where `target` comes from `cloudControllerTarget()` and `transport` is the
+  cloud transport (§8). The session connects with `cloudSites[omadacId]`. A site the user picks is persisted there,
+  never in the local `siteId`. A session failure's `detail` is the `CloudSessionError` text (code first,
+  `describeCloudSessionError()`), scrubbed again by value of the `deviceId`, the `serverHost` origin and host, and
+  the account's live secrets.
+- **Local connect:** unchanged. A successful one (installed, or completed by a site choice) persists the
+  `/api/info` `omadacId` as `localOmadacId`, only when it is usable and differs from the stored one, and only for
+  the URL that connect used.
+- **Cloud credential change:** a save that changes the cloud credential while the target is a cloud controller runs
+  the same transition (`applyConfigSave()`, `cloudCredentialsChanged`). On the local target such a save changes
+  nothing.
+- **Local management save:** `applyManagementAccessChange()` skips an installed cloud session, whose access is the
+  account's cloud route, not the local Open API credentials.
+- **Startup (pure, not wired yet):** `resolveStartupTarget(config, cloudCredentialUsable)` returns the stored cloud
+  `omadacId` only while the cloud credential is usable (a Client ID with a secret, the session-only fallback
+  included). Otherwise it returns local: `activeController` survives a dropped credential.

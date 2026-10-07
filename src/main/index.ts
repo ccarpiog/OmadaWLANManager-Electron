@@ -5,17 +5,23 @@ import {
   clearCertificatePin,
   getCertificatePin,
   getCloudCredentials,
+  getCloudSiteId,
   getConfiguredUrl,
   getConnectionCredentials,
+  getLocalOmadacId,
   getManagementCredentials,
   getRendererConfig,
   getStoredSiteId,
+  saveActiveController,
   saveCertificatePin,
+  saveCloudSiteId,
   saveConfig,
+  saveLocalOmadacId,
   saveStoredSiteId
 } from './config';
 import { CertificateTrustSource, ControllerTlsSessions, installCertificateVerifyProc, isCertificateErrorAllowed } from './cert-verify';
 import { CloudAccessService } from './cloud-access';
+import { createCloudControllerLookup } from './cloud-connect';
 import { isCloudRegion } from './cloud-hosts';
 import { createCloudSession } from './cloud-transport';
 import { ConnectionManager } from './connection-manager';
@@ -77,8 +83,7 @@ import {
 let mainWindow: BrowserWindow | null = null;
 
 // ============================================================================
-// Controller connection state and certificate trust-on-first-use (todo.md
-// 3.12, 1.11, 4.4)
+// Controller TLS session and transport (todo.md 3.12, 1.11, 4.4)
 // ============================================================================
 
 // The session every controller request uses (created when the app is ready;
@@ -102,29 +107,6 @@ function getControllerSession(): Electron.Session {
 // through the same pinned, replaceable session as the internal calls
 const controllerTransport = createNetTransport(getControllerSession);
 
-// The connection state machine (connection-manager.ts): connect generation,
-// installed controller session, pending site selection, pending certificate
-// trust and the pin-rejection bookkeeping, plus the atomic controller
-// transitions run on a controller URL change and on a certificate reset. Each
-// controller is a ControllerSession (controller-session.ts): the facade over
-// the internal client and, once management access is verified, the Open API
-// client, with the management capabilities. The IPC handlers below only
-// check the sender and the payload shapes, then delegate to these two.
-const connectionManager = new ConnectionManager<ControllerSession>({
-  getCredentials: getConnectionCredentials,
-  createController: (credentials) =>
-    new ControllerSession({ ...credentials, transport: controllerTransport, getManagementCredentials, getConfiguredUrl }),
-  getConfiguredUrl,
-  getStoredSiteId,
-  saveStoredSiteId,
-  saveCertificatePin,
-  clearCertificatePin,
-  // ControllerTlsSessions.reset() switches sessions synchronously (the
-  // contract resetControllerSession() requires) and retires the old one
-  // after the drain
-  resetControllerSession: (drain) => (controllerTls ? controllerTls.reset(drain) : Promise.resolve())
-});
-
 // ============================================================================
 // TP-Link cloud access (inbox item I-1a, docs/omada-cloud-openapi.md)
 // ============================================================================
@@ -147,10 +129,55 @@ function getCloudSession(): Electron.Session {
   return cloudSession;
 }
 
+// The cloud transport: its own session, the cloud origin allowlist enforced
+// before anything is sent, redirects refused. The account client and every
+// cloud controller session's Open API clients use it
+const cloudTransport = createCloudNetTransport(getCloudSession);
+
 // The cloud access: one CloudAccountClient (and throttle) per saved cloud
-// credential, over the cloud transport (its own session, the cloud origin
-// allowlist enforced before anything is sent, redirects refused)
-const cloudAccess = new CloudAccessService({ getCredentials: getCloudCredentials, transport: createCloudNetTransport(getCloudSession) });
+// credential, over the cloud transport
+const cloudAccess = new CloudAccessService({ getCredentials: getCloudCredentials, transport: cloudTransport });
+
+// ============================================================================
+// Connection state machine and certificate trust-on-first-use (todo.md 3.12,
+// 1.11, 4.4; inbox I-1b2b1)
+// ============================================================================
+
+// The connection state machine (connection-manager.ts): the connection target
+// (the local controller; a TP-Link cloud controller once phase I-1b2b2 wires
+// the switch), connect generation, installed controller session, pending site
+// selection, pending certificate trust and the pin-rejection bookkeeping, plus
+// the atomic controller transitions run on a controller URL change, a
+// certificate reset and a target switch. Each controller is a
+// ControllerSession (controller-session.ts): the facade over the internal
+// client (local) or the Open API cloud route (cloud) and, once management
+// access is verified, the Open API client, with the management capabilities.
+// A local connect learns the controller's omadacId (`localOmadacId`); a cloud
+// target's session is built from a fresh organization entry (cloud-connect.ts)
+// and remembers its site in `cloudSites`. The IPC handlers below only check
+// the sender and the payload shapes, then delegate to these two.
+const connectionManager = new ConnectionManager<ControllerSession>({
+  getCredentials: getConnectionCredentials,
+  createController: (credentials) =>
+    new ControllerSession({ ...credentials, transport: controllerTransport, getManagementCredentials, getConfiguredUrl }),
+  getConfiguredUrl,
+  getStoredSiteId,
+  saveStoredSiteId,
+  saveCertificatePin,
+  clearCertificatePin,
+  // ControllerTlsSessions.reset() switches sessions synchronously (the
+  // contract resetControllerSession() requires) and retires the old one
+  // after the drain
+  resetControllerSession: (drain) => (controllerTls ? controllerTls.reset(drain) : Promise.resolve()),
+  getLocalOmadacId,
+  saveLocalOmadacId,
+  saveActiveController,
+  cloud: {
+    lookupController: createCloudControllerLookup({ access: cloudAccess, transport: cloudTransport }),
+    getCloudSiteId,
+    saveCloudSiteId
+  }
+});
 
 // Trust inputs of the certificate hooks: the configured URL and the pin come
 // from the in-memory config cache (the verify proc is a hot path and must

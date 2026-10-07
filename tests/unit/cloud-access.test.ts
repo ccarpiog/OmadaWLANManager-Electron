@@ -5,7 +5,8 @@
 // organizations: exactly the renderer keys, never a deviceId, serverHost,
 // secret or token), stable failure codes with codes-only diagnostics scrubbed
 // by value, 'superseded' when the credentials are saved, removed or replaced
-// while a call runs, and the live secrets the IPC registrar scrubs.
+// while a call runs, and the live secrets the IPC registrar scrubs; and the
+// fresh organization entry a cloud target's connect reads (findOrganization()).
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -178,3 +179,64 @@ describe('CloudAccessService: live secrets and the IPC registrar', () => {
     await assert.rejects(async () => listeners.get('cloud:test')?.({}), { message: `boom ${REDACTED} ${REDACTED}` });
   });
 });
+
+describe('CloudAccessService.findOrganization(): a cloud target\'s fresh organization entry (inbox I-1b2b1)', () => {
+  const PLANTA_4 = fourOrganizations.page.result.data[3];
+
+  test('the organization with its main-only fields and the account client; the list is read on every call, the token reused', async () => {
+    const { service, transport } = setup();
+    transport.on('POST', CLOUD_TOKEN_PATH, tokenReply('a1-AT-tokenOneValue00000000000001')).on('GET', ORGS_PAGE_1, { body: fourOrganizations.page });
+    const found = await service.findOrganization(PLANTA_4.omadacId);
+    assert.equal(found.success, true, JSON.stringify(found));
+    assert.ok(found.success);
+    assert.equal(found.organization.omadacId, PLANTA_4.omadacId);
+    assert.equal(found.organization.deviceId, PLANTA_4.deviceId);
+    assert.equal(found.organization.serverOrigin, EUW);
+    assert.equal(found.organization.version, '6.3.0.45');
+    assert.equal(found.account.isClosed, false);
+    assert.equal(found.account.region, 'euw');
+    assert.equal((await service.findOrganization(PLANTA_4.omadacId)).success, true);
+    assert.equal(transport.requestsTo('GET', ORGS_PAGE_1).length, 2, 'fresh: read again');
+    assert.equal(transport.requestsTo('POST', CLOUD_TOKEN_PATH).length, 1, 'the token is reused');
+    // A non-connectable organization is still found: the connect decides on its reason
+    const offline = await service.findOrganization(fourOrganizations.page.result.data[1].omadacId);
+    assert.ok(offline.success && offline.organization.online === false);
+  }); // End of test "the organization with its main-only fields..."
+
+  test('failures: notConfigured, unknownController, listIncomplete (fail-closed), the account codes, superseded', async () => {
+    const none = setup(null);
+    assert.deepEqual(await none.service.findOrganization(PLANTA_4.omadacId), { success: false, error: 'notConfigured' });
+    assert.equal(none.transport.requests.length, 0);
+
+    const unknown = setup();
+    unknown.transport.on('POST', CLOUD_TOKEN_PATH, tokenReply('a1-AT-tokenOneValue00000000000001')).on('GET', ORGS_PAGE_1, { body: fourOrganizations.page });
+    assert.deepEqual(await unknown.service.findOrganization('5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e'), { success: false, error: 'unknownController' });
+
+    const partial = setup();
+    const page = structuredClone(fourOrganizations.page);
+    page.result.totalRows = 500;
+    partial.transport
+      .on('POST', CLOUD_TOKEN_PATH, tokenReply('a1-AT-tokenOneValue00000000000001'))
+      .on('GET', ORGS_PAGE_1, { body: page })
+      .on('GET', `${CLOUD_ORGANIZATIONS_PATH}?page=2&pageSize=100`, { body: { errorCode: 0, msg: 'OK', result: { totalRows: 500, currentPage: 2, currentSize: 100, data: [] } } });
+    assert.deepEqual(await partial.service.findOrganization('5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e'), { success: false, error: 'listIncomplete', diagnostic: 'organization list incomplete' });
+    assert.deepEqual(await partial.service.findOrganization(PLANTA_4.omadacId), { success: false, error: 'listIncomplete', diagnostic: 'organization list incomplete' }, 'an entry on a page that was read is refused too: the list is not proven complete');
+
+    const refused = setup();
+    refused.transport.on('POST', CLOUD_TOKEN_PATH, { body: guide.liveCredentialExpired });
+    assert.deepEqual(await refused.service.findOrganization(PLANTA_4.omadacId), { success: false, error: 'credentialInvalid', diagnostic: 'credentialInvalid, errorCode -52602' });
+
+    const raced = setup();
+    let release!: (reply: FakeReply) => void;
+    raced.transport
+      .on('POST', CLOUD_TOKEN_PATH, tokenReply('a1-AT-tokenOneValue00000000000001'))
+      .on('GET', ORGS_PAGE_1, () => new Promise<FakeReply>((resolve) => {
+        release = resolve;
+      }));
+    const pending = raced.service.findOrganization(PLANTA_4.omadacId);
+    await new Promise((resolve) => setImmediate(resolve));
+    raced.service.invalidate();
+    release({ body: fourOrganizations.page });
+    assert.deepEqual(await pending, { success: false, error: 'superseded' });
+  }); // End of test "failures: notConfigured, unknownController..."
+}); // End of describe 'CloudAccessService.findOrganization()'

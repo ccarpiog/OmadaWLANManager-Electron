@@ -28,8 +28,9 @@
 // the installed one (activate()) — so they never delay or fail the connect
 // or the AP list — and again on "Test management access". A
 // management-credentials save (controller URL unchanged) starts no run of its
-// own (applyManagementAccessChange()): it drops the installed session's Open
-// API client and capabilities at once, and the reconnect the Settings flow
+// own (applyManagementAccessChange()): it drops the installed local session's
+// Open API client and capabilities at once (a cloud session is left alone: its
+// access is the account's cloud route), and the reconnect the Settings flow
 // performs after every successful save runs the checks once, on the new
 // session (when no reconnect follows, the next capabilities or Test request
 // runs them). In order, the first failing check decides:
@@ -346,12 +347,17 @@ export function touchesManagementAccess(payload: ConfigSavePayload): boolean {
  * secret-bearing run per save. When no reconnect follows, the next
  * MANAGEMENT_CAPABILITIES or MANAGEMENT_TEST request for this session runs
  * the checks with the new credentials.
+ * An installed CLOUD session is skipped (inbox I-1b2b1): the local Open API
+ * credentials are not its access (the account's cloud route is), and
+ * invalidating it would only discard its verified client and capabilities and
+ * supersede a queued cloud write for nothing.
  * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
  * @param {ConfigSavePayload} payload - The saved (shape-checked) payload.
  */
 export function applyManagementAccessChange(manager: ConnectionManager<ControllerSession>, payload: ConfigSavePayload): void {
-  if (touchesManagementAccess(payload)) {
-    manager.controller?.invalidateCapabilities();
+  const session = manager.controller;
+  if (session !== null && session.kind !== 'cloud' && touchesManagementAccess(payload)) {
+    session.invalidateCapabilities();
   }
 }
 

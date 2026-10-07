@@ -9,7 +9,9 @@
 // internal API. From the capability checks on (AP groups, Wi-Fi networks,
 // bindings) the session runs the very code of the local controller. Pure of
 // Electron; unit-tested on fixtures (tests/unit/cloud-controller-session.test.ts).
-// Not wired into ConnectionManager or IPC yet (phase I-1b2).
+// ConnectionManager installs one for a cloud target (cloud-connect.ts builds it
+// from a fresh organization entry; phase I-1b2b1); no IPC channel switches to
+// a cloud target yet (phase I-1b2b2).
 //
 // Inputs (injected, main only): the organization's omadacId, name and
 // orgVersion (from the organization list, never /api/info) and a factory of
@@ -63,9 +65,11 @@
 //   whose client closes while it runs ends as 'superseded'.
 // - Errors: CloudSessionError, a stable code (CLOUD_SESSION_ERROR_CODES) and
 //   a sanitized diagnostic (codes, plus TP-Link's redacted message for a
-//   refusal: describeOpenApiFailure()); its message is "<code> (<diagnostic>)".
-//   `openApiCode` keeps the failed call's OpenApiError code (e.g.
-//   'invalidCredentials', 'rateLimited') for the I-1b2 / I-1c messages.
+//   refusal: describeOpenApiFailure()); its message is "<code> (<diagnostic>)"
+//   (describeCloudSessionError(): the code first — the connect result's
+//   `detail` and the AP-move rejection both carry this text). `openApiCode`
+//   keeps the failed call's OpenApiError code (e.g. 'invalidCredentials',
+//   'rateLimited') for the I-1c messages.
 
 import type { AccessPoint, ControllerInfo, GroupListing, SiteInfo, WlanGroup } from '../shared/types';
 import { toManagedApGroup } from './ap-group-policy';
@@ -134,11 +138,36 @@ export const CLOUD_SESSION_ERROR_CODES = [
 export type CloudSessionErrorCode = (typeof CLOUD_SESSION_ERROR_CODES)[number];
 
 /**
+ * The text a cloud session failure reaches the renderer with: the connect
+ * result's `detail` (ConnectionManager) and the AP-move rejection's message
+ * (CloudSessionError.message, through the IPC registrar). The stable code
+ * comes first; then, in parentheses, the failed call's OpenApiError code when
+ * the diagnostic does not name it already (describeOpenApiFailure() puts it
+ * first), and the diagnostic. The diagnostic is already sanitized: redacted,
+ * and on the cloud route scrubbed of the account's secret and tokens and of
+ * the routing identifiers (deviceId, serverHost, tunnel URL; phase I-1b1).
+ * @param {CloudSessionErrorCode} code - The stable code.
+ * @param {string} diagnostic - The sanitized diagnostic ('' for none).
+ * @param {OpenApiErrorCode | null} openApiCode - The failed call's code.
+ * @returns {string} "<code>", or "<code> (<openApiCode>; <diagnostic>)" without the parts that are empty or repeated.
+ */
+export function describeCloudSessionError(code: CloudSessionErrorCode, diagnostic: string, openApiCode: OpenApiErrorCode | null): string {
+  const parts: string[] = [];
+  if (openApiCode !== null && !diagnostic.split(/[^A-Za-z]+/).includes(openApiCode)) {
+    parts.push(openApiCode);
+  }
+  if (diagnostic !== '') {
+    parts.push(diagnostic);
+  }
+  return parts.length === 0 ? code : `${code} (${parts.join('; ')})`;
+} // End of function describeCloudSessionError()
+
+/**
  * The failure of a cloud session call: a stable code, a sanitized diagnostic
  * (redacted, at most MAX_DIAGNOSTIC_CHARS characters; codes plus, for a
  * refusal, TP-Link's redacted message) and the failed call's OpenApiError
- * code when there was one. The message is "<code> (<diagnostic>)", or the
- * code alone.
+ * code when there was one. The message is describeCloudSessionError():
+ * "<code> (<diagnostic>)", or the code alone.
  */
 export class CloudSessionError extends Error {
   readonly code: CloudSessionErrorCode;
@@ -153,7 +182,7 @@ export class CloudSessionError extends Error {
    */
   constructor(code: CloudSessionErrorCode, diagnostic = '', openApiCode: OpenApiErrorCode | null = null) {
     const safeDiagnostic = redactText(diagnostic).slice(0, MAX_DIAGNOSTIC_CHARS);
-    super(safeDiagnostic === '' ? code : `${code} (${safeDiagnostic})`);
+    super(describeCloudSessionError(code, safeDiagnostic, openApiCode));
     this.name = 'CloudSessionError';
     this.code = code;
     this.diagnostic = safeDiagnostic;

@@ -21,10 +21,21 @@
 //   serverHost or token) or a stable code with a codes-only diagnostic
 //   (TP-Link's message, redacted, only for an unknown errorCode), scrubbed of
 //   the live secret and tokens by value.
+// - A cloud target's connect (phase I-1b2b1, cloud-connect.ts) reads a fresh
+//   organization entry through findOrganization(): main only, it hands the
+//   validated organization and the account client (the cloud route's token
+//   provider and throttle) to the session it builds, with the same codes.
 
 import type { CloudAccessError, CloudAccessResult } from '../shared/types';
 import { CloudAccountClient } from './cloud-account-client';
-import { CloudAccountError, CloudAccountErrorCode, CloudCredentials, MAX_CLOUD_DIAGNOSTIC_CHARS, toCloudController } from './cloud-account-model';
+import {
+  CloudAccountError,
+  CloudAccountErrorCode,
+  CloudCredentials,
+  CloudOrganization,
+  MAX_CLOUD_DIAGNOSTIC_CHARS,
+  toCloudController
+} from './cloud-account-model';
 import { CloudRequestThrottle } from './cloud-throttle';
 import { OmadaTransport } from './omada-transport';
 import { redactErrorMessage, redactText } from './redact';
@@ -42,6 +53,15 @@ const REPLY_ERRORS: Readonly<Record<CloudAccountErrorCode, CloudAccessError>> = 
   malformedResponse: 'malformedResponse',
   clientClosed: 'superseded'
 };
+
+/**
+ * What CloudAccessService.findOrganization() found (main only, never over
+ * IPC): the organization and the account client, or a stable code with a
+ * codes-only diagnostic.
+ */
+export type CloudOrganizationLookup =
+  | { success: true; organization: CloudOrganization; account: CloudAccountClient }
+  | { success: false; error: CloudAccessError | 'unknownController' | 'listIncomplete'; diagnostic?: string };
 
 /** Constructor options of CloudAccessService. */
 export interface CloudAccessServiceOptions {
@@ -129,6 +149,52 @@ export class CloudAccessService {
   controllers(): Promise<CloudAccessResult> {
     return this.#run(false);
   }
+
+  /**
+   * Reads a FRESH organization entry for one controller (a cloud target's
+   * connect, ConnectionManager through cloud-connect.ts): the organization
+   * list is read now (a valid account token is reused), never taken from an
+   * earlier listing. Main only: the success carries the validated
+   * organization (its deviceId and allowlisted serverHost included) and the
+   * account client, which is the token provider and the throttle of the
+   * cloud route. A failure is a stable code with a codes-only diagnostic, like
+   * the IPC replies: 'notConfigured' without saved credentials, 'superseded'
+   * when they were saved, removed or replaced meanwhile, the client's codes,
+   * 'listIncomplete' when the list is truncated (fail-closed, even when the
+   * omadacId is on a page that was read, like a truncated site list), or
+   * 'unknownController' when the complete list does not hold the omadacId.
+   * @param {string} omadacId - The cloud controller's omadacId.
+   * @returns {Promise<CloudOrganizationLookup>} The organization and the account, or a code.
+   */
+  async findOrganization(omadacId: string): Promise<CloudOrganizationLookup> {
+    const client = this.#currentClient();
+    if (client === null) {
+      return { success: false, error: 'notConfigured' };
+    }
+    const generation = this.#generation;
+    try {
+      await client.authorize();
+      const list = await client.listOrganizations();
+      if (this.#isStale(generation, client)) {
+        return { success: false, error: 'superseded' };
+      }
+      if (list.truncated) {
+        return { success: false, error: 'listIncomplete', diagnostic: 'organization list incomplete' };
+      }
+      const organization = list.items.find((item) => item.omadacId === omadacId);
+      if (organization === undefined) {
+        return { success: false, error: 'unknownController' };
+      }
+      return { success: true, organization, account: client };
+    } catch (failure) {
+      if (this.#isStale(generation, client)) {
+        return { success: false, error: 'superseded' };
+      }
+      const reply = this.#failureReply(failure, client);
+      const error = reply.error ?? 'networkError';
+      return reply.diagnostic === undefined ? { success: false, error } : { success: false, error, diagnostic: reply.diagnostic };
+    }
+  } // End of function findOrganization()
 
   /**
    * Runs one organization listing with the current client.

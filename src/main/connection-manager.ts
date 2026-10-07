@@ -1,8 +1,13 @@
-// Controller connection state machine (todo.md 3.12, 1.11 and 4.4). It owns
-// every piece of main-process state that decides which controller instance may
-// act for the configured controller:
-// - the connect generation: every connect, disconnect and controller
-//   transition bumps it; an async flow that captured an older value is stale;
+// Controller connection state machine (todo.md 3.12, 1.11 and 4.4; inbox
+// I-1b2b1). It owns every piece of main-process state that decides which
+// controller instance may act for the app:
+// - the connection target (connection-target.ts): the configured local
+//   controller (`{kind: 'local'}`, the default) or a controller of the
+//   TP-Link cloud account (`{kind: 'cloud', omadacId}`); switchTarget()
+//   changes it;
+// - the connect generation: every connect, disconnect, controller
+//   transition and target switch bumps it; an async flow that captured an
+//   older value is stale;
 // - the installed controller (the one the data/AP-move and management-access
 //   IPC handlers use; in production a ControllerSession, controller-session.ts);
 // - the pending site selection (a connect that authenticated on a multi-site
@@ -35,12 +40,33 @@
 // capability checks and answers the management-access calls as not
 // connected) — see connect() for why its internal client stays installed
 // until the attempt succeeds.
+//
+// Targets (inbox I-1b2b1; spec "ConnectionManager target"): switchTarget()
+// runs the very transition of a URL change (invalidateControllerState(),
+// synchronous: in-flight connects, the pending site choice and trust
+// decision, the installed session — its tokens and its managed reads and
+// writes — are superseded, and their late results are dropped), persists
+// `activeController` and connects to the new target. A local connect is the
+// phase-7 flow above; on success it also learns the controller's omadacId
+// (`localOmadacId`, persisted only when it changed). A cloud connect reads a
+// FRESH organization entry for the omadacId (CloudConnectionDeps
+// .lookupController(): cloud-connect.ts over CloudAccessService), refuses an
+// unknown or non-connectable one with a code-first `detail` before any
+// session exists, else builds the Open-API-only ControllerSession and
+// connects it with the site remembered in `cloudSites[omadacId]`; a site the
+// user picks is persisted there, never in the local `siteId`. A cloud
+// failure's `detail` starts with its stable code (describeCloudSessionError()).
+// Nothing switches the target over IPC yet, and the app starts on the local
+// target (phase I-1b2b2 wires both; resolveStartupTarget() is ready).
 
 import { randomBytes } from 'crypto';
 import { CertificateActionResult, ConnectionResult } from '../shared/types';
 import { CertificatePin, CertificatePinRejection, controllerOriginOf, isValidFingerprint, normalizeHostname } from './cert-pinning';
+import { isOmadacId } from './cloud-account-model';
+import { CloudSessionError, describeCloudSessionError } from './cloud-controller-session';
+import { activeControllerValue, CloudConnectionTarget, ConnectionTarget, isSameTarget, localTarget, normalizeConnectionTarget } from './connection-target';
 import type { ConnectOutcome } from './omada-api';
-import { redactErrorMessage } from './redact';
+import { redactErrorMessage, redactText } from './redact';
 
 // Upper bound for how long the outgoing controller session is kept open so the
 // logouts of the controllers detached by a transition can complete on it
@@ -73,6 +99,36 @@ export interface ManagedController {
   // controller (ControllerSession starts its capability checks here); returns
   // the details the success result carries
   activate?(): InstalledDetails;
+  // Optional: the controller id the connect learned (ControllerSession: a
+  // local controller's /api/info omadacId; null before it was read). A local
+  // connect that installs the instance persists it as `localOmadacId`
+  readonly omadacId?: string | null;
+}
+
+/**
+ * What the cloud side found for a cloud target's connect
+ * (CloudConnectionDeps.lookupController()): for a connectable organization a
+ * factory of its (not yet connected) controller and the values to scrub from
+ * a failure by value (the routing identifiers and the account's live
+ * secrets); otherwise a stable code with a codes-only diagnostic, and no
+ * controller.
+ */
+export type CloudControllerLookup<C> =
+  | { ok: true; create(): C; secrets(): string[] }
+  | { ok: false; code: string; diagnostic?: string };
+
+/**
+ * The cloud side of the connection targets (index.ts: cloud-connect.ts over
+ * CloudAccessService, and config.ts).
+ */
+export interface CloudConnectionDeps<C> {
+  // Reads a FRESH organization entry for the omadacId and, when it is
+  // connectable, offers the controller factory (never rejects)
+  lookupController(omadacId: string): Promise<CloudControllerLookup<C>>;
+  // The site remembered for a cloud controller (`cloudSites`; '' when none)
+  getCloudSiteId(omadacId: string): string;
+  // Remembers the site the user picked on a cloud controller (`cloudSites`)
+  saveCloudSiteId(omadacId: string, siteId: string): void;
 }
 
 /**
@@ -112,17 +168,32 @@ export interface ConnectionManagerDeps<C extends ManagedController> {
   resetControllerSession(drain?: Promise<void>): Promise<void>;
   // Override of DEFAULT_LOGOUT_DRAIN_MS (the unit tests shorten it)
   logoutDrainMs?: number;
+  // Optional (inbox I-1b2b1; config.ts in production): the omadacId stored
+  // for the configured controller ('' when none), and its persistence for the
+  // URL a local connect used — called only when a successful local connect
+  // learned a different one. Without them nothing is learned
+  getLocalOmadacId?(): string;
+  saveLocalOmadacId?(url: string, omadacId: string): void;
+  // Optional: persists the active controller of a switchTarget() ('local' or
+  // a cloud omadacId); false when the write failed. Without it the target is
+  // kept in memory only
+  saveActiveController?(activeController: string): boolean;
+  // Optional: the cloud targets. Without it a cloud target's connect is
+  // refused with the detail 'cloudUnavailable'
+  cloud?: CloudConnectionDeps<C>;
 }
 
 /**
  * A connect that authenticated but still needs the user to pick a site.
- * `generation` is the connect generation the attempt captured, `url` the
- * configured URL it connected to, and `nonce` the opaque one-time token the
+ * `generation` is the connect generation the attempt captured, `target` the
+ * connection target it connected, `url` the configured URL it connected to
+ * ('' for a cloud target), and `nonce` the opaque one-time token the
  * renderer must echo back verbatim through OMADA_SELECT_SITE.
  */
 interface PendingSiteSelection<C> {
   controller: C;
   generation: number;
+  target: ConnectionTarget;
   url: string;
   nonce: string;
 }
@@ -173,12 +244,51 @@ export function settleWithin(work: Promise<unknown>, ms: number): Promise<void> 
 } // End of function settleWithin()
 
 /**
+ * The `detail` of a cloud connect refused before any session existed: the
+ * stable code first (an account code such as 'notConfigured' or
+ * 'credentialInvalid', 'listIncomplete', 'unknownController', or the organization's reason
+ * such as 'offline' or 'versionTooOld'), then the codes-only diagnostic
+ * without a leading repeat of the code (CloudAccessService diagnostics start
+ * with it). Redacted again here.
+ * @param {string} code - The stable code.
+ * @param {string} [diagnostic] - The codes-only diagnostic.
+ * @returns {string} "<code>" or "<code> (<diagnostic>)".
+ */
+export function cloudRefusalDetail(code: string, diagnostic?: string): string {
+  let rest = diagnostic ?? '';
+  if (rest === code) {
+    rest = '';
+  } else if (rest.startsWith(`${code}, `)) {
+    rest = rest.slice(code.length + 2);
+  }
+  return redactText(rest === '' ? code : `${code} (${rest})`);
+} // End of function cloudRefusalDetail()
+
+/**
+ * The `detail` of a failed connect: a cloud session failure
+ * (CloudSessionError) as its code-first text (describeCloudSessionError()),
+ * anything else as its redacted message (the local controller's text,
+ * unchanged); either way scrubbed of `secrets` by value.
+ * @param {unknown} failure - What the connect threw.
+ * @param {readonly string[]} secrets - Values to scrub by value.
+ * @returns {string} The detail.
+ */
+export function connectFailureDetail(failure: unknown, secrets: readonly string[]): string {
+  if (failure instanceof CloudSessionError) {
+    return redactText(describeCloudSessionError(failure.code, failure.diagnostic, failure.openApiCode), secrets);
+  }
+  return redactErrorMessage(failure, secrets);
+}
+
+/**
  * The main-process controller connection state machine (see the header).
  */
 export class ConnectionManager<C extends ManagedController> {
   private readonly deps: ConnectionManagerDeps<C>;
   private readonly logoutDrainMs: number;
-  // See the header: bumped by every connect, disconnect and transition
+  // See the header: the controller connect() connects to (local at start)
+  private activeTarget: ConnectionTarget = localTarget();
+  // See the header: bumped by every connect, disconnect, transition and switch
   private generation = 0;
   private installed: C | null = null;
   private pendingSite: PendingSiteSelection<C> | null = null;
@@ -214,6 +324,15 @@ export class ConnectionManager<C extends ManagedController> {
   }
 
   /**
+   * The current connection target (a copy): the local controller until
+   * switchTarget() names another one.
+   * @returns {ConnectionTarget} The target connect() connects to.
+   */
+  get target(): ConnectionTarget {
+    return this.activeTarget.kind === 'cloud' ? { kind: 'cloud', omadacId: this.activeTarget.omadacId } : localTarget();
+  }
+
+  /**
    * Records a first-use or mismatch rejection reported by the certificate
    * hooks (index.ts: CertificateTrustSource.onPinRejection).
    * @param {CertificatePinRejection} rejection - The rejection.
@@ -225,16 +344,22 @@ export class ConnectionManager<C extends ManagedController> {
   }
 
   /**
-   * True while an async flow that captured `generation` for the configured
-   * URL `url` may still act: no connect, disconnect or transition started
-   * since, and the configured URL is unchanged (the second test is a
-   * belt-and-braces check — every URL change also bumps the generation).
+   * True while an async flow that captured `generation` for `target` (and,
+   * for the local target, the configured URL `url`) may still act: no
+   * connect, disconnect, transition or switch started since, the target is
+   * unchanged and, locally, so is the configured URL (the last two are
+   * belt-and-braces checks — every switch and every URL change also bumps the
+   * generation).
    * @param {number} generation - The generation the flow captured.
-   * @param {string} url - The configured URL the flow started with.
+   * @param {string} url - The configured URL the flow started with ('' for a cloud target).
+   * @param {ConnectionTarget} target - The target the flow connects.
    * @returns {boolean} True when the flow is still current.
    */
-  private isCurrent(generation: number, url: string): boolean {
-    return generation === this.generation && this.deps.getConfiguredUrl() === url;
+  private isCurrent(generation: number, url: string, target: ConnectionTarget): boolean {
+    if (generation !== this.generation || !isSameTarget(target, this.activeTarget)) {
+      return false;
+    }
+    return target.kind === 'cloud' || this.deps.getConfiguredUrl() === url;
   }
 
   /**
@@ -265,6 +390,41 @@ export class ConnectionManager<C extends ManagedController> {
     const details = controller.activate?.();
     return details ? { success: true, ...details } : { success: true };
   }
+
+  /**
+   * install() for the attempt of `target`; a local controller's omadacId is
+   * learned right after (learnLocalOmadacId()). Synchronous, like install().
+   * @param {C} controller - The controller that now owns the session.
+   * @param {string} url - The configured URL the attempt used ('' for a cloud target).
+   * @param {ConnectionTarget} target - The attempt's target.
+   * @returns {ConnectionResult} The success result.
+   */
+  private installFor(controller: C, url: string, target: ConnectionTarget): ConnectionResult {
+    const result = this.install(controller);
+    if (target.kind === 'local') {
+      this.learnLocalOmadacId(controller, url);
+    }
+    return result;
+  }
+
+  /**
+   * Persists the omadacId a successful local connect learned (the internal
+   * client read it from /api/info), only when it is usable and differs from
+   * the stored one; the persistence ties it to `url` (config.ts drops a
+   * value for another URL, and a URL change drops the stored one).
+   * @param {C} controller - The installed local controller.
+   * @param {string} url - The configured URL the connect used.
+   */
+  private learnLocalOmadacId(controller: C, url: string): void {
+    const omadacId = controller.omadacId;
+    if (!this.deps.saveLocalOmadacId || !isOmadacId(omadacId)) {
+      return;
+    }
+    if (this.deps.getLocalOmadacId?.() === omadacId) {
+      return;
+    }
+    this.deps.saveLocalOmadacId(url, omadacId);
+  } // End of function learnLocalOmadacId()
 
   /**
    * Fire-and-forget release of a controller instance that lost its right to
@@ -331,7 +491,8 @@ export class ConnectionManager<C extends ManagedController> {
 
   /**
    * The atomic controller transition required when the trust inputs change
-   * (controller URL changed, certificate pin reset). Everything up to the
+   * (controller URL changed, certificate pin reset) or the target does
+   * (switchTarget(); a cloud credential change on a cloud target). Everything up to the
    * session switch runs synchronously, so no other IPC handler can observe a
    * half-done transition: detachAll() (generation bump, pending trust and
    * site selection dropped, installed controller detached), then the detached
@@ -357,17 +518,62 @@ export class ConnectionManager<C extends ManagedController> {
    * (invalidateControllerState()) follows in the same synchronous step, so
    * there is no instant where the new URL is configured while an attempt,
    * site selection, trust decision, controller or TLS session of the old one
-   * is still valid. A save that keeps the URL leaves the connection alone.
-   * @param {() => R} save - Persists the config; reports success and urlChanged.
+   * is still valid. The same transition runs when the save changed the cloud
+   * credential while the target is a cloud controller (`cloudCredentialsChanged`):
+   * the cloud session and any cloud connect in flight were built on the
+   * replaced account client. A save that changes neither leaves the
+   * connection alone.
+   * @param {() => R} save - Persists the config; reports success, urlChanged
+   *   and (optional) cloudCredentialsChanged.
    * @returns {Promise<R>} The save result, once the transition (if any) is done.
    */
-  async applyConfigSave<R extends { success: boolean; urlChanged?: boolean }>(save: () => R): Promise<R> {
+  async applyConfigSave<R extends { success: boolean; urlChanged?: boolean; cloudCredentialsChanged?: boolean }>(save: () => R): Promise<R> {
     const result = save();
-    if (result.success && result.urlChanged) {
+    const cloudChanged = result.cloudCredentialsChanged === true && this.activeTarget.kind === 'cloud';
+    if (result.success && (result.urlChanged || cloudChanged)) {
       await this.invalidateControllerState();
     }
     return result;
   } // End of function applyConfigSave()
+
+  /**
+   * Switches the connection target (see the header). In ONE synchronous step,
+   * before any await: the target changes, the transition of a URL change runs
+   * (invalidateControllerState(): every in-flight connect becomes stale, the
+   * pending site choice and trust decision are dropped, the installed session
+   * is detached and closed — its Open API clients and their tokens dropped,
+   * its management reads and writes answering superseded — and logged out,
+   * and the controller TLS session is replaced), `activeController` is
+   * persisted ('local' or the omadacId; a failed write is logged and the
+   * switch applies to this run only), and the connect to the new target
+   * starts. A late result of anything started before the switch is never
+   * installed or persisted. Switching to the CURRENT target is not a no-op: it
+   * is a plain reconnect through the same full transition (every switch call
+   * supersedes everything in flight; the caller decides whether to offer it).
+   * @param {ConnectionTarget} target - `{kind: 'local'}` or `{kind: 'cloud', omadacId}`.
+   * @returns {Promise<ConnectionResult>} The new target's connect result
+   *   (connectionSuperseded when another switch, connect, disconnect or
+   *   transition overtook it).
+   * @throws {Error} Before any state change, when `target` is not a valid target.
+   */
+  async switchTarget(target: ConnectionTarget): Promise<ConnectionResult> {
+    const next = normalizeConnectionTarget(target);
+    if (next === null) {
+      throw new Error('Connection target rejected: not a local or cloud target');
+    }
+    this.activeTarget = next;
+    const transition = this.invalidateControllerState();
+    if (this.deps.saveActiveController && !this.deps.saveActiveController(activeControllerValue(next))) {
+      console.warn('The active controller could not be saved; the switch applies to this run only');
+    }
+    // Both promises get their handlers now: the outgoing session's retirement
+    // is only awaited (a failure there is logged), the connect decides the result
+    const retired = transition.catch(() => {
+      console.warn('Retiring the outgoing controller session failed during a target switch');
+    });
+    const [result] = await Promise.all([this.connect(), retired]);
+    return result;
+  } // End of function switchTarget()
 
   /**
    * Turns a connect failure caused by a certificate pin rejection into the
@@ -412,18 +618,15 @@ export class ConnectionManager<C extends ManagedController> {
   } // End of function certificateRejectionResult()
 
   /**
-   * OMADA_CONNECT. The controller is created in a LOCAL variable and
-   * installed only after authentication succeeds while the attempt is still
-   * current (isCurrent() after every await); a stale attempt is logged out and
-   * reported as connectionSuperseded. A newer connect supersedes any pending
-   * site selection and trust decision, and closes the installed controller
-   * at once (see the comment in the body). Multi-site (todo.md 1.11): with no
+   * OMADA_CONNECT, to the current target (connectLocal() or connectCloud()).
+   * The controller is created in a LOCAL variable and installed only after
+   * the connect succeeds while the attempt is still current (isCurrent()
+   * after every await); a stale attempt is logged out and reported as
+   * connectionSuperseded. A newer connect supersedes any pending site
+   * selection and trust decision, and closes the installed controller at
+   * once (see the comment in the body). Multi-site (todo.md 1.11): with no
    * pickable site the controller is parked as a pending site selection (not
    * installed) and needsSiteSelection is returned with an opaque nonce.
-   * Certificate pinning (todo.md 4.4): the very first request (/api/info) is
-   * already gated by the verify proc, so on a pin rejection the login POST is
-   * never sent; the failure is reported as certificateUntrusted (with a trust
-   * nonce) or certificateChanged.
    * @returns {Promise<ConnectionResult>} The connect result.
    */
   async connect(): Promise<ConnectionResult> {
@@ -442,8 +645,57 @@ export class ConnectionManager<C extends ManagedController> {
     // succeeds or parks a site selection, and a failed or superseded attempt
     // leaves it to the next disconnect (the renderer disconnects after a
     // failed attempt) or controller transition. close() is idempotent, so
-    // the later release closes nothing twice
+    // the later release closes nothing twice. The same holds for a cloud
+    // session: its data client serves until the release
     this.installed?.close?.();
+    const target = this.activeTarget;
+    if (target.kind === 'cloud') {
+      return this.connectCloud(target, generation);
+    }
+    return this.connectLocal(target, generation);
+  } // End of function connect()
+
+  /**
+   * Settles an attempt whose connect() succeeded while it was current: the
+   * attempt owns the session now, so any previously installed controller is
+   * released (repeated connects cannot leak sessions); then the controller is
+   * installed, or parked as the pending site selection when no site could be
+   * picked. Synchronous: callers have just verified that their flow is current.
+   * @param {C} controller - The attempt's controller.
+   * @param {ConnectOutcome} outcome - Its connect outcome.
+   * @param {number} generation - The attempt's connect generation.
+   * @param {string} url - The configured URL it used ('' for a cloud target).
+   * @param {ConnectionTarget} target - The attempt's target.
+   * @returns {ConnectionResult} The success or needsSiteSelection result.
+   */
+  private settleAttempt(controller: C, outcome: ConnectOutcome, generation: number, url: string, target: ConnectionTarget): ConnectionResult {
+    const previous = this.installed;
+    this.installed = null;
+    if (previous) {
+      this.releaseController(previous);
+    }
+    if (!outcome.siteSelected) {
+      // Park the controller until the user picks a site: selectSite() must
+      // echo this nonce and succeeds only while this record is current
+      const nonce = createNonce();
+      this.pendingSite = { controller, generation, target, url, nonce };
+      return { success: false, needsSiteSelection: true, sites: outcome.sites, selectionNonce: nonce };
+    }
+    return this.installFor(controller, url, target);
+  } // End of function settleAttempt()
+
+  /**
+   * The local target's connect (the phase-7 flow; see connect()). On success
+   * the controller's omadacId is learned (installFor()). Certificate pinning
+   * (todo.md 4.4): the very first request (/api/info) is already gated by the
+   * verify proc, so on a pin rejection the login POST is never sent; the
+   * failure is reported as certificateUntrusted (with a trust nonce) or
+   * certificateChanged.
+   * @param {ConnectionTarget} target - The local target.
+   * @param {number} generation - The attempt's connect generation.
+   * @returns {Promise<ConnectionResult>} The connect result.
+   */
+  private async connectLocal(target: ConnectionTarget, generation: number): Promise<ConnectionResult> {
     const credentials = this.deps.getCredentials();
 
     if (!credentials.url || !credentials.username || !credentials.password) {
@@ -456,7 +708,7 @@ export class ConnectionManager<C extends ManagedController> {
     // again — e.g. a user who cancelled the first-use dialog sees it again
     if (this.pinRejectionSinceReset) {
       await this.resetSession();
-      if (!this.isCurrent(generation, credentials.url)) {
+      if (!this.isCurrent(generation, credentials.url, target)) {
         return { success: false, error: 'connectionSuperseded' };
       }
     }
@@ -466,30 +718,14 @@ export class ConnectionManager<C extends ManagedController> {
     try {
       const outcome = await controller.connect(this.deps.getStoredSiteId());
 
-      if (!this.isCurrent(generation, credentials.url)) {
+      if (!this.isCurrent(generation, credentials.url, target)) {
         // Superseded while authenticating (newer connect, disconnect, URL
-        // change or certificate reset): discard this attempt entirely
+        // change, certificate reset or target switch): discard this attempt
+        // entirely — nothing installed, no omadacId or site persisted
         this.releaseController(controller);
         return { success: false, error: 'connectionSuperseded' };
       }
-
-      // This attempt owns the session now: release any previously installed
-      // controller so repeated connects cannot leak sessions
-      const previous = this.installed;
-      this.installed = null;
-      if (previous) {
-        this.releaseController(previous);
-      }
-
-      if (!outcome.siteSelected) {
-        // Park the controller until the user picks a site: selectSite() must
-        // echo this nonce and succeeds only while this record is current
-        const nonce = createNonce();
-        this.pendingSite = { controller, generation, url: credentials.url, nonce };
-        return { success: false, needsSiteSelection: true, sites: outcome.sites, selectionNonce: nonce };
-      }
-
-      return this.install(controller);
+      return this.settleAttempt(controller, outcome, generation, credentials.url, target);
     } catch (error) {
       // The failure text can quote the controller (a login message, a
       // redacted HTTP excerpt). A ControllerSession has already scrubbed the
@@ -501,7 +737,7 @@ export class ConnectionManager<C extends ManagedController> {
       // The login may have partially succeeded before the failure: log the
       // local controller out best-effort (it was never installed)
       this.releaseController(controller);
-      if (!this.isCurrent(generation, credentials.url)) {
+      if (!this.isCurrent(generation, credentials.url, target)) {
         return { success: false, error: 'connectionSuperseded' };
       }
       const certificateResult = this.certificateRejectionResult(rejectionMark, credentials.url, generation);
@@ -510,22 +746,86 @@ export class ConnectionManager<C extends ManagedController> {
       }
       return { success: false, error: 'connectError', detail };
     }
-  } // End of function connect()
+  } // End of function connectLocal()
+
+  /**
+   * A cloud target's connect (see the header): a FRESH organization entry for
+   * the omadacId first — an unusable cloud credential, an unknown omadacId or
+   * a non-connectable organization (offline, below 6.3, unsupported host…)
+   * refuses the connect with connectError and a code-first `detail`
+   * (cloudRefusalDetail()), and no session is built; otherwise the
+   * Open-API-only session is built and connected with the site remembered in
+   * `cloudSites[omadacId]`. A session failure's `detail` starts with its
+   * CloudSessionError code (connectFailureDetail(), scrubbed of the routing
+   * identifiers and the account's live secrets by value). There is no
+   * certificate result: the cloud hosts get Chromium's normal verification
+   * in their own session, never the pin dialog.
+   * @param {CloudConnectionTarget} target - The cloud target.
+   * @param {number} generation - The attempt's connect generation.
+   * @returns {Promise<ConnectionResult>} The connect result.
+   */
+  private async connectCloud(target: CloudConnectionTarget, generation: number): Promise<ConnectionResult> {
+    const cloud = this.deps.cloud;
+    if (!cloud) {
+      return { success: false, error: 'connectError', detail: cloudRefusalDetail('cloudUnavailable') };
+    }
+    let lookup: CloudControllerLookup<C>;
+    try {
+      lookup = await cloud.lookupController(target.omadacId);
+    } catch {
+      // The lookup never rejects by contract; fail closed with fixed text
+      lookup = { ok: false, code: 'networkError', diagnostic: 'unexpected failure' };
+    }
+    if (!this.isCurrent(generation, '', target)) {
+      return { success: false, error: 'connectionSuperseded' };
+    }
+    if (!lookup.ok) {
+      const refusal = cloudRefusalDetail(lookup.code, lookup.diagnostic);
+      console.warn(`Cloud controller connect refused: ${refusal}`);
+      return { success: false, error: 'connectError', detail: refusal };
+    }
+    const found = lookup;
+    let controller: C;
+    try {
+      controller = found.create();
+    } catch {
+      return { success: false, error: 'connectError', detail: cloudRefusalDetail('requestFailed', 'cloud session unavailable') };
+    }
+    try {
+      const outcome = await controller.connect(cloud.getCloudSiteId(target.omadacId));
+      if (!this.isCurrent(generation, '', target)) {
+        // Superseded while listing the sites: nothing installed or persisted
+        this.releaseController(controller);
+        return { success: false, error: 'connectionSuperseded' };
+      }
+      return this.settleAttempt(controller, outcome, generation, '', target);
+    } catch (failure) {
+      const detail = connectFailureDetail(failure, found.secrets());
+      console.error('Error connecting to the cloud controller:', detail);
+      this.releaseController(controller);
+      if (!this.isCurrent(generation, '', target)) {
+        return { success: false, error: 'connectionSuperseded' };
+      }
+      return { success: false, error: 'connectError', detail };
+    }
+  } // End of function connectCloud()
 
   /**
    * OMADA_SELECT_SITE: completes the pending connection that returned
    * needsSiteSelection. Accepted only for the CURRENT pending record (exact
-   * nonce, unchanged generation and configured URL) and an id from the
-   * controller's authorized-site list; the controller is installed and the
-   * id persisted only then. Synchronous on purpose: there is no await
-   * between the ownership check and the install/persist.
+   * nonce, unchanged generation, target and — locally — configured URL) and
+   * an id from the controller's authorized-site list; the controller is
+   * installed and the id persisted only then: the local `siteId` for the
+   * local target (whose omadacId is learned too), `cloudSites[omadacId]` for
+   * a cloud target. Synchronous on purpose: there is no await between the
+   * ownership check and the install/persist.
    * @param {string} siteId - The chosen site id (format-checked by index.ts).
    * @param {string} nonce - The selection nonce echoed by the renderer.
    * @returns {ConnectionResult} Success, or siteUnavailable.
    */
   selectSite(siteId: string, nonce: string): ConnectionResult {
     const pending = this.pendingSite;
-    if (!pending || pending.nonce !== nonce || !this.isCurrent(pending.generation, pending.url)) {
+    if (!pending || pending.nonce !== nonce || !this.isCurrent(pending.generation, pending.url, pending.target)) {
       // No selection is pending, or the caller does not own the current one
       return { success: false, error: 'siteUnavailable' };
     }
@@ -537,11 +837,15 @@ export class ConnectionManager<C extends ManagedController> {
     // released its predecessor) — released defensively regardless
     this.pendingSite = null;
     const previous = this.installed;
-    const result = this.install(pending.controller);
+    const result = this.installFor(pending.controller, pending.url, pending.target);
     if (previous) {
       this.releaseController(previous);
     }
-    this.deps.saveStoredSiteId(siteId);
+    if (pending.target.kind === 'cloud') {
+      this.deps.cloud?.saveCloudSiteId(pending.target.omadacId, siteId);
+    } else {
+      this.deps.saveStoredSiteId(siteId);
+    }
     return result;
   } // End of function selectSite()
 

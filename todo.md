@@ -548,6 +548,58 @@ everything is built against the documented contract and fixtures.
       - **I-1b2b — `ConnectionManager` targets and wiring (risk: high):** everything else in the I-1b2 bullet above
         (targets, switch IPC, `localOmadacId`, persistence with the local fallback, session nonces on the `omada:*`
         data channels, `CloudSessionError` mapping, race tests, smoke stub, `npm run tls-probe` green). After I-1b2a.
+        - **Split (2026-10-07, before starting):**
+          - ✅ **I-1b2b1 — connection targets in main (risk: high):** `ConnectionManager` targets
+            `{kind: 'local'} | {kind: 'cloud', omadacId}` and a `switchTarget()` method running the synchronous
+            URL-change-style invalidation; the cloud connect (fresh organization entry, connectable check, the session
+            built as "For I-1b2" says, `cloudSites[omadacId]` passed and the picked site persisted); `localOmadacId`
+            learned on a local connect; `activeController` persisted, and a pure startup-target resolution with the
+            local fallback when the cloud credential is unusable; `CloudSessionError` → connect `detail` / move
+            rejection mapping (code first); race tests (switch during a connect, a move, a managed read). Electron-free
+            and unit-tested; no new IPC channel, no preload or renderer change, no startup change: the running app
+            stays local, smoke and the TLS probe unchanged.
+            - **Done (I-1b2b1)** (contract: `docs/omada-cloud-openapi.md` §13):
+              - **Targets:** new pure `src/main/connection-target.ts` (`ConnectionTarget`, `normalizeConnectionTarget()`,
+                `isSameTarget()`, `activeControllerValue()`, `resolveStartupTarget()`). `ConnectionManager.target` (a
+                copy); `isCurrent()` also checks the target, and a pending site choice records it.
+              - **`switchTarget()`:** in one synchronous step it sets the target, runs `invalidateControllerState()`,
+                persists `activeController` (a failed write is logged; the switch still applies to this run), and
+                starts the connect. An invalid target is refused before any change. **Choice:** switching to the
+                current target is a plain reconnect through the full transition, never a no-op.
+              - **Cloud connect** (`connectCloud()`): `CloudAccessService.findOrganization()` (new) reads the list
+                fresh. New `src/main/cloud-connect.ts` (`createCloudControllerLookup()`) refuses with a code: the account
+                code, `unknownController`, or the DTO reason. Otherwise it offers the session factory, built exactly as
+                "For I-1b2" says. The connect passes `cloudSites[omadacId]`; `selectSite()` persists a cloud pick there
+                (never `siteId`). Refusals return `connectError` with a code-first `detail` (`cloudRefusalDetail()`)
+                and build no session.
+              - **`localOmadacId`:** learned on install of a local connect or site choice (`ManagedController.omadacId`,
+                optional). It is persisted only when usable and changed, and only for the URL the connect used.
+              - **Error mapping:** `describeCloudSessionError()` (code first; it adds `openApiCode` when the diagnostic
+                lacks it) is now the `CloudSessionError` message, so the move rejection carries it. The connect
+                `detail` uses it through `connectFailureDetail()`, scrubbed again of the routing values and live
+                secrets. Local details are unchanged.
+              - **Persistence:** new pure `withLocalOmadacId()` / `withActiveController()` / `withCloudSite()` /
+                `cloudSiteOf()` in `config-model.ts`. The `config.ts` accessors write only on a change. `index.ts` only
+                builds `ConnectionManager` with them and the cloud lookup; the cloud transport is hoisted and shared.
+              - **Choices:** `applyManagementAccessChange()` skips an installed cloud session (its access is the
+                account; the extra run would also supersede a queued cloud write). `applyConfigSave()` also runs the
+                transition when `cloudCredentialsChanged` and the target is cloud.
+              - **For I-1b2b2:** CONFIG_SAVE must reply `connectionReset` for that cloud-credential case (today it
+                does so only on a URL change; unreachable while the app stays local). Startup calls
+                `resolveStartupTarget(config, getCloudCredentials() !== null)`.
+              - **Tests:** unit 1184 → 1218. New `tests/unit/connection-targets.test.ts` (29): fakes for the races and
+                persistence; the real sessions, cloud access and cloud route on fixtures for the end-to-end refusals,
+                the detail and move mappings, and the move and managed-read races. Plus `config-cloud` (+3) and
+                `cloud-access` (+2). Smoke 271/271 and TLS probe 29/29 unchanged.
+              - ✅ **Review fix** (`docs/reviews/phaseI-1b2b1.md`, should-fix; unit count unchanged): a truncated
+                organization list now refuses the cloud connect with `listIncomplete (organization list incomplete)`
+                even when the omadacId is on a page that was read (fail-closed, like the I-1b1 truncated site list);
+                `unknownController` means the complete list lacks it. The two affected assertions were updated.
+          - **I-1b2b2 — switch IPC and nonce-bound data channels (risk: high):** a guarded switch channel over
+            `switchTarget()`, startup honoring the resolved target, session nonces on `omada:get-aps` /
+            `omada:get-wlans` / `omada:set-wlan` (main, preload, the renderer's move and refresh flows; the 20a
+            `refreshData()` captured-generation fix), the renderer tolerating a cloud session's `url: ''`, smoke-stub
+            channels, `npm run tls-probe` green.
 
 ### I-1c Settings cloud section, controller switcher, docs — risk: high
 - **What (spec "UI"):**

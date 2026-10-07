@@ -9,6 +9,7 @@ import {
   applyConfigSave,
   cloudAccessStatus,
   cloudCredentialsOf,
+  cloudSiteOf,
   decryptStoredPassword,
   defaultConfig,
   managementAccessStatus,
@@ -18,7 +19,10 @@ import {
   secureSecretStorageAvailable,
   StoredConfig,
   toRendererConfig,
-  validateStoredConfig
+  validateStoredConfig,
+  withActiveController,
+  withCloudSite,
+  withLocalOmadacId
 } from './config-model';
 import { redactErrorMessage } from './redact';
 
@@ -308,6 +312,64 @@ export function getStoredSiteId(): string {
  */
 export function saveStoredSiteId(siteId: string): void {
   persistConfig({ ...getCachedConfig(), siteId }, 'the selected site id');
+}
+
+/**
+ * Returns the omadacId learned on a local connect for the configured URL
+ * (inbox I-1b2b1; dropped with a URL change).
+ * @returns {string} The stored omadacId, or '' when none is stored.
+ */
+export function getLocalOmadacId(): string {
+  return getCachedConfig().localOmadacId ?? '';
+}
+
+/**
+ * Persists the omadacId a local connect to `url` learned — only when it
+ * changed and `url` is still the configured URL (withLocalOmadacId() in
+ * config-model.ts). A write failure is logged, not surfaced.
+ * @param {string} url - The configured URL the connect used.
+ * @param {string} omadacId - The omadacId /api/info reported.
+ */
+export function saveLocalOmadacId(url: string, omadacId: string): void {
+  const next = withLocalOmadacId(getCachedConfig(), url, omadacId);
+  if (next) {
+    persistConfig(next, 'the local controller id');
+  }
+}
+
+/**
+ * Persists the active controller ('local' or a cloud omadacId) when it
+ * changed (withActiveController() in config-model.ts).
+ * @param {string} activeController - 'local' or an omadacId.
+ * @returns {boolean} False only when a needed write failed (logged).
+ */
+export function saveActiveController(activeController: string): boolean {
+  const next = withActiveController(getCachedConfig(), activeController);
+  return next === null ? true : persistConfig(next, 'the active controller');
+}
+
+/**
+ * Returns the site remembered for a cloud controller (`cloudSites`).
+ * @param {string} omadacId - The cloud controller's omadacId.
+ * @returns {string} Its site id, or '' when none is stored.
+ */
+export function getCloudSiteId(omadacId: string): string {
+  return cloudSiteOf(getCachedConfig(), omadacId);
+}
+
+/**
+ * Remembers the site the user picked on a cloud controller in
+ * `cloudSites[omadacId]` (never the local `siteId`; withCloudSite() in
+ * config-model.ts). A write failure is logged, not surfaced, like
+ * saveStoredSiteId().
+ * @param {string} omadacId - The cloud controller's omadacId.
+ * @param {string} siteId - The chosen site id (validated by the caller).
+ */
+export function saveCloudSiteId(omadacId: string, siteId: string): void {
+  const next = withCloudSite(getCachedConfig(), omadacId, siteId);
+  if (next) {
+    persistConfig(next, 'the selected cloud site id');
+  }
 }
 
 /**

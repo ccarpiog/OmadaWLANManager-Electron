@@ -5,7 +5,9 @@
 // Client ID change dropping the stored secret, Remove cloud access deleting
 // every cloud field and making the local controller active, the cloud
 // account surviving a controller URL change while `localOmadacId` is dropped
-// with it, the renderer view (flags only) and the credential accessor.
+// with it, the renderer view (flags only) and the credential accessor; and
+// the persistence helpers of the connection targets (inbox I-1b2b1:
+// localOmadacId, activeController, cloudSites).
 // Encryption is a fake SecretBox (no Electron safeStorage).
 
 import assert from 'node:assert/strict';
@@ -15,13 +17,17 @@ import {
   applyConfigSave,
   cloudAccessStatus,
   cloudCredentialsOf,
+  cloudSiteOf,
   ConfigSaveOutcome,
   MAX_CLOUD_SITES,
   normalizeCloudSites,
   SecretBox,
   StoredConfig,
   toRendererConfig,
-  validateStoredConfig
+  validateStoredConfig,
+  withActiveController,
+  withCloudSite,
+  withLocalOmadacId
 } from '../../src/main/config-model';
 import type { ConfigSavePayload } from '../../src/shared/types';
 
@@ -297,3 +303,62 @@ describe('the renderer view of cloud access', () => {
     assert.equal(toRendererConfig(config, box, null, 'session').cloudAccess.cloudSecretSessionOnly, true);
   }); // End of test "flags only..."
 });
+
+describe('the persistence helpers of the connection targets (inbox I-1b2b1)', () => {
+  test('withLocalOmadacId(): written for the configured URL only, and only when it changed; the URL-change rule still drops it', () => {
+    const config = storedWithCloud();
+    assert.equal(withLocalOmadacId(config, URL_A, OMADAC_LOCAL), null, 'unchanged: nothing to write');
+    const next = withLocalOmadacId(config, URL_A, OMADAC_REMOTE);
+    assert.deepEqual(next, { ...config, localOmadacId: OMADAC_REMOTE });
+    assert.equal(config.localOmadacId, OMADAC_LOCAL, 'the input is not mutated');
+    assert.equal(withLocalOmadacId(config, URL_B, OMADAC_REMOTE), null, 'a connect to another URL');
+    for (const bad of ['', 'local', 'a b', '__proto__']) {
+      assert.equal(withLocalOmadacId(config, URL_A, bad), null, bad);
+    }
+    assert.equal(withLocalOmadacId({ url: '', username: '', language: 'es' }, '', OMADAC_LOCAL), null, 'no configured URL');
+    assert.ok(next);
+    assert.equal(expectOk(applyConfigSave(next, payload({ url: URL_B, password: 'password-for-B' }), box)).config.localOmadacId, undefined);
+  }); // End of test "withLocalOmadacId()..."
+
+  test('withActiveController(): "local" or an omadacId, written only when it changed', () => {
+    const base: StoredConfig = { url: URL_A, username: 'admin', language: 'en' };
+    assert.equal(withActiveController(base, 'local'), null, 'an absent field counts as local');
+    const cloud = withActiveController(base, OMADAC_REMOTE);
+    assert.equal(cloud?.activeController, OMADAC_REMOTE);
+    assert.ok(cloud);
+    assert.equal(withActiveController(cloud, OMADAC_REMOTE), null);
+    assert.equal(withActiveController(cloud, 'local')?.activeController, 'local');
+    for (const bad of ['', 'a b', '__proto__', 'constructor']) {
+      assert.equal(withActiveController(cloud, bad), null, bad);
+    }
+    assert.equal(validateStoredConfig(JSON.parse(JSON.stringify(cloud))).activeController, OMADAC_REMOTE, 'loads back');
+  }); // End of test "withActiveController()..."
+
+  test('cloudSiteOf() / withCloudSite(): per omadacId, never the local siteId; capped at MAX_CLOUD_SITES with the newest last', () => {
+    const config: StoredConfig = { ...storedWithCloud(), siteId: 'site-local' };
+    assert.equal(cloudSiteOf(config, OMADAC_REMOTE), 'site-remote');
+    assert.equal(cloudSiteOf(config, OMADAC_LOCAL), '');
+    assert.equal(cloudSiteOf(config, 'constructor'), '');
+    assert.equal(cloudSiteOf({ url: URL_A, username: 'admin', language: 'en' }, OMADAC_REMOTE), '');
+    assert.equal(withCloudSite(config, OMADAC_REMOTE, 'site-remote'), null, 'unchanged');
+    const next = withCloudSite(config, OMADAC_LOCAL, 'site-2');
+    assert.deepEqual(next?.cloudSites, { [OMADAC_REMOTE]: 'site-remote', [OMADAC_LOCAL]: 'site-2' });
+    assert.equal(next?.siteId, 'site-local', 'the local site is never touched');
+    assert.deepEqual(config.cloudSites, { [OMADAC_REMOTE]: 'site-remote' }, 'the input is not mutated');
+    for (const [omadacId, siteId] of [['a b', 'site-1'], ['local', 'site-1'], [OMADAC_LOCAL, 'x y'], [OMADAC_LOCAL, '']]) {
+      assert.equal(withCloudSite(config, omadacId, siteId), null, `${omadacId} ${siteId}`);
+    }
+    let many: StoredConfig = { url: URL_A, username: 'admin', language: 'en' };
+    for (let index = 0; index < MAX_CLOUD_SITES + 5; index++) {
+      many = withCloudSite(many, `org${index}`, `site${index}`) ?? many;
+    }
+    const keys = Object.keys(many.cloudSites ?? {});
+    assert.equal(keys.length, MAX_CLOUD_SITES);
+    assert.equal(keys[0], 'org5', 'the oldest entries went');
+    assert.equal(keys[keys.length - 1], `org${MAX_CLOUD_SITES + 4}`);
+    const rechosen = withCloudSite(many, 'org5', 'site-new');
+    assert.equal(Object.keys(rechosen?.cloudSites ?? {}).pop(), 'org5', 'a new choice moves last');
+    assert.equal(Object.keys(rechosen?.cloudSites ?? {}).length, MAX_CLOUD_SITES);
+    assert.deepEqual(validateStoredConfig(JSON.parse(JSON.stringify(many))).cloudSites, many.cloudSites, 'loads back');
+  }); // End of test "cloudSiteOf() / withCloudSite()..."
+}); // End of describe 'the persistence helpers of the connection targets'

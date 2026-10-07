@@ -381,6 +381,80 @@ export function activeControllerOf(config: StoredConfig): string {
 }
 
 /**
+ * The config to write once a local connect learned the controller's omadacId
+ * (inbox I-1b2b1): `localOmadacId` set, everything else kept. Nothing is to
+ * be written (null) when the id is unusable (isOmadacId()), when the same id
+ * is stored already, or when the config's controller URL is no longer the
+ * one the connect used — the field belongs to that URL, and a URL change
+ * drops it (applyConfigSave()).
+ * @param {StoredConfig} config - The stored config.
+ * @param {string} url - The configured URL the connect used.
+ * @param {string} omadacId - The omadacId /api/info reported.
+ * @returns {StoredConfig | null} The config to persist, or null when nothing changes.
+ */
+export function withLocalOmadacId(config: StoredConfig, url: string, omadacId: string): StoredConfig | null {
+  if (!isOmadacId(omadacId) || config.url === '' || config.url !== url || config.localOmadacId === omadacId) {
+    return null;
+  }
+  return { ...config, localOmadacId: omadacId };
+}
+
+/**
+ * The config to write for a new active controller (ConnectionManager
+ * .switchTarget()): 'local' or a cloud controller's omadacId. Nothing is to
+ * be written (null) for any other value or when it is the active one already
+ * (an absent field counts as 'local').
+ * @param {StoredConfig} config - The stored config.
+ * @param {string} activeController - 'local' or an omadacId.
+ * @returns {StoredConfig | null} The config to persist, or null when nothing changes.
+ */
+export function withActiveController(config: StoredConfig, activeController: string): StoredConfig | null {
+  if (activeController !== LOCAL_CONTROLLER && !isOmadacId(activeController)) {
+    return null;
+  }
+  if (activeControllerOf(config) === activeController) {
+    return null;
+  }
+  return { ...config, activeController };
+}
+
+/**
+ * The site remembered for a cloud controller.
+ * @param {StoredConfig} config - The stored config.
+ * @param {string} omadacId - The cloud controller's omadacId.
+ * @returns {string} Its site id, or '' when none is stored.
+ */
+export function cloudSiteOf(config: StoredConfig, omadacId: string): string {
+  if (!isOmadacId(omadacId) || !config.cloudSites || !Object.prototype.hasOwnProperty.call(config.cloudSites, omadacId)) {
+    return '';
+  }
+  return config.cloudSites[omadacId];
+}
+
+/**
+ * The config to write once the user picked a site on a cloud controller:
+ * `cloudSites[omadacId]` set (never the local `siteId`). The entry moves to
+ * the end, and the oldest entries go when more than MAX_CLOUD_SITES would be
+ * kept. Nothing is to be written (null) for an unusable omadacId or site id,
+ * or when that site is stored already.
+ * @param {StoredConfig} config - The stored config.
+ * @param {string} omadacId - The cloud controller's omadacId.
+ * @param {string} siteId - The chosen site id.
+ * @returns {StoredConfig | null} The config to persist, or null when nothing changes.
+ */
+export function withCloudSite(config: StoredConfig, omadacId: string, siteId: string): StoredConfig | null {
+  if (!isOmadacId(omadacId) || typeof siteId !== 'string' || !CLOUD_SITE_ID_REGEX.test(siteId)) {
+    return null;
+  }
+  if (cloudSiteOf(config, omadacId) === siteId) {
+    return null;
+  }
+  const kept = Object.entries(config.cloudSites ?? {}).filter(([id]) => id !== omadacId);
+  const entries = [...kept.slice(Math.max(0, kept.length - (MAX_CLOUD_SITES - 1))), [omadacId, siteId]];
+  return { ...config, cloudSites: Object.fromEntries(entries) };
+} // End of function withCloudSite()
+
+/**
  * The effective cloud region of a config (DEFAULT_CLOUD_REGION when none or
  * an unknown one is stored).
  * @param {StoredConfig} config - The stored config.

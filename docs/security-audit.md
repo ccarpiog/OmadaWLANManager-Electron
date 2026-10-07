@@ -1,6 +1,6 @@
 # Security, async-race and accessibility audit (phase 20a)
 
-Date: 2026-10-07. Scope: todo.md 4.13 first half — the IPC surface, redaction, async races in the renderer, destructive confirmations, and accessibility / keyboard behaviour at the three window widths. Measured against `docs/management-design.md` §3 and §4.6–§4.7. The line numbers refer to the tree at the end of phase 20a, except the rows marked I-1a (the TP-Link cloud channels and log lines added by inbox phase I-1a, `docs/omada-cloud-openapi.md`) and I-1b1 (the cloud controller session), which refer to the tree at the end of those phases.
+Date: 2026-10-07. Scope: todo.md 4.13 first half — the IPC surface, redaction, async races in the renderer, destructive confirmations, and accessibility / keyboard behaviour at the three window widths. Measured against `docs/management-design.md` §3 and §4.6–§4.7. The line numbers refer to the tree at the end of phase 20a, except the rows marked I-1a (the TP-Link cloud channels and log lines added by inbox phase I-1a, `docs/omada-cloud-openapi.md`), I-1b1 (the cloud controller session) and I-1b2b1 (the connection targets), which refer to the tree at the end of those phases.
 
 Verification: `npm run build`, `npm test` (1033 tests after the review fixes), `npm run smoke` (270 checks, 10 launches, new `[a11y]`) and `npm run tls-probe` (25 checks) all pass. Every fix below was reverted on its own, and a test then failed (see "Fixed in 20a").
 
@@ -79,6 +79,9 @@ Central redactor: `src/main/redact.ts`.
 | I-1a: `cloud-access.ts:218` | `redactErrorMessage()` with the live cloud secret and tokens |
 | I-1a: `cloud-access.ts:223` | the reply's codes-only diagnostic (already scrubbed by value) |
 | I-1a: `config-model.ts:494`, `:718` | error name only (cloud secret decrypt / encrypt) |
+| I-1b2b1: `connection-manager.ts:784` | a refused cloud connect's code-first, codes-only detail (`cloudRefusalDetail()`, redacted) |
+| I-1b2b1: `connection-manager.ts:804` | a failed cloud connect's detail (`connectFailureDetail()`: the `CloudSessionError` text, redacted and scrubbed by value of the `deviceId`, the `serverHost` origin and host and the account's live secrets) |
+| I-1b2b1: `connection-manager.ts:567`, `:572` | fixed text |
 | other `config*.ts` lines | fixed text |
 
 In the renderer, the console lines log rejection messages that main has already sanitized. The renderer only ever holds a typed passphrase or password, and none of its log lines includes one.
