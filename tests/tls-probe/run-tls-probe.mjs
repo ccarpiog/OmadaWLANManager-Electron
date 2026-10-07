@@ -33,7 +33,17 @@
 // or a controller URL change while a connect is in flight, a reset while
 // connected without the renderer disconnecting first, and a URL change while a
 // multi-site selection is pending — main alone must refuse every stale
-// completion, install nothing and persist nothing for the old state.
+// completion, install nothing and persist nothing for the old state. The
+// management-access checks (todo 4.8) then show that the Open API client
+// rides the same pinned controller session: with a Client ID + Client Secret
+// saved, nothing (no token request, no secret) reaches the server before the
+// certificate is trusted; afterwards the capability checks pass while the
+// default session — deliberately left with a cached first-use rejection —
+// still refuses the certificate; a certificate reset drops the Open API
+// client, so the next session acquires a new token; and a management-
+// credentials save starts no check run of its own — the reconnect the
+// Settings flow performs (whose start already closes the old session's Open
+// API side) runs the only one.
 // Only 127.0.0.1 is contacted; no controller, no ~/.omada-wlan-manager/ (HOME
 // is a temp dir; the macOS Keychain is not used, see app-main.cjs).
 
@@ -553,6 +563,117 @@ async function runEndToEnd(binary, certDir, fingerprintA, fingerprintB) {
         { saved, view, unknownKey, kept, keptView, moved, movedView, leaked }
       );
     }); // End of check "[e2e] management access without safeStorage..."
+
+    // ------------------------------------------------------------------------
+    // Management access (todo 4.8, phase 15b): the Open API client of a
+    // ControllerSession uses the same pinned controller session
+    // ------------------------------------------------------------------------
+    const openApiSecret = 'tls-probe-openapi-secret-7c3d';
+    /**
+     * Sends GET /api/info on Electron's DEFAULT session (net.request without a
+     * session option) and reports whether the TLS handshake accepted the
+     * certificate. The default session has the app's verify proc too, but its
+     * verdict cache is never reset by the app.
+     * @returns {Promise<'accepted' | 'rejected'>} The outcome.
+     */
+    const defaultSessionVerdict = () => app.evaluate(({ net }, target) => new Promise((resolve) => {
+      const request = net.request({ url: `${target}/api/info` });
+      request.on('response', (response) => {
+        response.on('data', () => {});
+        response.on('end', () => resolve('accepted'));
+      });
+      request.on('error', () => resolve('rejected'));
+      request.end();
+    }), url);
+    /** @returns {number} Open API token requests the fake controller received so far. */
+    const tokenCount = () => controller.tokenRequests.length;
+    // The session nonce of the connection made by the first management check
+    let managementNonce = '';
+
+    await check('[e2e] Open API through the pinned session: with a Client ID + Client Secret saved and no pin, a connect stops at certificateUntrusted and the controller receives nothing (no token request, no secret); after trust the capability checks pass, the token request follows /api/info and the login, the Open API reads carry its token, and the default session (left with a cached first-use rejection) still refuses the certificate — so the Open API used the controller session; the secret and the token are in no reply, file or log', async () => {
+      const saved = await page.evaluate((body) => window.omadaAPI.saveConfig(body), { url, username: 'probe', language: 'en', clientId: 'probe-client', clientSecret: openApiSecret });
+      // Leave a cached first-use rejection in the default session's network context
+      const poisoned = await defaultSessionVerdict();
+      const requestsBefore = controller.requests.length;
+      const first = await page.evaluate(() => window.omadaAPI.connect());
+      const untouched = controller.requests.length === requestsBefore && tokenCount() === 0;
+      const trusted = await page.evaluate((nonce) => window.omadaAPI.trustCertificate(nonce), first.trustNonce);
+      const connected = await page.evaluate(() => window.omadaAPI.connect());
+      managementNonce = connected.sessionNonce;
+      const capabilities = await page.evaluate((nonce) => window.omadaAPI.getManagementCapabilities(nonce), connected.sessionNonce);
+      const after = controller.requests.slice(requestsBefore);
+      const infoIndex = after.findIndex((request) => request.method === 'GET' && request.path === '/api/info');
+      const loginIndex = after.findIndex((request) => request.method === 'POST' && request.path.endsWith('/api/v2/login'));
+      const tokenIndex = after.findIndex((request) => request.method === 'POST' && request.path === '/openapi/authorize/token');
+      const reads = after.filter((request) => request.method === 'GET' && request.path.startsWith('/openapi/v1/'));
+      const stillRejected = await defaultSessionVerdict();
+      const texts = [saved, first, trusted, connected, capabilities].map((value) => JSON.stringify(value));
+      const leaked = [...texts, readFileSync(configFile, 'utf8'), mainOutput.join('')].some((text) => text.includes(openApiSecret) || text.includes('probe-token-'));
+      return verdict(
+        saved.success === true && poisoned === 'rejected' && first.error === 'certificateUntrusted' && typeof first.trustNonce === 'string' && untouched &&
+        trusted.success === true && connected.success === true && connected.siteName === 'Casa' && /^[0-9a-f]{32}$/.test(connected.sessionNonce || '') &&
+        capabilities.success === true && capabilities.capabilities?.manageApGroups === true && capabilities.capabilities?.manageWifiNetworks === true &&
+        capabilities.capabilities?.reason === null && infoIndex === 0 && loginIndex > infoIndex && tokenIndex > loginIndex &&
+        tokenCount() === 1 && controller.tokenRequests[0].clientSecret === openApiSecret && controller.tokenRequests[0].clientId === 'probe-client' &&
+        reads.length >= 2 && reads.every((request) => request.authorization === 'AccessToken=probe-token-1') &&
+        stillRejected === 'rejected' && !leaked,
+        { saved, poisoned, first, untouched, trusted, connected, capabilities, paths: after.map((request) => `${request.method} ${request.path}`), tokens: tokenCount(), stillRejected, leaked }
+      );
+    }); // End of check "[e2e] Open API through the pinned session..."
+
+    await check('[e2e] Open API: CERT_RESET while connected drops the Open API client — the old session nonce answers notConnected, and after trusting and connecting again the new session acquires a NEW token (the old one is never sent again); "Test management access" re-runs the checks with a fresh token', async () => {
+      const tokensBefore = tokenCount();
+      const requestsBefore = controller.requests.length;
+      const reset = await page.evaluate(() => window.omadaAPI.resetCertificate());
+      const stale = await page.evaluate((nonce) => window.omadaAPI.getManagementCapabilities(nonce), managementNonce);
+      await trustThroughIpc();
+      const connected = await page.evaluate(() => window.omadaAPI.connect());
+      const capabilities = await page.evaluate((nonce) => window.omadaAPI.getManagementCapabilities(nonce), connected.sessionNonce);
+      const tested = await page.evaluate((nonce) => window.omadaAPI.testManagementAccess(nonce), connected.sessionNonce);
+      const reads = controller.requests.slice(requestsBefore).filter((request) => request.path.startsWith('/openapi/v1/'));
+      const texts = [reset, stale, connected, capabilities, tested].map((value) => JSON.stringify(value));
+      const leaked = [...texts, readFileSync(configFile, 'utf8'), mainOutput.join('')].some((text) => text.includes(openApiSecret) || text.includes('probe-token-'));
+      return verdict(
+        reset.connectionReset === true && stale.success === false && stale.error === 'notConnected' && connected.success === true &&
+        connected.sessionNonce !== managementNonce && capabilities.success === true && capabilities.capabilities?.reason === null &&
+        tested.success === true && tested.capabilities?.reason === null && tokenCount() === tokensBefore + 2 &&
+        reads.length >= 4 && reads.every((request) => request.authorization !== 'AccessToken=probe-token-1' && /^AccessToken=probe-token-\d+$/.test(request.authorization || '')) &&
+        !leaked,
+        { reset, stale, connected, capabilities, tested, tokens: tokenCount() - tokensBefore, reads, leaked }
+      );
+    }); // End of check "[e2e] Open API: CERT_RESET while connected drops the Open API client..."
+
+    await check('[e2e] Open API: a management-credentials save while connected, then the reconnect the Settings flow performs — while the reconnect\'s login is held the old session nonce already answers notConnected on both management channels and no token request was made (the save starts no check run of its own); after the login exactly ONE token request follows (the new session\'s, with the new secret) and the new session\'s checks pass', async () => {
+      const rotatedSecret = 'tls-probe-openapi-secret-rotated-41b9';
+      const connected = await page.evaluate(() => window.omadaAPI.connect());
+      const before = await page.evaluate((nonce) => window.omadaAPI.getManagementCapabilities(nonce), connected.sessionNonce);
+      const tokensBefore = tokenCount();
+      const saved = await page.evaluate((body) => window.omadaAPI.saveConfig(body), { url, username: 'probe', language: 'en', clientId: 'probe-client', clientSecret: rotatedSecret });
+      const hold = controller.hold('POST', '/api/v2/login');
+      await startConnect();
+      await hold.arrived;
+      const staleCapabilities = await page.evaluate((nonce) => window.omadaAPI.getManagementCapabilities(nonce), connected.sessionNonce);
+      const staleTest = await page.evaluate((nonce) => window.omadaAPI.testManagementAccess(nonce), connected.sessionNonce);
+      const tokensWhileHeld = tokenCount();
+      hold.release();
+      const reconnected = await finishConnect();
+      const capabilities = await page.evaluate((nonce) => window.omadaAPI.getManagementCapabilities(nonce), reconnected.sessionNonce);
+      // Give a stray (duplicate) run time to reach the fake controller
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const newTokens = controller.tokenRequests.slice(tokensBefore);
+      const texts = [connected, before, saved, staleCapabilities, staleTest, reconnected, capabilities].map((value) => JSON.stringify(value));
+      const leaked = [...texts, readFileSync(configFile, 'utf8'), mainOutput.join('')].some((text) => text.includes(rotatedSecret) || text.includes(openApiSecret) || text.includes('probe-token-'));
+      return verdict(
+        connected.success === true && before.success === true && before.capabilities?.reason === null &&
+        saved.success === true && saved.connectionReset !== true &&
+        staleCapabilities.success === false && staleCapabilities.error === 'notConnected' &&
+        staleTest.success === false && staleTest.error === 'notConnected' && tokensWhileHeld === tokensBefore &&
+        reconnected.success === true && reconnected.sessionNonce !== connected.sessionNonce &&
+        capabilities.success === true && capabilities.capabilities?.reason === null &&
+        newTokens.length === 1 && newTokens[0].clientSecret === rotatedSecret && !leaked,
+        { connected, before, saved, staleCapabilities, staleTest, tokensWhileHeld: tokensWhileHeld - tokensBefore, reconnected, capabilities, newTokens: newTokens.length, leaked }
+      );
+    }); // End of check "[e2e] Open API: a management-credentials save while connected, then the reconnect..."
 
     await check('[e2e] zero renderer console errors or page errors', async () => verdict(rendererErrors.length === 0, rendererErrors));
   } finally {

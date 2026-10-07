@@ -30,6 +30,7 @@ import {
   usernameInput,
 } from './elements';
 import { setLanguage, t, type Translations } from './i18n';
+import { resetManagementTest } from './management';
 import { clientSecretAffordance, planManagementSave, type ClientSecretAffordance, type ManagementFormError } from './management-form';
 import { createFocusTrap, updateBackgroundInert } from './modal-focus';
 import { isOperationInProgress, state } from './state';
@@ -153,8 +154,9 @@ const MANAGEMENT_ERROR_KEYS: Record<ManagementFormError, keyof Translations> = {
  * Fills the management-access section from the loaded config: the stored
  * Client ID in its field, the Client Secret field always empty (the secret
  * never reaches the renderer; only `hasClientSecret` does), the flags in
- * state, no removal staged and no confirmation open. Values arriving over IPC
- * are type-checked (a missing field reads as "nothing stored").
+ * state, no removal staged, no confirmation open and no old "Test management
+ * access" result. Values arriving over IPC are type-checked (a missing field
+ * reads as "nothing stored").
  * @param {RendererConfig} config - The config from loadConfig().
  */
 function loadManagementSection(config: RendererConfig): void {
@@ -166,6 +168,7 @@ function loadManagementSection(config: RendererConfig): void {
   clientIdInput.value = state.settingsClientId;
   clientSecretInput.value = '';
   managementRemoveConfirm.hidden = true;
+  resetManagementTest();
   updateManagementAffordance();
 } // End of function loadManagementSection()
 

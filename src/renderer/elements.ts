@@ -144,6 +144,9 @@ export const managementRemoveConfirm = document.getElementById('managementRemove
 export const managementRemoveMessage = document.getElementById('managementRemoveMessage') as HTMLElement;
 export const cancelManagementRemoveBtn = document.getElementById('cancelManagementRemoveBtn') as HTMLButtonElement;
 export const confirmManagementRemoveBtn = document.getElementById('confirmManagementRemoveBtn') as HTMLButtonElement;
+// "Test management access" and its result line (management.ts)
+export const testManagementBtn = document.getElementById('testManagementBtn') as HTMLButtonElement;
+export const managementTestResult = document.getElementById('managementTestResult') as HTMLElement;
 
 // Move dialog (review, progress, per-AP results)
 export const moveModal = document.getElementById('moveModal') as HTMLElement;

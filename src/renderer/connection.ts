@@ -4,6 +4,9 @@
 // Retry of the §4.6 error states. A failed connection or first data load
 // leaves its message in state.loadError (the views' persistent inline error);
 // a failed reload marks the data on screen as stale (state.refreshError).
+// A successful connection keeps the site name and the session nonce main
+// reported, and after its first data load fetches the management
+// capabilities in the background (management.ts).
 // Every async path is serialized through the operation flags and
 // generation-checked after each await (see state.ts).
 // ============================================================================
@@ -15,6 +18,7 @@ import { showCertificateChanged, showCertificateTrust } from './cert-modal';
 import { renderDestinationList, renderMovePreview } from './destination-pane';
 import { apFilterInput, connectBtn, destinationSearchInput, refreshBtn, settingsBtn } from './elements';
 import { t } from './i18n';
+import { loadManagementCapabilities } from './management';
 import { isAmbiguousGroup } from './move-plan';
 import { renderInventoryViews, resetInventoryViews } from './navigation';
 import { renderNotices } from './notices';
@@ -24,7 +28,15 @@ import { showSiteSelection } from './site-modal';
 import { invalidateSession, isOperationInProgress, setListsRefreshing, state } from './state';
 import { renderHeaderMeta, setStatus } from './status';
 import { showToast } from './toast';
-import { isValidMac, isValidSiteId, isValidWlanId, parseCertificateDetails, parseGroupListing } from './validation';
+import {
+  isValidMac,
+  isValidSiteId,
+  isValidWlanId,
+  parseCertificateDetails,
+  parseGroupListing,
+  parseSessionNonce,
+  parseSiteName,
+} from './validation';
 
 /**
  * Maps a failed connection result (stable error codes sent by the main
@@ -139,6 +151,7 @@ export async function connect(): Promise<void> {
  */
 async function handleConnectResult(result: ConnectionResult, generation: number, allowTrust: boolean): Promise<void> {
   if (result.success) {
+    applySessionDetails(result, null);
     await commitConnectedUi(generation);
   } else if (result.error === 'connectionSuperseded') {
     // Stale attempt: a newer main-process flow (connect or disconnect)
@@ -226,12 +239,30 @@ async function runCertificateChanged(rawCertificate: unknown, generation: number
 } // End of function runCertificateChanged()
 
 /**
+ * Keeps what a successful connect or site-selection result reports about the
+ * installed session (validated at the boundary): the site name for the
+ * header — main reports it for single-site controllers and remembered sites
+ * too; `fallbackSiteName` (the name picked in the site modal) covers a result
+ * without one — and the opaque session nonce of the management-access calls.
+ * The management capabilities of the new session are unknown until fetched.
+ * @param {ConnectionResult} result - The successful result.
+ * @param {string | null} fallbackSiteName - Site name to use when the result has none.
+ */
+function applySessionDetails(result: ConnectionResult, fallbackSiteName: string | null): void {
+  state.siteName = parseSiteName(result.siteName) ?? fallbackSiteName;
+  state.sessionNonce = parseSessionNonce(result.sessionNonce);
+  state.managementCapabilities = null;
+}
+
+/**
  * Commits the connected UI (status text, button label) and loads the
  * controller data. Part of connect(): a failed first load aborts the
  * connection with the load-error message (the views show it inline with
  * Retry and Settings); other errors thrown here are handled by connect()'s
  * catch so the whole UI state stays consistent. Every post-await commit is
- * generation-checked.
+ * generation-checked. After the first load the management capabilities are
+ * fetched in the background (loadManagementCapabilities(), not awaited): a
+ * management failure is never a connection failure.
  * @param {number} generation - The session generation captured by connect().
  * @returns {Promise<void>}
  */
@@ -249,7 +280,10 @@ async function commitConnectedUi(generation: number): Promise<void> {
     // inline (console.warn, not console.error)
     console.warn('Error loading the controller data after connecting:', error);
     await abortConnection(generation, t('loadError'));
+    return;
   }
+  if (generation !== state.sessionGeneration) return;
+  void loadManagementCapabilities(generation);
 } // End of function commitConnectedUi()
 
 /**
@@ -354,9 +388,9 @@ async function runSiteSelection(rawSites: unknown, rawNonce: unknown, generation
   if (generation !== state.sessionGeneration) return;
 
   if (result.success) {
-    // The header shows the chosen site's name from now on (main reuses this
-    // site on later connects to the same controller URL)
-    state.siteName = sites.find(site => site.id === chosenSiteId)?.name ?? null;
+    // The header shows the chosen site's name from now on (main reports it,
+    // and reuses this site on later connects to the same controller URL)
+    applySessionDetails(result, sites.find(site => site.id === chosenSiteId)?.name ?? null);
     await commitConnectedUi(generation);
   } else {
     await abortConnection(generation, connectionErrorMessage(result), selectionNonce);
@@ -373,13 +407,16 @@ async function runSiteSelection(rawSites: unknown, rawNonce: unknown, generation
  * preview (which disables the move button). The AP groups and Wi-Fi
  * networks views lose their selections and searches, the AP details pane
  * and the single-pane drill-ins close and the Back history is emptied (the
- * current view stays: navigation works disconnected).
+ * current view stays: navigation works disconnected). The session nonce and
+ * the management capabilities go with the session.
  */
 function clearData(): void {
   state.accessPoints = [];
   state.wlanGroups = [];
   state.groupModel = null;
   state.controllerVersion = null;
+  state.sessionNonce = null;
+  state.managementCapabilities = null;
   state.lastUpdatedAt = null;
   state.refreshError = false;
   state.selectedApMacs = new Set<string>();

@@ -105,6 +105,23 @@ export interface Translations {
   invalidClientId: string;
   clientIdRequired: string;
   clientSecretRequired: string;
+  // "Test management access" (management.ts): the button, the line shown
+  // while it runs, and one result per outcome (every check passed, each
+  // ManagementReason, and the renderer-side outcomes)
+  managementTest: string;
+  managementTestRunning: string;
+  managementTestOk: string;
+  managementTestLegacyController: string;
+  managementTestNotConfigured: string;
+  managementTestInvalidCredentials: string;
+  managementTestTokenFailed: string;
+  managementTestSiteNotFound: string;
+  managementTestApGroupsMismatch: string;
+  managementTestProbeFailed: string;
+  managementTestNotConnected: string;
+  managementTestUnsaved: string;
+  managementTestSuperseded: string;
+  managementTestFailed: string;
   // App shell (shell.ts, status.ts): the sidebar views and the header details
   wifiNetworks: string;
   viewNavLabel: string;
@@ -197,6 +214,12 @@ export interface Translations {
   refreshFailedNotice: string;
   readOnlyManagementNotConfigured: string;
   readOnlyLegacyController: string;
+  readOnlyManagementChecking: string;
+  readOnlyInvalidCredentials: string;
+  readOnlyTokenFailed: string;
+  readOnlySiteNotFound: string;
+  readOnlyApGroupsMismatch: string;
+  readOnlyProbeFailed: string;
   // Single-pane layout (700–799 px): opens the destination picker as a pane
   chooseDestination: string;
   // Destination pane (destination-pane.ts, move-text.ts): the group search,
@@ -370,6 +393,20 @@ const translations: Record<Language, Translations> = {
     invalidClientId: 'El Client ID solo puede tener letras, números, puntos, guiones y guiones bajos (hasta 128 caracteres).',
     clientIdRequired: 'Introduce el Client ID. Para desactivar el acceso de gestión, usa "Quitar el acceso de gestión".',
     clientSecretRequired: 'Introduce el Client Secret: es obligatorio con un Client ID nuevo o con otra URL del controlador.',
+    managementTest: 'Probar el acceso de gestión',
+    managementTestRunning: 'Probando el acceso de gestión…',
+    managementTestOk: 'El acceso de gestión funciona: se superaron todas las comprobaciones.',
+    managementTestLegacyController: 'Este controlador es anterior a Omada Controller 6.3: no admite la gestión (mover AP sí funciona).',
+    managementTestNotConfigured: 'No hay un Client ID y un Client Secret guardados.',
+    managementTestInvalidCredentials: 'El controlador rechazó el Client ID o el Client Secret.',
+    managementTestTokenFailed: 'No se pudo obtener un token de acceso de Open API (sin respuesta o con una respuesta inesperada). Comprueba que Open API está activado en el controlador.',
+    managementTestSiteNotFound: 'La aplicación de Open API no ve el sitio conectado. Revisa a qué sitios tiene acceso en el controlador.',
+    managementTestApGroupsMismatch: 'Open API muestra grupos de AP distintos de los del controlador, así que la gestión queda desactivada.',
+    managementTestProbeFailed: 'Open API no devolvió los sitios o los grupos de AP (sin respuesta o con un error).',
+    managementTestNotConnected: 'Conéctate primero al controlador: la prueba usa la conexión actual.',
+    managementTestUnsaved: 'Guarda primero los cambios: la prueba usa los ajustes guardados.',
+    managementTestSuperseded: 'La conexión cambió durante la prueba. Vuelve a intentarlo.',
+    managementTestFailed: 'No se pudo completar la prueba.',
     wifiNetworks: 'Redes Wi-Fi',
     viewNavLabel: 'Vistas',
     siteLabel: 'Sitio: {site}',
@@ -449,6 +486,12 @@ const translations: Record<Language, Translations> = {
     refreshFailedNotice: 'No se pudieron actualizar los datos. Se muestran los de las {time}.',
     readOnlyManagementNotConfigured: 'No hay credenciales de Open API configuradas — puedes consultar los datos. Añádelas en Ajustes → Acceso de gestión.',
     readOnlyLegacyController: 'Controlador heredado — puedes mover AP; editar grupos y redes requiere Omada Controller 6.3 o posterior.',
+    readOnlyManagementChecking: 'Comprobando el acceso de gestión — mientras tanto puedes consultar los datos.',
+    readOnlyInvalidCredentials: 'El controlador rechazó el Client ID o el Client Secret de Open API — puedes consultar los datos. Revísalos en Ajustes → Acceso de gestión.',
+    readOnlyTokenFailed: 'No se pudo obtener un token de Open API del controlador — puedes consultar los datos. Usa "Probar el acceso de gestión" en Ajustes → Acceso de gestión.',
+    readOnlySiteNotFound: 'La aplicación de Open API no ve este sitio — puedes consultar los datos. Revisa a qué sitios tiene acceso en el controlador.',
+    readOnlyApGroupsMismatch: 'Open API muestra grupos de AP distintos de los del controlador, así que la gestión está desactivada — puedes consultar los datos.',
+    readOnlyProbeFailed: 'Open API no respondió a las comprobaciones — puedes consultar los datos. Usa "Probar el acceso de gestión" en Ajustes → Acceso de gestión.',
     chooseDestination: 'Elegir destino',
     destinationTitle: 'Mover los AP seleccionados',
     destinationSearch: 'Buscar grupos o redes…',
@@ -606,6 +649,20 @@ const translations: Record<Language, Translations> = {
     invalidClientId: 'The Client ID can only contain letters, digits, dots, hyphens and underscores (up to 128 characters).',
     clientIdRequired: 'Enter the Client ID. To turn off management access, use "Remove management access".',
     clientSecretRequired: 'Enter the Client Secret: it is required for a new Client ID or a different controller URL.',
+    managementTest: 'Test management access',
+    managementTestRunning: 'Testing management access…',
+    managementTestOk: 'Management access works: every check passed.',
+    managementTestLegacyController: 'This controller is older than Omada Controller 6.3: management is not available (moving APs works).',
+    managementTestNotConfigured: 'No Client ID and Client Secret are saved.',
+    managementTestInvalidCredentials: 'The controller rejected the Client ID or the Client Secret.',
+    managementTestTokenFailed: 'Could not get an Open API access token (no answer, or an unexpected one). Check that the Open API is enabled in the controller.',
+    managementTestSiteNotFound: 'The Open API application cannot see the connected site. Check which sites it can access in the controller.',
+    managementTestApGroupsMismatch: 'The Open API shows different AP groups than the controller, so management stays off.',
+    managementTestProbeFailed: 'The Open API did not return the sites or the AP groups (no answer, or an error).',
+    managementTestNotConnected: 'Connect to the controller first: the test uses the current connection.',
+    managementTestUnsaved: 'Save your changes first: the test uses the saved settings.',
+    managementTestSuperseded: 'The connection changed during the test. Try again.',
+    managementTestFailed: 'The test could not be completed.',
     wifiNetworks: 'Wi-Fi networks',
     viewNavLabel: 'Views',
     siteLabel: 'Site: {site}',
@@ -685,6 +742,12 @@ const translations: Record<Language, Translations> = {
     refreshFailedNotice: 'Couldn\'t refresh the data. Showing the data from {time}.',
     readOnlyManagementNotConfigured: 'Open API credentials are not configured — viewing is available. Add them in Settings → Management access.',
     readOnlyLegacyController: 'Legacy controller — moving APs is available; editing groups and networks requires Omada Controller 6.3 or later.',
+    readOnlyManagementChecking: 'Checking management access — viewing is available meanwhile.',
+    readOnlyInvalidCredentials: 'The controller rejected the Open API Client ID or Client Secret — viewing is available. Check them in Settings → Management access.',
+    readOnlyTokenFailed: 'Could not get an Open API access token from the controller — viewing is available. Use "Test management access" in Settings → Management access.',
+    readOnlySiteNotFound: 'The Open API application cannot see this site — viewing is available. Check which sites it can access in the controller.',
+    readOnlyApGroupsMismatch: 'The Open API shows different AP groups than the controller, so management is off — viewing is available.',
+    readOnlyProbeFailed: 'The Open API did not answer the checks — viewing is available. Use "Test management access" in Settings → Management access.',
     chooseDestination: 'Choose destination',
     destinationTitle: 'Move selected APs',
     destinationSearch: 'Search groups or networks…',

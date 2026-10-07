@@ -4,8 +4,8 @@
 //   - contentState(): which §4.6 state the content of every view shows (first
 //     run, disconnected, initial loading, initial-load error, or the data);
 //   - readOnlyReason(): why the AP groups and Wi-Fi networks views are
-//     read-only — the ONE function the read-only banner is driven from, so
-//     phase 15 can switch it on the detected management capabilities;
+//     read-only — the ONE function the read-only banner is driven from, fed
+//     with the group model and the management capabilities main detected;
 //   - escapeAction(): the Escape key's priority (clear the search, then exit
 //     edit mode, then close the top dialog);
 //   - isFindShortcut(): Cmd+F (macOS) / Ctrl+F (elsewhere);
@@ -13,7 +13,7 @@
 //     the single-pane layout (700–799 px windows).
 // ============================================================================
 
-import type { GroupModel } from '../shared/types';
+import type { GroupModel, ManagementCapabilities, ManagementReason } from '../shared/types';
 
 // ============================================================================
 // Content states (§4.6)
@@ -67,38 +67,47 @@ export function contentState(input: ContentStateInput): ContentState {
 // ============================================================================
 
 /**
- * Why the AP groups and Wi-Fi networks views are read-only:
- * - 'managementNotConfigured': Omada 6.3+ without Open API credentials
- *   (viewing works; the fix is Settings → Management access);
- * - 'legacyController': a controller before 6.3 (or of unknown version):
- *   moving APs works, editing groups and networks needs 6.3 or later.
+ * Why the AP groups and Wi-Fi networks views are read-only: one of the
+ * management reasons main reports (ManagementReason in src/shared/types.ts —
+ * 'legacyController': a controller before 6.3 or of unknown version, moving
+ * APs works; 'managementNotConfigured': Omada 6.3+ without Open API
+ * credentials, the fix is Settings → Management access; and one code per
+ * other failing check of spec §2.2), or 'managementChecking' while main is
+ * still checking the management access of the session on screen.
  */
-export type ReadOnlyReason = 'managementNotConfigured' | 'legacyController';
+export type ReadOnlyReason = ManagementReason | 'managementChecking';
 
 /**
- * What readOnlyReason() decides from. Phase 15 adds the Open API
- * credentials and the capability checks of spec §2.2 here (each failing
- * check becomes its own reason; all passing means no banner).
+ * What readOnlyReason() decides from.
  */
 export interface ReadOnlyInput {
   // Data from a successful load is on screen (no banner without data)
   hasData: boolean;
   // The loaded controller's group model (null while no data is loaded)
   groupModel: GroupModel | null;
+  // The management capabilities main reported for the session on screen,
+  // or null while they are being checked
+  capabilities: ManagementCapabilities | null;
 }
 
 /**
  * Decides whether the read-only banner shows, and with which reason. The
- * banner is driven from this function alone.
+ * banner is driven from this function alone: no banner without data; a
+ * legacy group model is 'legacyController' at once (also before the
+ * capabilities arrive); then 'managementChecking' until main reports the
+ * capabilities, the reason of the failing check, and no banner once every
+ * check passed (a reason-less report with a capability off fails closed as
+ * 'probeFailed').
  * @param {ReadOnlyInput} input - The relevant renderer state.
  * @returns {ReadOnlyReason | null} The reason, or null for no banner.
  */
 export function readOnlyReason(input: ReadOnlyInput): ReadOnlyReason | null {
   if (!input.hasData || input.groupModel === null) return null;
   if (input.groupModel !== 'apGroup') return 'legacyController';
-  // No management credentials exist before phase 15
-  return 'managementNotConfigured';
-}
+  if (input.capabilities === null) return 'managementChecking';
+  if (input.capabilities.reason !== null) return input.capabilities.reason;
+  return input.capabilities.manageApGroups && input.capabilities.manageWifiNetworks ? null : 'probeFailed';
+} // End of function readOnlyReason()
 
 // ============================================================================
 // Keys (§4.7)

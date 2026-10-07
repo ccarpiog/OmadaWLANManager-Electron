@@ -203,6 +203,13 @@ export interface SiteInfo {
 
 // Connection result. `detail` optionally carries the underlying technical
 // message (e.g. an HTTP error from the API client) for display/diagnostics.
+// A success (connect, or selectSite completing a pending connect) carries
+// `siteName`, the display name of the site the connection uses (also for a
+// single-site controller and a remembered site), and `sessionNonce`, an
+// opaque token identifying the installed controller session: the renderer
+// echoes it back verbatim with the management-access calls
+// (getManagementCapabilities(), testManagementAccess()), so they only ever
+// act on the session it is showing.
 // When authentication succeeds but the controller manages several sites and
 // none could be picked automatically, `success` is false with no `error`,
 // `needsSiteSelection` is true, `sites` lists the authorized sites, and
@@ -223,6 +230,60 @@ export interface ConnectionResult {
   selectionNonce?: string;
   certificate?: CertificateDetails;
   trustNonce?: string;
+  siteName?: string;
+  sessionNonce?: string;
+}
+
+// Why management of AP groups and Wi-Fi networks is off for the connected
+// controller (docs/management-design.md §2.2). Main runs the checks in this
+// order after a successful connect and reports the first one that fails:
+// 'legacyController' — the controller is not Omada 6.3+ (groupModel is not
+//   'apGroup'); no Open API request is made;
+// 'managementNotConfigured' — no Client ID and Client Secret are configured;
+// 'invalidCredentials' — the token endpoint rejected the Client ID / Secret;
+// 'tokenFailed' — no access token could be obtained for another reason (no
+//   answer, timeout, an HTTP error or an unexpected answer);
+// 'siteNotFound' — the Open API site list does not contain the selected
+//   site's id (internal and Open API site ids differ, or the application has
+//   no access to the site);
+// 'apGroupsMismatch' — the Open API AP-group id set differs from the id set
+//   of the internal group list (setting/wlans); groups are never matched by name;
+// 'probeFailed' — the site or AP-group read probe (or the internal group
+//   list it is compared with) could not be read.
+export type ManagementReason =
+  | 'legacyController'
+  | 'managementNotConfigured'
+  | 'invalidCredentials'
+  | 'tokenFailed'
+  | 'siteNotFound'
+  | 'apGroupsMismatch'
+  | 'probeFailed';
+
+// The management capabilities of the connected controller, computed in main
+// (flags plus a reason code — never a raw controller response).
+// `manageApGroups` (phase 16) and `manageWifiNetworks` (phases 17–19) are
+// true only when every §2.2 check passed; `reason` says why they are off
+// (null when they are on). `diagnostic` optionally adds a short technical
+// detail built by main from error codes and counts only (e.g. "httpError,
+// HTTP 404"), never from controller text.
+export interface ManagementCapabilities {
+  manageApGroups: boolean;
+  manageWifiNetworks: boolean;
+  reason: ManagementReason | null;
+  diagnostic?: string;
+}
+
+// Why a management-access call returned no capabilities: 'notConnected' — no
+// controller session is installed (not connected, or a site still to pick);
+// 'superseded' — the session nonce does not belong to the installed session,
+// or the session was replaced or closed while the checks ran.
+export type ManagementCheckError = 'notConnected' | 'superseded';
+
+// Result of getManagementCapabilities() / testManagementAccess().
+export interface ManagementCapabilitiesResult {
+  success: boolean;
+  error?: ManagementCheckError;
+  capabilities?: ManagementCapabilities;
 }
 
 // Data loaded from controller
@@ -248,6 +309,8 @@ export interface OmadaAPI {
   disconnect(selectionNonce?: string): Promise<void>;
   trustCertificate(trustNonce: string): Promise<CertificateActionResult>;
   resetCertificate(): Promise<CertificateActionResult>;
+  getManagementCapabilities(sessionNonce: string): Promise<ManagementCapabilitiesResult>;
+  testManagementAccess(sessionNonce: string): Promise<ManagementCapabilitiesResult>;
 }
 
 // IPC channel names (type-safe)
@@ -267,6 +330,11 @@ export const IPC_CHANNELS = {
   // Certificate pinning (trust on first use)
   CERT_TRUST: 'cert:trust',
   CERT_RESET: 'cert:reset',
+
+  // Open API management access: the capabilities of the installed session,
+  // and "Test management access" (runs the checks again)
+  MANAGEMENT_CAPABILITIES: 'management:capabilities',
+  MANAGEMENT_TEST: 'management:test',
 } as const;
 
 // Type for IPC channel values

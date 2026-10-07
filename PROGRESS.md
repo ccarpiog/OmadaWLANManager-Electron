@@ -23,7 +23,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 14a | 4.7 (first half) Read-only AP groups & Wi-Fi networks views from internal data, cross-navigation with "Back to …", AP details pane — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-14a.md` |
 | 14b | 4.7 (second half) §4.6 states, read-only banner with reason, §4.7 responsive breakpoints, Cmd/Ctrl+F and Escape — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-14b.md` |
 | 15a | 4.8 (first half) Management-access credentials in config + Settings, Electron-free `OpenApiClient`, central redactor — risk: high; worker: opus | **done** — `docs/progress-archive/phase-15a.md` |
-| 15b | 4.8 (second half) `ControllerSession` facade, capability detection + §2.2 reason codes, "Test management access", `readOnlyReason()` inputs — risk: high | pending |
+| 15b | 4.8 (second half) `ControllerSession` facade, capability detection + §2.2 reason codes, "Test management access", `readOnlyReason()` inputs — risk: high; worker: opus | **done** — `docs/progress-archive/phase-15b.md` |
 | 16 | 4.9 AP group management (create/rename/delete-if-empty, move APs here) — risk: high | pending |
 | 17 | 4.10 Wi-Fi network read model via Open API (secrets stripped) — risk: routine | pending |
 | 18 | 4.11 Wi-Fi network editing, Open + WPA-Personal (read-merge-write, change password) — risk: high | pending |
@@ -268,7 +268,14 @@ validation, connect-without-config, console/main-process errors).
 - Acceptance met: build exit 0; `npm test` 530/530; smoke 133/133 (new `[mgmt]` launch, es + en); `npm run tls-probe` 22/22 (real main without `safeStorage`: only the Client ID on disk, secret never in a reply, file or log); preload `electron`-only; no `innerHTML`/inline styles.
 - Review: Codex, `docs/reviews/phase15a.md`, ship-with-fixes, 2 blockers (Linux `basic_text` counted as secure storage; quoted `key="value"` secrets passed the redactor), both fixed by an opus worker with 14 new tests; orchestrator re-ran build, tests, smoke and probe, all green.
 
-## Plan status: ACTIVE — phases 8–15a done, phases 15b–20 pending
+### Phase 15b — `ControllerSession`, capability detection, "Test management access" (2026-10-07)
+
+- Risk: high. Workers: opus (phase), opus (review fixes). Full narrative: `docs/progress-archive/phase-15b.md`.
+- New `controller-session.ts`: `ConnectionManager` installs a `ControllerSession` (internal client + `OpenApiClient` on the same pinned-session transport); the connect result carries `siteName` + `sessionNonce` (header shows the site name). Background capability checks, reason codes in order: `legacyController`, `managementNotConfigured`, `invalidCredentials`, `tokenFailed`, `siteNotFound`, `apGroupsMismatch` (id sets, never names), `probeFailed`; renderer-only `managementChecking`. Every invalidation closes the Open API client and token synchronously; late results discarded. New IPC `MANAGEMENT_CAPABILITIES` / `MANAGEMENT_TEST` (one session nonce each). `readOnlyReason()` takes the capabilities; "Test management access" in Settings; 20 strings es/en.
+- Acceptance met: build exit 0; `npm test` 580/580; smoke 144/144 (new `[caps]` launch: banner per reason, Test results, es + en); `npm run tls-probe` 25/25 (nothing reaches the server before trust; the token request follows `/api/info` + login on the controller session; reset drops the token; a credentials save + reconnect makes exactly one token request); no `innerHTML`; preload `electron`-only.
+- Review: Codex, `docs/reviews/phase15b.md`, ship-with-fixes, 2 blockers (a new connect left the old Open API session usable until the new login; `close()` kept tokens in `#knownTokens`) + 1 should-fix (a credentials save started a probe overlapping the reconnect's), all fixed by an opus worker, each with a test that fails when reverted; orchestrator re-ran build, tests, smoke and probe, all green.
+
+## Plan status: ACTIVE — phases 8–15b done, phases 16–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -298,9 +305,8 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 12 leftovers (none blocking): before connecting, the UI shows the 6.3 "AP groups"
   wording. `setting/wlans` on pre-6.3 controllers has never been tested live; the
   fallback to `setting/ssids` covers that case.
-- Phase 13a leftovers (none blocking): the header shows the site name only after a pick in the
-  site modal (single-site controllers and a remembered site show the host) — main should return
-  the site name, best in phase 15's `ControllerSession`; `clientNum` is unverified live (add it to
+- Phase 13a leftovers (none blocking): ~~the header shows the site name only after a pick in the
+  site modal~~ — fixed in phase 15b (main returns `siteName`); `clientNum` is unverified live (add it to
   the phase 20 checklist); the AP details pane (row click) is deferred to phase 14 (`todo.md` 4.7);
   a failed refresh now logs `console.warn` instead of `console.error`.
 - Phase 13b leftovers (none blocking): same-named groups cannot be move targets until renamed (the
@@ -322,16 +328,20 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
   secure-backend check is unit-tested only; a secret blob written under an insecure Linux backend by an
   earlier build could not be told apart later (no released build stored one); two documented free-text
   redactor gaps in `redact.ts` (`redactValue()` covers them for structured data).
+- Phase 15b leftovers (none blocking): "Test management access" tests saved credentials only (unsaved
+  edits → "save first", disconnected → "connect first"); during a reconnect the old **internal** controller
+  stays installed until the new attempt succeeds (phase-7 behavior; its Open API client is closed at once);
+  the probe's proof that Open API calls use the controller session leans on Electron caching a first-use
+  rejection in the default session; that internal and Open API site / AP-group ids are the same values is
+  unverified live — add it to the phase 20 checklist.
 
 ## Next action
 
-**Phase 15b — todo 4.8, second half: `ControllerSession` facade, capability detection, "Test management access", banner inputs (risk: high).** First read `todo.md` item 4.8 (incl. its Split and Done (15a) lines), then `docs/management-design.md` §2 (2.1–2.3), §3 and §5 only, and `docs/progress-archive/phase-15a.md` (what the client, config and redactor already provide). Phase 15a built `src/main/openapi-client.ts` (`listSites()`, `listApGroups()`, stable error codes) over the injected transport, but nothing calls it yet.
+**Phase 16 — todo 4.9: AP group management (risk: high).** First read `todo.md` item 4.9, then `docs/management-design.md` §3 (IPC rules), §4 (the AP groups view, the "Move access points here" flow) and §5 (defensive defaults) only, `docs/omada-openapi-ops.md` for the AP-group create / rename / delete operations, and `docs/progress-archive/phase-15b.md` (what `ControllerSession`, the capabilities and the two management IPC channels already provide). Consider splitting it (e.g. 16a main-side operations + contract tests, 16b UI + smoke) before starting if one worker cannot finish it coherently; record any split in `todo.md` 4.9.
 
-- `ControllerSession` facade (spec §2.1) over the internal client + `OpenApiClient`: normalized URL, `omadacId`, selected site, `controllerVersion`, `groupModel`, `capabilities`; IPC handlers talk only to it. The Open API client must use the **same pinned `ControllerTlsSessions` session** (net transport from `index.ts`) and be dropped by `ConnectionManager.invalidateControllerState()` (URL change, cert reset/trust, disconnect, supersede). Never send the Client Secret before the pin check passes (the internal `/api/info` handshake runs first). Return the **site name** to the renderer for the header (phase 13a leftover). Use the session-only secret when that is all there is.
-- Capability detection per spec §2.2, computed in main after a successful connect (and after a credentials save while connected): (1) `groupModel === 'apGroup'`, (2) Client ID + Secret configured, (3) token acquired, (4) `GET /openapi/v1/{omadacId}/sites` contains the selected internal site id, (5) `…/sites/{siteId}/ap-groups` id set **equals** the internal `setting/wlans` id set (never match by name). Each failing check → management off with its own stable reason code; sent as flags + reason codes, never raw responses. Capability probes must not delay or fail the internal connect / AP list (a management failure is not a connection failure).
-- "Test management access" button in the Settings Management access section: runs the checks with the stored or session credentials, reports the precise reason in es/en. New IPC channels start with `assertTrustedIpcSender()`, shape-guard payloads, and carry the phase-7 generation/nonce ownership where a connection is involved; the preload stays `electron`-only.
-- Renderer: extend the inputs of `readOnlyReason()` in `src/renderer/view-state.ts` with the capabilities — it stays the single switch for the read-only banner (one localized message per reason code). No management actions yet (phases 16–19).
-- Acceptance (todo 4.8): unit tests for the capability matrix (each failing check → management off with the right reason), the site-id and group id-set mismatches, invalidation dropping the Open API client and token, and the secret never in any IPC reply; smoke (stubbed main) for the banner per reason and the Test button results in es/en; `npm run tls-probe` extended for the session wiring (Open API calls go through the pinned session; nothing reaches the server before trust). No live controller (D4). `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
+- Create (empty, name only), rename, delete — delete only when the group is non-default, has 0 APs and no SSID bindings (app policy, spec §2/§5) — through the `ControllerSession`'s `OpenApiClient` (pinned session, same invalidation). Show per-band capacity (`remainingBinding`, already validated by `listApGroups()` in 15a; phase 14a leftover). "Move access points here" reuses the phase-13 move flow over the internal API (`OMADA_SET_WLAN`), not the Open API.
+- New IPC channels follow spec §3: `assertTrustedIpcSender()`, shape-guarded payloads, the session nonce from 15b, stable error codes, no raw responses or secrets in replies; the preload stays `electron`-only. All actions are available only when the capabilities say management is on; otherwise the UI is hidden or explained by the existing `readOnlyReason()` banner. After each change, reload so the AP groups view, the destination pane and the capabilities' id-set check stay consistent. Renaming can resolve the phase 13b leftover (same-named groups disabled as move targets).
+- Acceptance (todo 4.9): contract tests against fixtures for each Open API call (method, path version, body); smoke (stubbed main): create → rename → delete blocked when non-empty → delete empty; UI hidden/explained when the capability is off; es + en. No live controller (D4). `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
 
 ## Key paths
 
@@ -343,6 +353,7 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - `src/main/index.ts` — window creation, IPC handlers, cert verification
 - `src/main/omada-api.ts` — OmadaController HTTP client (`getWlanGroups()` → `GroupListing`: `setting/wlans` outer-joined with `setting/ssids`, legacy fallback); `src/main/controller-version.ts` — `controllerVer` → `groupModel`
 - `src/main/config.ts` — config persistence (save rules in the pure `config-model.ts`, incl. the Client ID / Client Secret rules and `secureSecretStorageAvailable()`)
+- `src/main/controller-session.ts` — `ControllerSession` facade (internal client + Open API client, capability checks and reason codes); `src/renderer/management.ts` — capabilities state + "Test management access"
 - `src/main/openapi-client.ts` — Electron-free Open API client (token lifecycle, v1/v2 paths, pagination, `listSites()` / `listApGroups()`); `src/main/redact.ts` — central redactor; `src/renderer/management-form.ts` — Settings "Management access (optional)"
 - `src/main/cert-pinning.ts` (pure pin decision + fingerprint), `cert-verify.ts` (verify proc, `certificate-error`, `ControllerTlsSessions`), `connection-manager.ts` (connect / site selection / trust / reset / `invalidateControllerState()`, Electron-free); `src/renderer/cert-modal.ts`
 - `tests/tls-probe/` — opt-in `npm run tls-probe` (local HTTPS servers, real Electron)
@@ -364,3 +375,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 14a: `33bcb34` ("Add read-only AP group and Wi-Fi network views with cross-navigation"), pushed to origin/main (`cf2db68..33bcb34`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 14b: `b68ea14` ("Add view states, the read-only banner and the responsive layout"), pushed to origin/main (`9567098..b68ea14`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 15a: `a14415d` ("Add optional Open API credentials, an Open API client and a central redactor"), pushed to origin/main (`72faed9..a14415d`). A follow-up commit records this SHA. Tree clean after it.
+- Phase 15b: committed and pushed to origin/main; the SHA is recorded by the follow-up commit.

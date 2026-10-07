@@ -2,9 +2,13 @@
 // (run-tls-probe.mjs): an HTTPS server on 127.0.0.1 presenting a given
 // self-signed certificate and answering the internal-API (v2) calls the app
 // makes, with the envelopes from tests/fixtures/controller/responses.json.
-// It logs every HTTP request it receives (and the passwords of login POSTs),
-// so the probe can prove that nothing — in particular no password — arrives
-// before the certificate pin check passes. For the concurrency checks it can
+// It logs every HTTP request it receives (with its Authorization header), the
+// passwords of login POSTs and the bodies of Open API token requests, so the
+// probe can prove that nothing — in particular no password, no token request
+// and no Client Secret — arrives before the certificate pin check passes. It
+// also answers the Open API calls of the management capability checks (token,
+// sites, AP groups matching the internal setting/wlans ids), issuing a new
+// token "probe-token-N" per token request. For the concurrency checks it can
 // also serve the multi-site listing (setSites('multi')) and hold the response
 // to one request until the probe releases it (hold()), which keeps a connect
 // in flight at a chosen step.
@@ -51,6 +55,16 @@ function route(method, pathname, sites) {
   if (method === 'GET' && pathname === `${prefix}/sites/${SITE_ID}/setting/wlans`) {
     return responses.wlans;
   }
+  // Open API read probes of the capability checks (the token endpoint is
+  // answered by the request handler, which issues the tokens): the site list
+  // with the internal site id, and the AP groups with the internal group ids
+  if (method === 'GET' && pathname === `/openapi/v1/${OMADAC_ID}/sites`) {
+    return { errorCode: 0, msg: 'Success.', result: { totalRows: 1, currentPage: 1, currentSize: 1, data: [{ siteId: SITE_ID, name: 'Casa' }] } };
+  }
+  if (method === 'GET' && pathname === `/openapi/v1/${OMADAC_ID}/sites/${SITE_ID}/ap-groups`) {
+    const groups = responses.wlans.result.data.map((group) => ({ id: group.id, name: group.name, primary: group.primary, apNum: 0 }));
+    return { errorCode: 0, msg: 'Success.', result: { totalRows: groups.length, currentPage: 1, currentSize: groups.length, data: groups } };
+  }
   return null;
 } // End of function route()
 
@@ -58,11 +72,13 @@ function route(method, pathname, sites) {
  * Starts the fake controller.
  * @param {{ key: Buffer; cert: Buffer }} pair - PEM key and certificate to present.
  * @param {number} [port] - Port to bind (0 = any free port).
- * @returns {Promise<{ port: number; requests: Array<{ method: string; path: string }>; loginPasswords: string[]; setSites: (kind: 'single' | 'multi') => void; hold: (method: string, pathSuffix: string) => { arrived: Promise<void>; release: () => void }; close: () => Promise<void> }>}
+ * @returns {Promise<{ port: number; requests: Array<{ method: string; path: string; authorization: string | null }>; loginPasswords: string[]; tokenRequests: Array<{ omadacId: unknown; clientId: unknown; clientSecret: unknown }>; setSites: (kind: 'single' | 'multi') => void; hold: (method: string, pathSuffix: string) => { arrived: Promise<void>; release: () => void }; close: () => Promise<void> }>}
  */
 export function startFakeController(pair, port = 0) {
   const requests = [];
   const loginPasswords = [];
+  // Bodies of the Open API token requests ({omadacId, client_id, client_secret})
+  const tokenRequests = [];
   // Site listing served by GET .../sites (see setSites())
   let sites = 'single';
   // Armed holds: { method, pathSuffix, arrive, released, triggered }
@@ -72,7 +88,7 @@ export function startFakeController(pair, port = 0) {
     request.on('data', (chunk) => { body += String(chunk); });
     request.on('end', () => {
       const url = new URL(request.url, 'https://127.0.0.1');
-      requests.push({ method: request.method, path: url.pathname });
+      requests.push({ method: request.method, path: url.pathname, authorization: request.headers.authorization ?? null });
       if (request.method === 'POST' && url.pathname.endsWith('/api/v2/login')) {
         try {
           loginPasswords.push(String(JSON.parse(body).password));
@@ -80,7 +96,20 @@ export function startFakeController(pair, port = 0) {
           loginPasswords.push('<unparseable body>');
         }
       }
-      const envelope = route(request.method, url.pathname, sites);
+      let envelope;
+      if (request.method === 'POST' && url.pathname === '/openapi/authorize/token') {
+        // Client-credentials token request: record it and issue a new token
+        let parsed = {};
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          parsed = {};
+        }
+        tokenRequests.push({ omadacId: parsed.omadacId, clientId: parsed.client_id, clientSecret: parsed.client_secret });
+        envelope = { errorCode: 0, msg: 'Open API Get Access Token successfully.', result: { accessToken: `probe-token-${tokenRequests.length}`, tokenType: 'bearer', expiresIn: 7200 } };
+      } else {
+        envelope = route(request.method, url.pathname, sites);
+      }
       /**
        * Sends the reply, unless the client already dropped the connection
        * (e.g. the app closed the session while the reply was held).
@@ -100,7 +129,7 @@ export function startFakeController(pair, port = 0) {
         return;
       }
       respond();
-    });
+    }); // End of the request 'end' handler
   }); // End of the request handler
   server.keepAliveTimeout = 60000;
   server.on('tlsClientError', () => {
@@ -113,6 +142,7 @@ export function startFakeController(pair, port = 0) {
         port: server.address().port,
         requests,
         loginPasswords,
+        tokenRequests,
         /**
          * Selects the site listing GET .../sites serves from now on.
          * @param {'single' | 'multi'} kind - Single-site or multi-site fixture.

@@ -1,12 +1,13 @@
 // Tests for the pure view-state logic (src/renderer/view-state.ts, a DOM-free
 // module): the §4.6 content state of the views (first run, disconnected,
 // loading, initial-load error, ready — data always wins), the read-only
-// banner's reason (the one function phase 15 switches on capabilities), the
-// §4.7 Escape priority and the Cmd/Ctrl+F shortcut, and the pane the
-// single-pane layout shows.
+// banner's reason (driven by the group model and the management capabilities
+// main reports), the §4.7 Escape priority and the Cmd/Ctrl+F shortcut, and
+// the pane the single-pane layout shows.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import type { ManagementCapabilities, ManagementReason } from '../../src/shared/types';
 import {
   accessPointsPane,
   contentState,
@@ -17,6 +18,29 @@ import {
   type ContentStateInput,
   type KeyChord,
 } from '../../src/renderer/view-state';
+
+// Every reason main can report (src/shared/types.ts ManagementReason)
+const REASONS: ManagementReason[] = [
+  'legacyController',
+  'managementNotConfigured',
+  'invalidCredentials',
+  'tokenFailed',
+  'siteNotFound',
+  'apGroupsMismatch',
+  'probeFailed',
+];
+
+/**
+ * Capabilities with management off for a reason.
+ * @param {ManagementReason} reason - The reason.
+ * @returns {ManagementCapabilities} The capabilities.
+ */
+function off(reason: ManagementReason): ManagementCapabilities {
+  return { manageApGroups: false, manageWifiNetworks: false, reason };
+}
+
+// Capabilities with every check passed
+const ON: ManagementCapabilities = { manageApGroups: true, manageWifiNetworks: true, reason: null };
 
 /**
  * Builds a content-state input: a configured, idle, disconnected app with
@@ -68,19 +92,35 @@ describe('contentState', () => {
 
 describe('readOnlyReason', () => {
   test('no banner without data', () => {
-    assert.equal(readOnlyReason({ hasData: false, groupModel: null }), null);
-    assert.equal(readOnlyReason({ hasData: false, groupModel: 'apGroup' }), null);
-    assert.equal(readOnlyReason({ hasData: true, groupModel: null }), null);
+    assert.equal(readOnlyReason({ hasData: false, groupModel: null, capabilities: null }), null);
+    assert.equal(readOnlyReason({ hasData: false, groupModel: 'apGroup', capabilities: off('managementNotConfigured') }), null);
+    assert.equal(readOnlyReason({ hasData: true, groupModel: null, capabilities: off('invalidCredentials') }), null);
   });
 
   test('Omada 6.3+ without management credentials: viewing only, fix in Settings', () => {
-    assert.equal(readOnlyReason({ hasData: true, groupModel: 'apGroup' }), 'managementNotConfigured');
+    assert.equal(readOnlyReason({ hasData: true, groupModel: 'apGroup', capabilities: off('managementNotConfigured') }), 'managementNotConfigured');
   });
 
-  test('a legacy (or unknown-version) controller: moving APs only', () => {
-    assert.equal(readOnlyReason({ hasData: true, groupModel: 'wlanGroup' }), 'legacyController');
+  test('a legacy (or unknown-version) controller: moving APs only, whatever the capabilities say (also before they arrive)', () => {
+    assert.equal(readOnlyReason({ hasData: true, groupModel: 'wlanGroup', capabilities: null }), 'legacyController');
+    assert.equal(readOnlyReason({ hasData: true, groupModel: 'wlanGroup', capabilities: ON }), 'legacyController');
   });
-});
+
+  test('Omada 6.3+ while main checks the management access: "checking"', () => {
+    assert.equal(readOnlyReason({ hasData: true, groupModel: 'apGroup', capabilities: null }), 'managementChecking');
+  });
+
+  test('each failing check is its own reason', () => {
+    for (const reason of REASONS) {
+      assert.equal(readOnlyReason({ hasData: true, groupModel: 'apGroup', capabilities: off(reason) }), reason, reason);
+    }
+  });
+
+  test('every check passed: no banner; a reason-less report with a capability off fails closed', () => {
+    assert.equal(readOnlyReason({ hasData: true, groupModel: 'apGroup', capabilities: ON }), null);
+    assert.equal(readOnlyReason({ hasData: true, groupModel: 'apGroup', capabilities: { ...ON, manageWifiNetworks: false } }), 'probeFailed');
+  });
+}); // End of describe 'readOnlyReason'
 
 describe('escapeAction', () => {
   test('the search is cleared first, then edit mode, then the dialog', () => {

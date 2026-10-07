@@ -3,16 +3,24 @@
 // what the main process does (same fixture as tests/unit/url.test.ts), and the
 // certificate details of a connect result must be format-checked before they
 // reach the DOM, and the group listing must carry a group array, a known group
-// model (else the legacy default) and a sane controller version.
+// model (else the legacy default) and a sane controller version. Management
+// capabilities and their replies fail closed (only known reason codes, flags
+// on only without a reason, main's codes-only diagnostic), and the site name
+// and session nonce of a connect result are size-checked.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { isSameControllerUrl as mainIsSameControllerUrl, normalizeControllerUrl } from '../../src/main/url';
 import {
+  isManagementReason,
   isSameControllerUrl,
   isValidFingerprint,
   parseCertificateDetails,
   parseGroupListing,
+  parseManagementCapabilities,
+  parseManagementResult,
+  parseSessionNonce,
+  parseSiteName,
   validateControllerUrl
 } from '../../src/renderer/validation';
 import { FINGERPRINT_REGEX } from '../../src/main/cert-pinning';
@@ -125,3 +133,66 @@ describe('group listing validation (parseGroupListing)', () => {
     }
   });
 }); // End of the describe block for parseGroupListing
+
+describe('management capabilities and replies', () => {
+  const on = { manageApGroups: true, manageWifiNetworks: true, reason: null };
+
+  test('every reason code main reports is known; anything else is not', () => {
+    for (const reason of ['legacyController', 'managementNotConfigured', 'invalidCredentials', 'tokenFailed', 'siteNotFound', 'apGroupsMismatch', 'probeFailed']) {
+      assert.equal(isManagementReason(reason), true, reason);
+    }
+    for (const value of ['managementChecking', 'toString', '__proto__', 'ok', '', null, 3]) {
+      assert.equal(isManagementReason(value), false, String(value));
+    }
+  });
+
+  test('management on only with both flags true and no reason; a reason forces both flags off', () => {
+    assert.deepEqual(parseManagementCapabilities(on), on);
+    assert.deepEqual(parseManagementCapabilities({ manageApGroups: true, manageWifiNetworks: true, reason: 'siteNotFound' }), {
+      manageApGroups: false, manageWifiNetworks: false, reason: 'siteNotFound',
+    });
+  });
+
+  test('malformed capabilities are rejected (null): unknown reason, non-boolean flags, no reason with a flag off', () => {
+    for (const raw of [
+      null, 'on', [], {},
+      { ...on, reason: 'managementChecking' },
+      { ...on, reason: undefined },
+      { ...on, manageApGroups: 'true' },
+      { ...on, manageWifiNetworks: 1 },
+      { ...on, manageWifiNetworks: false },
+    ]) {
+      assert.equal(parseManagementCapabilities(raw), null, JSON.stringify(raw));
+    }
+  }); // End of test "malformed capabilities are rejected..."
+
+  test('the diagnostic is kept only in main\'s codes-and-counts form', () => {
+    const off = { manageApGroups: false, manageWifiNetworks: false, reason: 'tokenFailed' };
+    assert.equal(parseManagementCapabilities({ ...off, diagnostic: 'httpError, HTTP 404' })?.diagnostic, 'httpError, HTTP 404');
+    assert.equal(parseManagementCapabilities({ ...off, diagnostic: 'ap-groups: apiError, errorCode -44106' })?.diagnostic, 'ap-groups: apiError, errorCode -44106');
+    for (const diagnostic of ['<b>x</b>', 'client_secret="abc"', 'x'.repeat(161), '', 42]) {
+      assert.equal(parseManagementCapabilities({ ...off, diagnostic })?.diagnostic, undefined, String(diagnostic));
+    }
+  });
+
+  test('replies: capabilities, notConnected, superseded, or invalid', () => {
+    assert.deepEqual(parseManagementResult({ success: true, capabilities: on }), { ok: true, capabilities: on });
+    assert.deepEqual(parseManagementResult({ success: false, error: 'notConnected' }), { ok: false, error: 'notConnected' });
+    assert.deepEqual(parseManagementResult({ success: false, error: 'superseded' }), { ok: false, error: 'superseded' });
+    for (const raw of [null, undefined, 'ok', { success: true }, { success: true, capabilities: { reason: 'x' } }, { success: false, error: 'other' }, { success: 'true', capabilities: on }]) {
+      assert.deepEqual(parseManagementResult(raw), { ok: false, error: 'invalid' }, JSON.stringify(raw));
+    }
+  });
+
+  test('the site name and the session nonce of a connect result are size-checked strings', () => {
+    assert.equal(parseSiteName('Casa'), 'Casa');
+    assert.equal(parseSiteName('x'.repeat(256)), 'x'.repeat(256));
+    for (const raw of ['', 'x'.repeat(257), 7, null, undefined]) {
+      assert.equal(parseSiteName(raw), null, String(raw));
+    }
+    assert.equal(parseSessionNonce('a'.repeat(32)), 'a'.repeat(32));
+    for (const raw of ['', 'a'.repeat(65), 32, null, undefined]) {
+      assert.equal(parseSessionNonce(raw), null, String(raw));
+    }
+  });
+}); // End of the describe block for management capabilities and replies

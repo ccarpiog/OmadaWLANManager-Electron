@@ -1561,6 +1561,37 @@ body.platform-darwin .title-bar {
   gap: 8px;
 }
 
+/* "Test management access" (management.ts): its own row under Remove, and
+   the result line, whose left border follows the outcome (data-tone: ok,
+   off, busy, info) */
+.management-test-actions {
+  margin-top: 10px;
+}
+
+.management-test-result {
+  margin-top: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-left: 3px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  user-select: text;
+}
+
+.management-test-result[data-tone="ok"] {
+  border-left-color: var(--success-color);
+}
+
+.management-test-result[data-tone="off"] {
+  border-left-color: var(--warning-color);
+}
+
+.management-test-result[data-tone="busy"] {
+  border-left-color: var(--accent-color);
+}
+
 /* Certificate modal (first use / certificate changed): wide enough for a
    fingerprint to wrap onto two lines */
 .modal-cert {

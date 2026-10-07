@@ -3,7 +3,7 @@
 // modules read and write `state.<field>` instead of reassigning their own
 // `let`s. Nothing else in src/renderer declares module-level mutable state.
 
-import type { AccessPoint, GroupModel, Language, WlanGroup } from '../shared/types';
+import type { AccessPoint, GroupModel, Language, ManagementCapabilities, WlanGroup } from '../shared/types';
 import { GROUP_FILTER_ALL, STATUS_FILTER_ALL } from './ap-selection';
 import { apDetailsContent, apList, destinationList, groupDetail, groupList, networkDetail, networkList, refreshBtn } from './elements';
 import type { AppView, NavLocation } from './nav-history';
@@ -81,10 +81,18 @@ export interface RendererState {
   // "Updated hh:mm"; null while no data is loaded. A failed refresh keeps it
   lastUpdatedAt: number | null;
   // Host (with port) of the connected controller, and the name of the site
-  // picked in the site-selection modal (null when the renderer does not know
-  // it: single-site controllers and remembered sites report no name)
+  // the connection uses, as main reported it in the connect or site-selection
+  // result (null when unknown)
   controllerHost: string | null;
   siteName: string | null;
+  // The opaque session nonce of the connect or site-selection result: echoed
+  // back verbatim with the management-access calls (management.ts), so they
+  // act only on the session on screen; null while not connected
+  sessionNonce: string | null;
+  // The management capabilities main reported for that session (flags plus
+  // a reason code), or null while they are being checked or not connected;
+  // they feed readOnlyReason() (view-state.ts)
+  managementCapabilities: ManagementCapabilities | null;
   // True while loadData() is fetching (drives the Refresh button/spinners)
   isLoadingData: boolean;
   // True when a controller URL is stored; before first configuration the
@@ -118,6 +126,10 @@ export interface RendererState {
   isApplyingChange: boolean;
   // True while a trusted-certificate reset (Settings) is in flight
   isResettingCertificate: boolean;
+  // True while "Test management access" (Settings) waits for main. Not an
+  // exclusive operation: a test only reads, and main answers "superseded"
+  // when the session changes meanwhile
+  isTestingManagement: boolean;
 
   // Stored controller URL and password flag captured when the settings modal
   // opened: the "(unchanged)" password affordance applies only while the URL
@@ -173,6 +185,8 @@ export const state: RendererState = {
   lastUpdatedAt: null,
   controllerHost: null,
   siteName: null,
+  sessionNonce: null,
+  managementCapabilities: null,
   isLoadingData: false,
   hasStoredConfig: false,
   loadError: null,
@@ -183,6 +197,7 @@ export const state: RendererState = {
   isSavingSettings: false,
   isApplyingChange: false,
   isResettingCertificate: false,
+  isTestingManagement: false,
   settingsStoredUrl: '',
   settingsHasPassword: false,
   settingsClientId: '',

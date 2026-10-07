@@ -4,8 +4,10 @@
 // `AccessToken=` header, proactive renewal, re-acquire-once on a rejected
 // token through ONE shared acquisition, no retry loop, pagination with dedupe
 // and the page cap, explicit v1/v2 paths, PUT/DELETE pass-through, the
-// validators, the stable error codes, and that no secret or token ever shows
-// up in an error, a diagnostic or the client object itself.
+// validators, the stable error codes, that no secret or token ever shows
+// up in an error, a diagnostic or the client object itself, and that close()
+// drops every token reference (also the ones only private fields hold) and
+// ends an operation in flight as clientClosed without another request.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -26,6 +28,7 @@ import apGroupFixtures from '../fixtures/openapi/ap-groups.json';
 import siteFixtures from '../fixtures/openapi/sites.json';
 import tokenFixtures from '../fixtures/openapi/token.json';
 import { FakeTransport, type FakeReply, type RecordedRequest } from './helpers/fake-transport';
+import { reachableStrings } from './helpers/reachable-strings';
 
 const BASE_URL = 'https://controller.invalid:8043';
 const OMADAC_ID = 'c0ffee00c0ffee00c0ffee00';
@@ -602,3 +605,102 @@ describe('OpenApiClient: no secret or token in errors, diagnostics or the client
     }
   });
 }); // End of the describe block for secrets
+
+describe('OpenApiClient.authorize() (spec §2.2 check 3)', () => {
+  test('acquires a token once and sends nothing more while it is valid; a closed client refuses without sending', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, [tokenReply('AT-authorize-1')]);
+    await client.authorize();
+    await client.authorize();
+    assert.equal(tokenRequests(transport), 1);
+    client.close();
+    await expectOpenApiError(client.authorize(), 'clientClosed');
+    assert.equal(transport.requests.length, 1);
+  });
+
+  test('a refused token request surfaces invalidCredentials, without the secret in the error', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, { body: { errorCode: -44106, msg: `bad secret ${CLIENT_SECRET}` } });
+    const error = await expectOpenApiError(client.authorize(), 'invalidCredentials');
+    assert.equal(error.controllerErrorCode, -44106);
+    assert.equal(`${error.message} ${error.diagnostic}`.includes(CLIENT_SECRET), false);
+  });
+}); // End of describe 'OpenApiClient.authorize()'
+
+describe('OpenApiClient.close() drops every token reference and ends operations in flight as clientClosed', () => {
+  test('after close() no token is reachable from the client — not through its private fields (current token, remembered tokens), a public view, or a later error', async () => {
+    const { client, transport } = setup();
+    let issued = 0;
+    transport.on('POST', TOKEN_PATH, () => tokenReply(`AT-Close-Token-${++issued}`));
+    // The first token is rejected once, so the client remembers two tokens
+    transport.on('GET', SITES_PAGE_1, [EXPIRED, sitesPage(['site-a'])]);
+    await client.listSites();
+    assert.equal(issued, 2);
+    const before = await reachableStrings(client);
+    assert.ok(before.includes('AT-Close-Token-1') && before.includes('AT-Close-Token-2'), 'the walk sees the private token fields');
+    client.close();
+    const after = await reachableStrings(client);
+    assert.deepEqual(after.filter((text) => text.includes('AT-Close-Token-')), [], 'no token reachable once closed');
+    const error = await expectOpenApiError(client.listSites(), 'clientClosed');
+    const views = [
+      JSON.stringify(client),
+      inspect(client, { showHidden: true, depth: 10 }),
+      Object.getOwnPropertyNames(client).join(','),
+      error.message,
+      error.diagnostic,
+      inspect(error, { showHidden: true, depth: 10 })
+    ];
+    for (const view of views) {
+      assert.ok(!view.includes('AT-Close-Token-'), view);
+    }
+    // token 1, the rejected call, token 2, the retried call — nothing after close
+    assert.equal(transport.requests.length, 4, 'nothing sent after close');
+  }); // End of test "after close() no token is reachable from the client..."
+
+  test('a request racing with close() ends as clientClosed whatever its transport call returns — no retry, no re-acquire, no further transport call, no token kept', async () => {
+    /**
+     * A transport failure whose text quotes a token and the secret.
+     * @returns {never} Always throws.
+     */
+    const leakyFailure = (): never => {
+      throw new Error(`socket closed while sending AccessToken=AT-Race-Token-1 with secret ${CLIENT_SECRET}`);
+    };
+    // [case, which request is in flight when close() runs, its late answer, requests sent in all]
+    const cases: Array<[string, 'token' | 'call', () => FakeReply, number]> = [
+      ['token reply after close', 'token', () => tokenReply('AT-Race-Token-1'), 1],
+      ['token transport failure after close', 'token', leakyFailure, 1],
+      ['HTTP 401 after close (no re-acquire)', 'call', () => ({ status: 401, body: '' }), 2],
+      ['token-expired errorCode after close (no re-acquire)', 'call', () => EXPIRED, 2],
+      ['call transport failure after close', 'call', leakyFailure, 2],
+      ['call success after close (result not used)', 'call', () => sitesPage(['site-a']), 2]
+    ];
+    for (const [name, held, answer, sent] of cases) {
+      const { client, transport } = setup();
+      const release = deferred<void>();
+      transport.on('POST', TOKEN_PATH, async () => {
+        if (held === 'token') {
+          await release.promise;
+          return answer();
+        }
+        return tokenReply('AT-Race-Token-1');
+      });
+      transport.on('GET', SITES_PAGE_1, async () => {
+        if (held === 'call') {
+          await release.promise;
+          return answer();
+        }
+        return sitesPage(['site-a']);
+      });
+      const inFlight = client.listSites();
+      await flush();
+      assert.equal(transport.requests.length, sent, `${name}: the held request was sent`);
+      client.close();
+      release.resolve();
+      const error = await expectOpenApiError(inFlight, 'clientClosed');
+      await flush();
+      assert.equal(transport.requests.length, sent, `${name}: no further transport call`);
+      assert.ok(!`${error.message} ${error.diagnostic}`.includes('AT-Race-Token-1') && !error.message.includes(CLIENT_SECRET), name);
+      assert.deepEqual((await reachableStrings(client)).filter((text) => text.includes('AT-Race-Token-')), [], `${name}: no token kept`);
+    } // End of the loop over the race cases
+  }); // End of test "a request racing with close() ends as clientClosed..."
+}); // End of describe 'OpenApiClient.close() drops every token reference...'

@@ -309,8 +309,10 @@
         </div>
         <!-- Optional Open API management access (settings-modal.ts): Client
              ID, Client Secret (never shown back: "(unchanged)" when one is
-             stored), the session-only note, and "Remove management access"
-             with an inline confirmation; the removal is applied by Save -->
+             stored), the session-only note, "Remove management access"
+             with an inline confirmation (the removal is applied by Save),
+             and "Test management access" with its result line
+             (management.ts: the checks run in main on the saved settings) -->
         <div class="form-group management-group" role="group" aria-labelledby="managementHeading" aria-describedby="managementHelp">
           <h3 class="form-section-title" id="managementHeading"></h3>
           <p class="form-help" id="managementHelp"></p>
@@ -335,6 +337,10 @@
               <button class="btn btn-danger btn-compact" id="confirmManagementRemoveBtn" aria-describedby="managementRemoveMessage"></button>
             </div>
           </div>
+          <div class="form-actions management-test-actions">
+            <button class="btn btn-secondary btn-compact" id="testManagementBtn" aria-describedby="managementTestResult"></button>
+          </div>
+          <p class="management-test-result" id="managementTestResult" role="status" hidden></p>
         </div>
       </div>
       <div class="modal-footer">

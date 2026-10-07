@@ -2,9 +2,9 @@
 // Notices above the views (docs/management-design.md §4.6):
 //   - the read-only banner of the AP groups and Wi-Fi networks views, which
 //     states the precise reason and the fix. It is driven ONLY by
-//     readOnlyReason() (view-state.ts), so phase 15 switches it on the
-//     detected management capabilities there. The Access points view does
-//     not show it: moving APs is never read-only;
+//     readOnlyReason() (view-state.ts), from the group model and the
+//     management capabilities main reported (one text per reason code). The
+//     Access points view does not show it: moving APs is never read-only;
 //   - the refresh-error notice: the data on screen is stale (a refresh or the
 //     reload after a move failed); it states the last-updated time and
 //     offers Retry (data-state-action="retry", wired in renderer.ts).
@@ -20,6 +20,12 @@ import { readOnlyReason, type ReadOnlyReason } from './view-state';
 const READ_ONLY_TEXT: Record<ReadOnlyReason, keyof Translations> = {
   managementNotConfigured: 'readOnlyManagementNotConfigured',
   legacyController: 'readOnlyLegacyController',
+  managementChecking: 'readOnlyManagementChecking',
+  invalidCredentials: 'readOnlyInvalidCredentials',
+  tokenFailed: 'readOnlyTokenFailed',
+  siteNotFound: 'readOnlySiteNotFound',
+  apGroupsMismatch: 'readOnlyApGroupsMismatch',
+  probeFailed: 'readOnlyProbeFailed',
 };
 
 /**
@@ -28,7 +34,11 @@ const READ_ONLY_TEXT: Record<ReadOnlyReason, keyof Translations> = {
  * data-reason), hidden otherwise.
  */
 export function renderReadOnlyBanner(): void {
-  const reason = readOnlyReason({ hasData: state.lastUpdatedAt !== null, groupModel: state.groupModel });
+  const reason = readOnlyReason({
+    hasData: state.lastUpdatedAt !== null,
+    groupModel: state.groupModel,
+    capabilities: state.managementCapabilities,
+  });
   const shown = reason !== null && state.currentView !== 'accessPoints';
   readOnlyBanner.hidden = !shown;
   readOnlyBannerText.textContent = reason === null ? '' : t(READ_ONLY_TEXT[reason]);

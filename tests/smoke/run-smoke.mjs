@@ -171,9 +171,12 @@ const EMPTY_GROUP = data.wlanGroups.find((group) => group.wlanName === 'zNinguna
 const AP = Object.fromEntries(data.accessPoints.map((ap) => [ap.name, ap]));
 const GROUP = Object.fromEntries(data.wlanGroups.map((group) => [group.wlanName, group]));
 const LEGACY_GROUP = Object.fromEntries(data.legacyWlanGroups.map((group) => [group.wlanName, group]));
-const EXPECTED_BRIDGE = ['connect', 'disconnect', 'getAccessPoints', 'getWlanGroups', 'loadConfig', 'platform', 'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup', 'trustCertificate'];
+const EXPECTED_BRIDGE = [
+  'connect', 'disconnect', 'getAccessPoints', 'getManagementCapabilities', 'getWlanGroups', 'loadConfig', 'platform', 'resetCertificate',
+  'saveConfig', 'selectSite', 'setApWlanGroup', 'testManagementAccess', 'trustCertificate',
+];
 // One launch per run*() function in main()
-const EXPECTED_LAUNCHES = 4;
+const EXPECTED_LAUNCHES = 5;
 // Fingerprints of the fake controller's self-signed certificates (launch 3)
 const FINGERPRINT_A = Array.from({ length: 32 }, (_, index) => (index * 7 + 16).toString(16).toUpperCase().padStart(2, '0')).join(':');
 const FINGERPRINT_B = Array.from({ length: 32 }, (_, index) => (255 - index).toString(16).toUpperCase().padStart(2, '0')).join(':');
@@ -2715,6 +2718,8 @@ async function runSpanishFirstRun(electronInfo) {
   const session = await launch(electronInfo, 'es', {
     config: { url: '', username: '', language: 'es', hasPassword: false },
     connect: { success: true },
+    // A single-site controller: main reports its site's name (phase 15b)
+    siteName: 'Casa',
     controllerVersion: data.controllerVersion,
     accessPoints: data.accessPoints,
     wlanGroups: data.wlanGroups,
@@ -2841,7 +2846,7 @@ async function runSpanishFirstRun(electronInfo) {
       );
     }); // End of check "[es] Omada 6.3 vocabulary..."
 
-    await checkShellAfterConnect(session, 'es', { aps: data.accessPoints, groups: data.wlanGroups, version: data.controllerVersion, groupModel: 'apGroup', site: null });
+    await checkShellAfterConnect(session, 'es', { aps: data.accessPoints, groups: data.wlanGroups, version: data.controllerVersion, groupModel: 'apGroup', site: 'Casa' });
 
     await check('[es] AP rows: a native checkbox per AP named by the AP (no listbox/option roles), status as text, network count of its group (zNinguna: "Sin redes") and the optional client count', async () => {
       const items = await readApItems(page);
@@ -4555,6 +4560,360 @@ async function runManagementAccess(electronInfo) {
 } // End of function runManagementAccess()
 
 // ============================================================================
+// Launch 5: management capabilities — the read-only banner per reason code
+// and "Test management access" (Spanish, then English)
+// ============================================================================
+
+// The test's result lines and the banner texts per reason (src/renderer/i18n.ts)
+const CAPS_TEXT = {
+  es: {
+    running: 'Probando el acceso de gestión…',
+    result: {
+      ok: 'El acceso de gestión funciona: se superaron todas las comprobaciones.',
+      legacyController: 'Este controlador es anterior a Omada Controller 6.3: no admite la gestión (mover AP sí funciona).',
+      managementNotConfigured: 'No hay un Client ID y un Client Secret guardados.',
+      invalidCredentials: 'El controlador rechazó el Client ID o el Client Secret.',
+      tokenFailed: 'No se pudo obtener un token de acceso de Open API (sin respuesta o con una respuesta inesperada). Comprueba que Open API está activado en el controlador.',
+      siteNotFound: 'La aplicación de Open API no ve el sitio conectado. Revisa a qué sitios tiene acceso en el controlador.',
+      apGroupsMismatch: 'Open API muestra grupos de AP distintos de los del controlador, así que la gestión queda desactivada.',
+      probeFailed: 'Open API no devolvió los sitios o los grupos de AP (sin respuesta o con un error).',
+      notConnected: 'Conéctate primero al controlador: la prueba usa la conexión actual.',
+      unsavedChanges: 'Guarda primero los cambios: la prueba usa los ajustes guardados.',
+      superseded: 'La conexión cambió durante la prueba. Vuelve a intentarlo.',
+    },
+    banner: {
+      managementChecking: 'Comprobando el acceso de gestión — mientras tanto puedes consultar los datos.',
+      legacyController: TEXT.es.readOnlyLegacy,
+      managementNotConfigured: TEXT.es.readOnly63,
+      invalidCredentials: 'El controlador rechazó el Client ID o el Client Secret de Open API — puedes consultar los datos. Revísalos en Ajustes → Acceso de gestión.',
+      tokenFailed: 'No se pudo obtener un token de Open API del controlador — puedes consultar los datos. Usa "Probar el acceso de gestión" en Ajustes → Acceso de gestión.',
+      siteNotFound: 'La aplicación de Open API no ve este sitio — puedes consultar los datos. Revisa a qué sitios tiene acceso en el controlador.',
+      apGroupsMismatch: 'Open API muestra grupos de AP distintos de los del controlador, así que la gestión está desactivada — puedes consultar los datos.',
+      probeFailed: 'Open API no respondió a las comprobaciones — puedes consultar los datos. Usa "Probar el acceso de gestión" en Ajustes → Acceso de gestión.',
+    },
+  },
+  en: {
+    running: 'Testing management access…',
+    result: {
+      ok: 'Management access works: every check passed.',
+      legacyController: 'This controller is older than Omada Controller 6.3: management is not available (moving APs works).',
+      managementNotConfigured: 'No Client ID and Client Secret are saved.',
+      invalidCredentials: 'The controller rejected the Client ID or the Client Secret.',
+      tokenFailed: 'Could not get an Open API access token (no answer, or an unexpected one). Check that the Open API is enabled in the controller.',
+      siteNotFound: 'The Open API application cannot see the connected site. Check which sites it can access in the controller.',
+      apGroupsMismatch: 'The Open API shows different AP groups than the controller, so management stays off.',
+      probeFailed: 'The Open API did not return the sites or the AP groups (no answer, or an error).',
+      notConnected: 'Connect to the controller first: the test uses the current connection.',
+      unsavedChanges: 'Save your changes first: the test uses the saved settings.',
+      superseded: 'The connection changed during the test. Try again.',
+    },
+    banner: {
+      managementChecking: 'Checking management access — viewing is available meanwhile.',
+      legacyController: TEXT.en.readOnlyLegacy,
+      managementNotConfigured: TEXT.en.readOnly63,
+      invalidCredentials: 'The controller rejected the Open API Client ID or Client Secret — viewing is available. Check them in Settings → Management access.',
+      tokenFailed: 'Could not get an Open API access token from the controller — viewing is available. Use "Test management access" in Settings → Management access.',
+      siteNotFound: 'The Open API application cannot see this site — viewing is available. Check which sites it can access in the controller.',
+      apGroupsMismatch: 'The Open API shows different AP groups than the controller, so management is off — viewing is available.',
+      probeFailed: 'The Open API did not answer the checks — viewing is available. Use "Test management access" in Settings → Management access.',
+    },
+  },
+};
+
+// Every reason code the test must report, with the stub scenario that makes
+// main report it and the codes-only diagnostic shown after the text
+const CAPS_REASONS = [
+  { reason: 'invalidCredentials', patch: { managementReason: 'invalidCredentials', managementDiagnostic: 'invalidCredentials, errorCode -44106' } },
+  { reason: 'tokenFailed', patch: { managementReason: 'tokenFailed', managementDiagnostic: 'httpError, HTTP 404' } },
+  { reason: 'siteNotFound', patch: { managementReason: 'siteNotFound', managementDiagnostic: 'sites 2' } },
+  { reason: 'apGroupsMismatch', patch: { managementReason: 'apGroupsMismatch', managementDiagnostic: 'Open API only 1, controller only 0, shared 3' } },
+  { reason: 'probeFailed', patch: { managementReason: 'probeFailed', managementDiagnostic: 'ap-groups: timeout' } },
+  { reason: 'managementNotConfigured', patch: { managementReason: 'managementNotConfigured', managementDiagnostic: null } },
+  { reason: 'legacyController', patch: { managementReason: null, managementDiagnostic: null, controllerVersion: data.legacyControllerVersion } },
+];
+
+/**
+ * Reads "Test management access": its button and its result line.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} Button text / aria-disabled / description, line shown / text / data-result / data-tone / role, focus.
+ */
+function readManagementTest(page) {
+  return page.evaluate(() => {
+    const line = document.getElementById('managementTestResult');
+    const button = document.getElementById('testManagementBtn');
+    return {
+      button: button?.textContent ?? '',
+      ariaDisabled: button?.getAttribute('aria-disabled') ?? null,
+      describedBy: button?.getAttribute('aria-describedby') ?? null,
+      shown: Boolean(line && !line.hidden),
+      text: line?.textContent ?? '',
+      result: line?.dataset.result ?? null,
+      tone: line?.dataset.tone ?? null,
+      role: line?.getAttribute('role') ?? null,
+      activeId: document.activeElement?.id || '',
+    };
+  }); // End of the in-page management-test probe
+} // End of function readManagementTest()
+
+/**
+ * Waits until the test's result line shows the given final text (not the
+ * "testing" line).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} text - Expected text.
+ * @returns {Promise<void>}
+ */
+async function waitForTestResult(page, text) {
+  await page.waitForFunction((expected) => {
+    const line = document.getElementById('managementTestResult');
+    return Boolean(line) && !line.hidden && line.dataset.result !== 'testing' && line.textContent === expected;
+  }, text, { timeout: WAIT_MS });
+}
+
+/**
+ * Runs the test once per reason code (CAPS_REASONS), then with every check
+ * passing, reading the result line and the banner (of the view behind the
+ * open Settings) after each run.
+ * @param {object} session - The launch.
+ * @param {'es' | 'en'} language - UI language.
+ * @returns {Promise<{ rows: object[]; ok: object; okNotices: object }>} What was read.
+ */
+async function runTestPerReason(session, language) {
+  const { page } = session;
+  const text = CAPS_TEXT[language];
+  const rows = [];
+  for (const { reason, patch } of CAPS_REASONS) {
+    await configureStub(session, patch);
+    const expected = patch.managementDiagnostic ? `${text.result[reason]} (${patch.managementDiagnostic})` : text.result[reason];
+    await page.click('#testManagementBtn');
+    await waitForTestResult(page, expected);
+    rows.push({ reason, expected, test: await readManagementTest(page), notices: await readNotices(page) });
+  } // End of the loop over the reason codes
+  await configureStub(session, { managementReason: null, managementDiagnostic: null, controllerVersion: data.controllerVersion });
+  await page.click('#testManagementBtn');
+  await waitForTestResult(page, text.result.ok);
+  return { rows, ok: await readManagementTest(page), okNotices: await readNotices(page) };
+} // End of function runTestPerReason()
+
+/**
+ * Verdict over runTestPerReason(): each reason's precise text (with the
+ * diagnostic), tone and data-result, the banner following it with its own
+ * text, then "every check passed" with no banner; every test call carried the
+ * session nonce of the installed session.
+ * @param {object} session - The launch.
+ * @param {'es' | 'en'} language - UI language.
+ * @param {{ rows: object[]; ok: object; okNotices: object }} outcome - What runTestPerReason() read.
+ * @returns {Promise<{ ok: boolean; detail: unknown }>} The verdict.
+ */
+async function testPerReasonVerdict(session, language, outcome) {
+  const text = CAPS_TEXT[language];
+  const snapshot = await stubState(session);
+  const calls = callsTo(snapshot, 'management:test').slice(-(CAPS_REASONS.length + 1));
+  const rowsOk = outcome.rows.every(({ reason, expected, test, notices }) =>
+    test.shown && test.text === expected && test.result === reason && test.tone === 'off' && test.role === 'status' &&
+    notices.bannerShown && notices.bannerReason === reason && notices.bannerText === text.banner[reason]);
+  return verdict(
+    rowsOk && outcome.rows.length === CAPS_REASONS.length &&
+    outcome.ok.text === text.result.ok && outcome.ok.result === 'ok' && outcome.ok.tone === 'ok' && outcome.okNotices.bannerShown === false &&
+    calls.length === CAPS_REASONS.length + 1 && calls.every((call) => call.args.length === 1 && call.args[0] === snapshot.sessionNonce),
+    { rows: outcome.rows, ok: outcome.ok, okNotices: outcome.okNotices, calls: calls.map((call) => call.args), nonce: snapshot.sessionNonce }
+  );
+} // End of function testPerReasonVerdict()
+
+/**
+ * Management-capabilities launch: a single-site Omada 6.3 controller with
+ * management access configured. The header names the site; the AP groups /
+ * Wi-Fi networks banner says "checking" while main checks, then follows the
+ * reported capabilities — one text per reason code — and disappears when
+ * every check passes; "Test management access" reports each outcome
+ * precisely (with main's diagnostic), refuses unsaved changes and a missing
+ * connection without asking main, and handles a superseded session. Spanish,
+ * then English after a saved language switch. The real checks are
+ * unit-tested (controller-session.test.ts) and run end to end against a
+ * local server by the TLS probe.
+ * @param {{ binary: string }} electronInfo - Resolved Electron binary.
+ * @returns {Promise<void>}
+ */
+async function runManagementCapabilities(electronInfo) {
+  const session = await launch(electronInfo, 'caps', {
+    config: { url: CONTROLLER_URL, username: 'admin', language: 'es', hasPassword: true, clientId: 'owm-client-1', hasClientSecret: true },
+    connect: { success: true },
+    siteName: 'Casa',
+    controllerVersion: data.controllerVersion,
+    accessPoints: data.accessPoints,
+    wlanGroups: data.wlanGroups,
+    delays: { 'management:capabilities': 1500 },
+  });
+  const { page } = session;
+  const es = CAPS_TEXT.es;
+  const en = CAPS_TEXT.en;
+
+  try {
+    await checkTranslations(session, 'es');
+
+    await check('[caps] es: the header names the single site ("Sitio: Casa"); while main checks the management access the AP groups banner says "Comprobando el acceso de gestión — …" (managementChecking); with every check passed no banner shows on AP groups or Wi-Fi networks; the capabilities call carried the connect\'s session nonce', async () => {
+      await waitForConnected(page);
+      await waitForApCount(page, expectedApRows(data.accessPoints, 'es', 'apGroup', data.wlanGroups).length);
+      await page.click('#navGroups');
+      await page.waitForFunction(() => document.getElementById('readOnlyBanner')?.dataset.reason === 'managementChecking', null, { timeout: WAIT_MS });
+      const checking = await readNotices(page);
+      await page.waitForFunction(() => document.getElementById('readOnlyBanner')?.hidden === true, null, { timeout: WAIT_MS });
+      const groups = await readNotices(page);
+      await page.click('#navNetworks');
+      const networks = await readNotices(page);
+      const header = await readHeader(page);
+      const snapshot = await stubState(session);
+      const calls = callsTo(snapshot, 'management:capabilities');
+      await configureStub(session, { delays: {} });
+      return verdict(
+        checking.bannerShown && checking.bannerText === es.banner.managementChecking && checking.bannerRole === 'note' &&
+        !groups.bannerShown && groups.bannerReason === null && !networks.bannerShown &&
+        header.site === fmt(TEXT.es.site, { site: 'Casa' }) && snapshot.issuedSessionNonces.length === 1 &&
+        calls.length === 1 && isDeepStrictEqual(calls[0].args, [snapshot.issuedSessionNonces[0]]),
+        { checking, groups, networks, header, calls, nonces: snapshot.issuedSessionNonces }
+      );
+    }); // End of check "[caps] es: the header names the single site..."
+
+    await check('[caps] es: "Probar el acceso de gestión" (in Settings, below the section) reports each reason code precisely with main\'s diagnostic — and the banner follows with its own text; every check passed: "El acceso de gestión funciona: …" and no banner', async () => {
+      await openSettingsWhenIdle(page);
+      const before = await readManagementTest(page);
+      const outcome = await runTestPerReason(session, 'es');
+      const result = await testPerReasonVerdict(session, 'es', outcome);
+      return verdict(
+        result.ok && before.shown === false && before.button === 'Probar el acceso de gestión' && before.describedBy === 'managementTestResult',
+        { before, detail: result.detail }
+      );
+    }); // End of check "[caps] es: Probar el acceso de gestión reports each reason code..."
+
+    await check('[caps] es: while main runs the checks the line says "Probando el acceso de gestión…" (role status), the button keeps focus and is aria-disabled, and a second activation sends nothing more', async () => {
+      await configureStub(session, { delays: { 'management:test': 800 }, managementReason: 'siteNotFound', managementDiagnostic: 'sites 2' });
+      try {
+        const before = callsTo(await stubState(session), 'management:test').length;
+        await page.focus('#testManagementBtn');
+        await page.keyboard.press('Enter');
+        await page.waitForFunction(() => document.getElementById('managementTestResult')?.dataset.result === 'testing', null, { timeout: WAIT_MS });
+        const running = await readManagementTest(page);
+        await page.keyboard.press('Enter');
+        await waitForTestResult(page, `${es.result.siteNotFound} (sites 2)`);
+        const done = await readManagementTest(page);
+        const after = callsTo(await stubState(session), 'management:test').length;
+        return verdict(
+          running.text === es.running && running.tone === 'busy' && running.role === 'status' && running.ariaDisabled === 'true' &&
+          running.activeId === 'testManagementBtn' && done.ariaDisabled === 'false' && done.activeId === 'testManagementBtn' && after === before + 1,
+          { running, done, before, after }
+        );
+      } finally {
+        await configureStub(session, { delays: {}, managementReason: null, managementDiagnostic: null });
+      }
+    }); // End of check "[caps] es: while main runs the checks..."
+
+    await check('[caps] es: with unsaved management changes (a typed Client Secret, another Client ID, a staged removal) the test says "Guarda primero los cambios: …" and asks main nothing', async () => {
+      const before = callsTo(await stubState(session), 'management:test').length;
+      const results = [];
+      await page.fill('#clientSecretInput', 'smoke-unsaved-secret');
+      await page.click('#testManagementBtn');
+      results.push(await readManagementTest(page));
+      await page.fill('#clientSecretInput', '');
+      await page.fill('#clientIdInput', 'owm-client-2');
+      await page.click('#testManagementBtn');
+      results.push(await readManagementTest(page));
+      await page.fill('#clientIdInput', 'owm-client-1');
+      await page.click('#removeManagementBtn');
+      await page.click('#confirmManagementRemoveBtn');
+      await page.click('#testManagementBtn');
+      results.push(await readManagementTest(page));
+      await page.click('#undoManagementRemovalBtn');
+      const after = callsTo(await stubState(session), 'management:test').length;
+      return verdict(
+        results.every((test) => test.text === es.result.unsavedChanges && test.result === 'unsavedChanges' && test.tone === 'info') && after === before,
+        { results, before, after }
+      );
+    }); // End of check "[caps] es: with unsaved management changes..."
+
+    await check('[caps] es: an answer about a replaced session says "La conexión cambió durante la prueba. Vuelve a intentarlo."', async () => {
+      await configureStub(session, { managementResult: { success: false, error: 'superseded' } });
+      try {
+        await page.click('#testManagementBtn');
+        await waitForTestResult(page, es.result.superseded);
+        const test = await readManagementTest(page);
+        return verdict(test.result === 'superseded' && test.tone === 'info', test);
+      } finally {
+        await configureStub(session, { managementResult: null });
+      }
+    });
+
+    await check('[caps] es: disconnected, Settings opens without the old result; the test says "Conéctate primero al controlador: …" and asks main nothing; no banner without data', async () => {
+      await page.click('#cancelSettingsBtn');
+      await waitForSettingsClosed(page);
+      await page.click('#connectBtn');
+      await waitForStatus(page, TEXT.es.disconnected);
+      await page.click('#settingsBtn');
+      await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+      const opened = await readManagementTest(page);
+      const before = callsTo(await stubState(session), 'management:test').length;
+      await page.click('#testManagementBtn');
+      const test = await readManagementTest(page);
+      const after = callsTo(await stubState(session), 'management:test').length;
+      const notices = await readNotices(page);
+      return verdict(
+        opened.shown === false && test.text === es.result.notConnected && test.result === 'notConnected' && after === before && notices.bannerShown === false,
+        { opened, test, before, after, notices }
+      );
+    }); // End of check "[caps] es: disconnected..."
+
+    await check('[caps] en: switching to English (saved, reconnected): the banner says "Checking management access — …" while main checks, then none (every check passed); the new session nonce is used', async () => {
+      await configureStub(session, { delays: { 'management:capabilities': 1500 } });
+      try {
+        await page.selectOption('#languageSelect', 'en');
+        await page.click('#saveSettingsBtn');
+        await waitForSettingsClosed(page);
+        await waitForConnected(page);
+        await page.waitForFunction(() => document.getElementById('readOnlyBanner')?.dataset.reason === 'managementChecking', null, { timeout: WAIT_MS });
+        const checking = await readNotices(page);
+        await page.waitForFunction(() => document.getElementById('readOnlyBanner')?.hidden === true, null, { timeout: WAIT_MS });
+        const snapshot = await stubState(session);
+        const calls = callsTo(snapshot, 'management:capabilities');
+        return verdict(
+          checking.bannerShown && checking.bannerText === en.banner.managementChecking && snapshot.issuedSessionNonces.length === 2 &&
+          isDeepStrictEqual(calls[calls.length - 1].args, [snapshot.issuedSessionNonces[1]]),
+          { checking, calls: calls.map((call) => call.args), nonces: snapshot.issuedSessionNonces }
+        );
+      } finally {
+        await configureStub(session, { delays: {} });
+      }
+    }); // End of check "[caps] en: switching to English..."
+
+    await check('[caps] en: "Test management access" reports each reason code in English with main\'s diagnostic, the banner follows with its English text; every check passed: "Management access works: …" and no banner', async () => {
+      await openSettingsWhenIdle(page);
+      const before = await readManagementTest(page);
+      const outcome = await runTestPerReason(session, 'en');
+      const result = await testPerReasonVerdict(session, 'en', outcome);
+      return verdict(result.ok && before.shown === false && before.button === 'Test management access', { before, detail: result.detail });
+    });
+
+    await check('[caps] en: unsaved changes ("Save your changes first: …") and a replaced session ("The connection changed during the test. Try again.") in English', async () => {
+      await page.fill('#clientSecretInput', 'smoke-unsaved-secret');
+      await page.click('#testManagementBtn');
+      const unsaved = await readManagementTest(page);
+      await page.fill('#clientSecretInput', '');
+      await configureStub(session, { managementResult: { success: false, error: 'superseded' } });
+      try {
+        await page.click('#testManagementBtn');
+        await waitForTestResult(page, en.result.superseded);
+        const superseded = await readManagementTest(page);
+        return verdict(unsaved.text === en.result.unsavedChanges && superseded.result === 'superseded', { unsaved, superseded });
+      } finally {
+        await configureStub(session, { managementResult: null });
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+      }
+    }); // End of check "[caps] en: unsaved changes and a replaced session..."
+  } finally {
+    session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
+    await session.app.close().catch(() => {});
+  }
+} // End of function runManagementCapabilities()
+
+// ============================================================================
 // Whole-run checks
 // ============================================================================
 
@@ -4641,6 +5000,7 @@ async function main() {
       ['en', runEnglishMultiSite],
       ['tofu', runCertificatePinning],
       ['mgmt', runManagementAccess],
+      ['caps', runManagementCapabilities],
     ]) {
       try {
         await runLaunch(electronInfo);

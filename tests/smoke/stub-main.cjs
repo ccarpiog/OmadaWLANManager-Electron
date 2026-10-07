@@ -41,6 +41,7 @@ const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SELECTION_NONCE_REGEX = /^[0-9a-f]{32}$/;
 const TRUST_NONCE_REGEX = /^[0-9a-f]{32}$/;
+const SESSION_NONCE_REGEX = /^[0-9a-f]{32}$/;
 const MAX_URL_LENGTH = 2048;
 const MAX_USERNAME_LENGTH = 256;
 const MAX_PASSWORD_LENGTH = 512;
@@ -94,6 +95,20 @@ function defaultScenario() {
     // { needsSiteSelection: true } (the stub then offers `sites` with a nonce)
     connect: { success: true },
     sites: [],
+    // The site name a { success: true } connect reports (the single site of
+    // the controller, like ControllerSession.activate()); null reports none.
+    // A multi-site connect reports the chosen or remembered site's name
+    siteName: null,
+    // Management capabilities (MANAGEMENT_CAPABILITIES / MANAGEMENT_TEST),
+    // mirroring the check order of ControllerSession: a legacy controller
+    // version -> legacyController; no Client ID or no Client Secret in the
+    // config -> managementNotConfigured; else this reason code (null = every
+    // check passed) with managementDiagnostic as its codes-only diagnostic
+    managementReason: null,
+    managementDiagnostic: null,
+    // When set, both management channels return this verbatim (e.g.
+    // { success: false, error: 'superseded' })
+    managementResult: null,
     accessPoints: [],
     // The controllerVer the fake controller's /api/info reports (null = absent:
     // the legacy group model, like the real defensive default). OMADA_GET_WLANS
@@ -142,6 +157,11 @@ const stub = {
   pendingTrust: null,
   // Trust nonces handed out by OMADA_CONNECT, in order
   issuedTrustNonces: [],
+  // The session nonce of the installed controller session (null when none),
+  // and every session nonce handed out by a successful connect or site
+  // selection, in order
+  sessionNonce: null,
+  issuedSessionNonces: [],
   registeredChannels: [],
   environment: { home: os.homedir(), userData: app.getPath('userData'), platform: process.platform },
   // BrowserWindow options used by createWindow() (checked against the real app's)
@@ -174,6 +194,8 @@ const stub = {
       storedSiteId: this.storedSiteId,
       pendingTrust: this.pendingTrust,
       issuedTrustNonces: this.issuedTrustNonces,
+      sessionNonce: this.sessionNonce,
+      issuedSessionNonces: this.issuedSessionNonces,
       registeredChannels: this.registeredChannels,
       environment: this.environment,
       windowOptions: this.windowOptions,
@@ -296,6 +318,77 @@ function applyManagementSave(payload, current, urlChanged) {
 } // End of function applyManagementSave()
 
 /**
+ * "Installs" a controller session like ConnectionManager.install() +
+ * ControllerSession.activate(): marks the stub connected, hands out a fresh
+ * session nonce and returns the success result with the site name (when one
+ * is known) and the nonce.
+ * @param {string | null} siteName - The name of the site the session uses.
+ * @returns {object} The ConnectionResult.
+ */
+function installSession(siteName) {
+  stub.connected = true;
+  stub.sessionNonce = randomBytes(16).toString('hex');
+  stub.issuedSessionNonces.push(stub.sessionNonce);
+  return siteName ? { success: true, siteName, sessionNonce: stub.sessionNonce } : { success: true, sessionNonce: stub.sessionNonce };
+}
+
+/**
+ * Drops the installed controller session (disconnect, controller transition).
+ */
+function dropSession() {
+  stub.connected = false;
+  stub.sessionNonce = null;
+}
+
+/**
+ * The management capabilities of the installed session, in the check order of
+ * ControllerSession (see managementReason in the scenario).
+ * @returns {object} The ManagementCapabilities.
+ */
+function currentCapabilities() {
+  const off = (reason, diagnostic) =>
+    diagnostic ? { manageApGroups: false, manageWifiNetworks: false, reason, diagnostic } : { manageApGroups: false, manageWifiNetworks: false, reason };
+  if (groupModelForVersion(normalizeControllerVersion(stub.scenario.controllerVersion)) !== 'apGroup') {
+    return off('legacyController');
+  }
+  const config = currentRendererConfig();
+  if (!config.clientId || !config.hasClientSecret) {
+    return off('managementNotConfigured');
+  }
+  if (stub.scenario.managementReason) {
+    return off(stub.scenario.managementReason, stub.scenario.managementDiagnostic);
+  }
+  return { manageApGroups: true, manageWifiNetworks: true, reason: null };
+} // End of function currentCapabilities()
+
+/**
+ * The reply of both management channels, with the same guards as the real
+ * handlers (requireSessionNonce() in src/main/index.ts) and the session
+ * ownership of getSessionCapabilities() in src/main/controller-session.ts.
+ * @param {unknown} sessionNonce - The session nonce echoed by the renderer.
+ * @param {unknown[]} extra - Further arguments (must be none).
+ * @returns {object} The ManagementCapabilitiesResult.
+ */
+function managementReply(sessionNonce, extra) {
+  if (extra.length > 0) {
+    throw new Error('IPC call rejected: unexpected arguments');
+  }
+  if (typeof sessionNonce !== 'string' || !SESSION_NONCE_REGEX.test(sessionNonce)) {
+    throw new Error('IPC call rejected: invalid session nonce format');
+  }
+  if (stub.scenario.managementResult) {
+    return structuredClone(stub.scenario.managementResult);
+  }
+  if (!stub.connected || stub.sessionNonce === null) {
+    return { success: false, error: 'notConnected' };
+  }
+  if (sessionNonce !== stub.sessionNonce) {
+    return { success: false, error: 'superseded' };
+  }
+  return { success: true, capabilities: currentCapabilities() };
+} // End of function managementReply()
+
+/**
  * Returns a copy of a list sorted by a string field with localeCompare, like
  * OmadaController.getAccessPoints()/getWlanGroups() do.
  * @param {object[]} list - The list to sort.
@@ -369,7 +462,7 @@ const handlers = {
       stub.storedSiteId = '';
       stub.pendingTrust = null;
       stub.pendingSelection = null;
-      stub.connected = false;
+      dropSession();
       pinnedFingerprint = null;
     }
     stub.scenario.config = {
@@ -387,7 +480,8 @@ const handlers = {
 
   /**
    * OMADA_CONNECT: mirrors the real result shapes — configIncomplete, a
-   * failure template, success, or needsSiteSelection with the sites and a
+   * failure template, success (with the site name and a fresh session
+   * nonce, see installSession()), or needsSiteSelection with the sites and a
    * fresh 32-hex nonce (a still-authorized remembered site is reused silently,
    * like OmadaController.connect(preferredSiteId)).
    * @returns {object} The ConnectionResult.
@@ -397,6 +491,11 @@ const handlers = {
     // and any pending certificate trust decision
     stub.pendingSelection = null;
     stub.pendingTrust = null;
+    // A new attempt closes the installed session's management side before
+    // its first await (ConnectionManager.connect()): the old session nonce
+    // answers notConnected from now on, while the internal controller
+    // (stub.connected) stays installed until the attempt succeeds
+    stub.sessionNonce = null;
     const config = stub.scenario.config;
     if (!config.url || !config.username || !config.hasPassword) {
       return { success: false, error: 'configIncomplete' };
@@ -421,10 +520,10 @@ const handlers = {
     if (template.needsSiteSelection) {
       const sites = structuredClone(stub.scenario.sites);
       // The previously installed controller is released either way
-      stub.connected = false;
-      if (stub.storedSiteId && sites.some((site) => site.id === stub.storedSiteId)) {
-        stub.connected = true;
-        return { success: true };
+      dropSession();
+      const remembered = sites.find((site) => site.id === stub.storedSiteId);
+      if (stub.storedSiteId && remembered) {
+        return installSession(remembered.name);
       }
       const nonce = randomBytes(16).toString('hex');
       stub.issuedNonces.push(nonce);
@@ -432,8 +531,7 @@ const handlers = {
       return { success: false, needsSiteSelection: true, sites, selectionNonce: nonce };
     }
     if (template.success) {
-      stub.connected = true;
-      return { success: true };
+      return installSession(stub.scenario.siteName);
     }
     // A failed attempt installs nothing (any previous controller is untouched)
     return structuredClone(template);
@@ -507,8 +605,8 @@ const handlers = {
 
   /**
    * OMADA_SELECT_SITE: same format guards; succeeds only for the current
-   * pending nonce and one of its sites, then "installs" the controller and
-   * remembers the site.
+   * pending nonce and one of its sites, then "installs" the controller
+   * session (site name + session nonce in the result) and remembers the site.
    * @param {unknown} siteId - Chosen site id.
    * @param {unknown} nonce - Selection nonce echoed by the renderer.
    * @returns {object} The ConnectionResult.
@@ -521,13 +619,13 @@ const handlers = {
       throw new Error('IPC call rejected: invalid selection nonce format');
     }
     const pending = stub.pendingSelection;
-    if (!pending || pending.nonce !== nonce || !pending.sites.some((site) => site.id === siteId)) {
+    const chosen = pending ? pending.sites.find((site) => site.id === siteId) : undefined;
+    if (!pending || pending.nonce !== nonce || !chosen) {
       return { success: false, error: 'siteUnavailable' };
     }
     stub.pendingSelection = null;
-    stub.connected = true;
     stub.storedSiteId = siteId;
-    return { success: true };
+    return installSession(chosen.name);
   }, // End of the OMADA_SELECT_SITE handler
 
   /**
@@ -548,7 +646,7 @@ const handlers = {
     }
     stub.pendingSelection = null;
     stub.pendingTrust = null;
-    stub.connected = false;
+    dropSession();
     return undefined;
   }, // End of the OMADA_DISCONNECT handler
 
@@ -589,10 +687,28 @@ const handlers = {
     }
     stub.pendingTrust = null;
     stub.pendingSelection = null;
-    stub.connected = false;
+    dropSession();
     stub.scenario.config.pinnedFingerprint = null;
     return { success: true, connectionReset: true };
   }, // End of the CERT_RESET handler
+
+  /**
+   * MANAGEMENT_CAPABILITIES: the capabilities of the installed session (see
+   * managementReply() and currentCapabilities()).
+   * @param {unknown} sessionNonce - The session nonce echoed by the renderer.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The ManagementCapabilitiesResult.
+   */
+  [IPC_CHANNELS.MANAGEMENT_CAPABILITIES]: (sessionNonce, ...extra) => managementReply(sessionNonce, extra),
+
+  /**
+   * MANAGEMENT_TEST ("Test management access"): the same reply (the stub
+   * "runs the checks again" by recomputing them from the scenario).
+   * @param {unknown} sessionNonce - The session nonce echoed by the renderer.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The ManagementCapabilitiesResult.
+   */
+  [IPC_CHANNELS.MANAGEMENT_TEST]: (sessionNonce, ...extra) => managementReply(sessionNonce, extra),
 }; // End of the fake handlers table
 
 // Every channel of the shared table must have a fake, and vice versa: a

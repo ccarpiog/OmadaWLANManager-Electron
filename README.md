@@ -60,8 +60,11 @@ npm run dev
    - **Password**: Your Omada Controller password
    - **Management access (optional)**: the **Client ID** and **Client Secret** of an
      Open API application created in the controller's settings (client credentials
-     mode). They are stored now and will unlock AP-group and Wi-Fi network
-     management; the app does not use them yet
+     mode). They will unlock AP-group and Wi-Fi network management. While
+     connected, the app checks whether they grant it (Omada 6.3 or later, an
+     access token, and the connected site and its AP groups must match what the
+     controller reports), and **Test management access** shows the precise
+     result; the management actions themselves are not available yet
 3. Click **Connect** to connect to the controller. The first time, the app
    shows the controller certificate's SHA-256 fingerprint: compare it with the
    certificate of your controller and choose **Trust and connect** (no password
@@ -98,9 +101,12 @@ npm run dev
    M APs" when some access points' groups cannot be identified). Clicking a
    group, network or access point name opens it in its view; **Back to …** returns
    to where you were. Security, bands and whether a network is enabled are not
-   shown: they need management access, which the app does not use yet. A banner
-   on both views says why they are read-only: Open API credentials are not
-   configured (Omada 6.3+), or the controller is older than 6.3
+   shown: they need management access, which these views do not use yet. A
+   banner on both views says why they are read-only: the controller is older
+   than 6.3, Open API credentials are not configured, the management check is
+   still running, or which check failed (credentials rejected, no access token,
+   the site or the AP groups do not match, no answer); it disappears once every
+   check passes
 9. **Cmd+F** (macOS) / **Ctrl+F** focuses the current view's search; **Escape**
    clears the search, and otherwise closes the open dialog. If the connection or
    its first data load fails, each view shows the error with **Retry** and
@@ -260,7 +266,8 @@ omada-electron/
 │   │   ├── net-transport.ts   # Production transport (Electron's net module)
 │   │   ├── cert-verify.ts     # Certificate hooks + replaceable controller session
 │   │   ├── connection-manager.ts # Connection state machine (connect, site choice, trust, reset, URL change)
-│   │   ├── openapi-client.ts  # Open API client (token, paths, pagination; not wired in yet)
+│   │   ├── controller-session.ts # Controller session facade (internal + Open API clients, management capability checks)
+│   │   ├── openapi-client.ts  # Open API client (token, paths, pagination)
 │   │   ├── omada-validators.ts, cookie-jar.ts, url.ts, # Pure, unit-tested helpers
 │   │   │   cert-pinning.ts, config-model.ts, controller-version.ts, redact.ts
 │   │   └── preload.ts  # Preload script for secure IPC

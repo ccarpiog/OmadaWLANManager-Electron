@@ -1,7 +1,8 @@
-// Production transport for the Omada API client: the hardened transport from
+// Production transport for the Omada API clients: the hardened transport from
 // omada-transport.ts over Electron's net module. This is the only
 // Electron-dependent piece of the HTTP stack; index.ts injects it into every
-// OmadaController it creates (unit tests inject a fake transport instead).
+// ControllerSession it creates, which uses it for both its internal client and
+// its Open API client (unit tests inject a fake transport instead).
 
 import { net, Session } from 'electron';
 import { createHardenedTransport, OmadaTransport } from './omada-transport';

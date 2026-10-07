@@ -7,6 +7,7 @@ import type {
   AccessPoint,
   GroupListing,
   IPC_CHANNELS as SHARED_IPC_CHANNELS,
+  ManagementCapabilitiesResult,
   OmadaAPI,
   RendererConfig
 } from '../shared/types';
@@ -29,6 +30,8 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
   OMADA_DISCONNECT: 'omada:disconnect',
   CERT_TRUST: 'cert:trust',
   CERT_RESET: 'cert:reset',
+  MANAGEMENT_CAPABILITIES: 'management:capabilities',
+  MANAGEMENT_TEST: 'management:test',
 };
 
 // Expose a safe API to the renderer process. `satisfies OmadaAPI` (type-only,
@@ -98,5 +101,17 @@ contextBridge.exposeInMainWorld('omadaAPI', {
 
   resetCertificate: (): Promise<CertificateActionResult> => {
     return ipcRenderer.invoke(IPC_CHANNELS.CERT_RESET);
+  },
+
+  // Open API management access of the connected controller session: the
+  // capabilities (flags + reason code) and "Test management access". Both
+  // send only the opaque session nonce of the connect result (echoed back
+  // verbatim); the Client Secret never crosses the bridge
+  getManagementCapabilities: (sessionNonce: string): Promise<ManagementCapabilitiesResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_CAPABILITIES, sessionNonce);
+  },
+
+  testManagementAccess: (sessionNonce: string): Promise<ManagementCapabilitiesResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_TEST, sessionNonce);
   }
 } satisfies OmadaAPI);

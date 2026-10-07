@@ -145,6 +145,34 @@ export class OmadaController {
   } // End of function connect()
 
   /**
+   * The controller id (`omadacId`) /api/info reported, or null before
+   * connect() read it.
+   * @returns {string | null} The controller id.
+   */
+  get controllerId(): string | null {
+    return this.omadacId;
+  }
+
+  /**
+   * The controller version and the group model derived from it (the
+   * defensive 'wlanGroup' default until connect() read /api/info).
+   * @returns {ControllerInfo} A copy of the controller info.
+   */
+  get info(): ControllerInfo {
+    return { ...this.controllerInfo };
+  }
+
+  /**
+   * The selected site (id and display name from the authorized-site list),
+   * or null while none is selected.
+   * @returns {SiteInfo | null} A copy of the selected site.
+   */
+  get selectedSite(): SiteInfo | null {
+    const site = this.availableSites.find((candidate) => candidate.id === this.siteId);
+    return site ? { ...site } : null;
+  }
+
+  /**
    * Select one of the authorized sites by id. Only ids present in the list
    * loaded by connect() are accepted — the id is later interpolated into
    * request paths, so the exact-match check doubles as an injection guard.
@@ -343,6 +371,22 @@ export class OmadaController {
     groups.sort((a, b) => a.wlanName.localeCompare(b.wlanName));
     return { controllerVersion: info.controllerVersion, groupModel: info.groupModel, groups };
   } // End of function getWlanGroups()
+
+  /**
+   * The ids of the authoritative group list (`GET setting/wlans`, entries
+   * validated and deduplicated by validateGroupList()), for the management
+   * capability check that compares them with the Open API AP-group ids
+   * (docs/management-design.md §2.2, check 5). No fallback: a failed request,
+   * an errorCode or an unsupported shape throws.
+   * @returns The group ids, in response order.
+   */
+  async listGroupIds(): Promise<string[]> {
+    if (!this.omadacId || !this.csrfToken || !this.siteId) {
+      throw new Error('No conectado al controlador');
+    }
+    const entries = await this.loadGroupList();
+    return entries.map((entry) => entry.id);
+  } // End of function listGroupIds()
 
   /**
    * Load and validate the authoritative group list (`GET setting/wlans`).

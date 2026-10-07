@@ -121,6 +121,40 @@ class FakeController implements ManagedController {
 } // End of class FakeController
 
 /**
+ * A fake controller with the optional ManagedController hooks: it records
+ * close() / activate() / logout() calls in order and reports a site name and
+ * a session nonce when activated (like ControllerSession).
+ */
+class HookedController extends FakeController {
+  readonly events: string[] = [];
+
+  /**
+   * Records the synchronous close.
+   */
+  close(): void {
+    this.events.push('close');
+  }
+
+  /**
+   * Records the activation and returns the success details.
+   * @returns {{ siteName: string; sessionNonce: string }} The details.
+   */
+  activate(): { siteName: string; sessionNonce: string } {
+    this.events.push('activate');
+    return { siteName: this.selectedSite ?? 'Only site', sessionNonce: 'c'.repeat(32) };
+  }
+
+  /**
+   * Records the logout, then behaves like FakeController.logout().
+   * @returns {Promise<void>} The harness' logout promise.
+   */
+  logout(): Promise<void> {
+    this.events.push('logout');
+    return super.logout();
+  }
+} // End of class HookedController
+
+/**
  * One switch of the controller session, as recorded by the harness.
  */
 interface SessionSwitch {
@@ -145,12 +179,13 @@ class Harness {
 
   /**
    * Builds the state machine over the fakes.
+   * @param {boolean} [hooked] - Create HookedControllers (with close() / activate()).
    */
-  constructor() {
+  constructor(hooked = false) {
     this.manager = new ConnectionManager<FakeController>({
       getCredentials: () => ({ url: this.config.url, username: this.config.username, password: this.config.password }),
       createController: (credentials) => {
-        const controller = new FakeController(this, credentials.url);
+        const controller = hooked ? new HookedController(this, credentials.url) : new FakeController(this, credentials.url);
         this.controllers.push(controller);
         return controller;
       },
@@ -241,7 +276,9 @@ class Harness {
     const pending = (await this.startConnect()).result;
     const controller = this.latest;
     controller.connectResult.resolve({ siteSelected: true, sites: [SITES[0]] });
-    assert.deepEqual(await pending, { success: true });
+    // A HookedController's activate() details join the success result
+    const expected = controller instanceof HookedController ? { success: true, siteName: 'Only site', sessionNonce: 'c'.repeat(32) } : { success: true };
+    assert.deepEqual(await pending, expected);
     assert.equal(this.manager.controller, controller);
     return controller;
   }
@@ -575,3 +612,99 @@ describe('settleWithin()', () => {
     await settleWithin(new Promise(() => {}), 5);
   }); // End of test "settles with the work, or at the bound, and never rejects"
 });
+
+describe('ConnectionManager: the optional close() / activate() hooks (ControllerSession)', () => {
+  test('only the installed controller is activated, and its details join the success result (connect, and selectSite)', async () => {
+    const single = new Harness(true);
+    const pending = (await single.startConnect()).result;
+    single.latest.connectResult.resolve({ siteSelected: true, sites: [SITES[0]] });
+    assert.deepEqual(await pending, { success: true, siteName: 'Only site', sessionNonce: 'c'.repeat(32) });
+    assert.deepEqual((single.latest as HookedController).events, ['activate']);
+
+    const multi = new Harness(true);
+    const { controller, nonce } = await multi.connectPendingSelection();
+    assert.deepEqual((controller as HookedController).events, [], 'a parked controller is not activated');
+    assert.deepEqual(multi.manager.selectSite('site-b', nonce), { success: true, siteName: 'site-b', sessionNonce: 'c'.repeat(32) });
+    assert.deepEqual((controller as HookedController).events, ['activate']);
+  }); // End of test "only the installed controller is activated..."
+
+  test('a transition closes the installed controller synchronously, before its logout starts', async () => {
+    const harness = new Harness(true);
+    await harness.connectInstalled();
+    const controller = harness.latest as HookedController;
+    const reset = harness.manager.resetCertificate();
+    assert.equal(controller.events[1], 'close', 'closed in the synchronous part of the transition');
+    assert.ok(controller.events.indexOf('close') < controller.events.indexOf('logout'));
+    await reset;
+
+    await harness.connectInstalled();
+    const second = harness.latest as HookedController;
+    await harness.changeUrl(URL_B);
+    assert.deepEqual(second.events.slice(0, 2), ['activate', 'close']);
+    assert.ok(second.events.includes('logout'));
+  }); // End of test "a transition closes the installed controller synchronously..."
+
+  test('a superseded attempt and a discarded parked controller are closed, never activated', async () => {
+    const harness = new Harness(true);
+    const first = (await harness.startConnect()).result;
+    const stale = harness.latest as HookedController;
+    const second = (await harness.startConnect()).result;
+    harness.latest.connectResult.resolve({ siteSelected: false, sites: SITES });
+    const parked = harness.latest as HookedController;
+    assert.equal((await second).needsSiteSelection, true);
+    stale.connectResult.resolve({ siteSelected: true, sites: [SITES[0]] });
+    assert.deepEqual(await first, { success: false, error: 'connectionSuperseded' });
+    assert.deepEqual(stale.events, ['close', 'logout']);
+    // A newer connect discards the parked selection
+    const third = (await harness.startConnect()).result;
+    harness.latest.connectResult.resolve({ siteSelected: true, sites: [SITES[0]] });
+    assert.equal((await third).success, true);
+    assert.deepEqual(parked.events, ['close', 'logout']);
+    await harness.manager.disconnect();
+    assert.deepEqual((harness.latest as HookedController).events.slice(0, 2), ['activate', 'close']);
+  }); // End of test "a superseded attempt and a discarded parked controller are closed..."
+}); // End of describe 'the optional close() / activate() hooks'
+
+describe('ConnectionManager: a new connect closes the installed controller before its first await', () => {
+  test('the installed controller is closed synchronously when the attempt claims the generation; its internal side stays installed while the new login is pending and is logged out once the attempt succeeds', async () => {
+    const harness = new Harness(true);
+    const old = (await harness.connectInstalled()) as HookedController;
+    const pending = harness.manager.connect();
+    // Synchronous part of connect(), before its first await
+    assert.deepEqual(old.events, ['activate', 'close'], 'closed before connect() awaited anything');
+    assert.equal(harness.manager.controller, old, 'the internal controller stays installed during the window (phase 7)');
+    await flush();
+    const fresh = harness.latest;
+    assert.notEqual(fresh, old, 'the new login is pending');
+    assert.equal(old.events.includes('logout'), false, 'not logged out while the new login is pending');
+    fresh.connectResult.resolve({ siteSelected: true, sites: [SITES[0]] });
+    assert.equal((await pending).success, true);
+    await flush();
+    assert.equal(harness.manager.controller, fresh);
+    assert.equal(old.events.filter((event) => event === 'logout').length, 1, 'released once the attempt succeeded');
+    assert.deepEqual((fresh as HookedController).events, ['activate']);
+  }); // End of test "the installed controller is closed synchronously when the attempt claims..."
+
+  test('a failed, incomplete or superseded attempt still closed the installed controller; its internal side stays installed until a disconnect logs it out', async () => {
+    const harness = new Harness(true);
+    const old = (await harness.connectInstalled()) as HookedController;
+    const failing = (await harness.startConnect()).result;
+    harness.latest.connectResult.reject(new Error('net::ERR_CONNECTION_REFUSED'));
+    assert.equal((await failing).error, 'connectError');
+    assert.equal(old.events[1], 'close');
+    assert.equal(harness.manager.controller, old, 'a failed attempt leaves the internal controller installed');
+    assert.equal(old.events.includes('logout'), false);
+
+    harness.config.password = '';
+    assert.deepEqual(await harness.manager.connect(), { success: false, error: 'configIncomplete' });
+    harness.config.password = 's3cret';
+
+    const stale = (await harness.startConnect()).result;
+    const staleController = harness.latest;
+    await harness.manager.disconnect();
+    staleController.connectResult.resolve({ siteSelected: true, sites: [SITES[0]] });
+    assert.deepEqual(await stale, { success: false, error: 'connectionSuperseded' });
+    assert.equal(harness.manager.controller, null);
+    assert.equal(old.events.filter((event) => event === 'logout').length, 1, 'the disconnect logged it out');
+  }); // End of test "a failed, incomplete or superseded attempt still closed the installed controller..."
+}); // End of describe 'a new connect closes the installed controller before its first await'

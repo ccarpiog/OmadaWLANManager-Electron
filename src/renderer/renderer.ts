@@ -45,7 +45,10 @@
 //                         section, move preview, move button)
 //   modal-focus.ts        modal Tab focus trap and inert background
 //   management-form.ts    pure management-access form rules (Client ID /
-//                         Client Secret save plan, secret placeholder)
+//                         Client Secret save plan, secret placeholder, the
+//                         test's outcome and its unsaved-changes guard)
+//   management.ts         management capabilities of the session (they
+//                         feed the read-only banner), "Test management access"
 //   settings-modal.ts     settings modal (open/close/save, certificate reset,
 //                         the management-access section)
 //   move-dialog.ts        move review / progress / per-AP results dialog
@@ -114,6 +117,7 @@ import {
   selectAllApsBtn,
   settingsBtn,
   settingsModal,
+  testManagementBtn,
   undoManagementRemovalBtn,
   urlInput,
   usernameInput,
@@ -130,6 +134,7 @@ import {
 import { setLanguage, t } from './i18n';
 import { handleGlobalKeydown } from './keyboard';
 import { installResponsiveLayout } from './layout';
+import { runManagementTest } from './management';
 import { startMove } from './move-flow';
 import { goBack, handleCrossLinkClick, navigateToView } from './navigation';
 import {
@@ -275,11 +280,13 @@ urlInput.addEventListener('input', updateManagementAffordance);
 clientIdInput.addEventListener('input', updateManagementAffordance);
 
 // Management access (Settings): "Remove management access" with an inline
-// confirmation; the removal is staged and applied by Save
+// confirmation (the removal is staged and applied by Save), and "Test
+// management access" (main runs the checks on the saved settings)
 removeManagementBtn.addEventListener('click', requestManagementRemoval);
 cancelManagementRemoveBtn.addEventListener('click', cancelManagementRemoval);
 confirmManagementRemoveBtn.addEventListener('click', confirmManagementRemoval);
 undoManagementRemovalBtn.addEventListener('click', undoManagementRemoval);
+testManagementBtn.addEventListener('click', runManagementTest);
 
 // Trusted certificate (Settings): reset with an inline confirmation
 resetCertBtn.addEventListener('click', requestCertificateReset);

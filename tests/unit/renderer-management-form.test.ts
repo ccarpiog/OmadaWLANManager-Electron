@@ -1,7 +1,8 @@
 // Tests for the renderer's management-access form rules
 // (src/renderer/management-form.ts), which mirror the main-process rules of
 // src/main/config-model.ts: what a save sends (never an unchanged secret),
-// when it is refused, and what the Client Secret placeholder says.
+// when it is refused, and what the Client Secret placeholder says; plus what
+// "Test management access" reports and when it refuses unsaved changes.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -9,7 +10,9 @@ import { CLIENT_ID_REGEX as MAIN_CLIENT_ID_REGEX } from '../../src/main/config-m
 import {
   CLIENT_ID_REGEX,
   clientSecretAffordance,
+  hasUnsavedManagementChanges,
   isValidClientId,
+  managementTestOutcome,
   planManagementSave,
   type ManagementFormInput
 } from '../../src/renderer/management-form';
@@ -91,3 +94,27 @@ describe('Client ID format', () => {
     assert.equal(isValidClientId(''), false);
   });
 });
+
+describe('Test management access', () => {
+  const saved = { removeStaged: false, clientIdField: ' my-client ', clientSecretField: '', storedClientId: 'my-client', sameUrl: true };
+
+  test('the saved settings as shown: nothing unsaved (the Client ID is compared trimmed)', () => {
+    assert.equal(hasUnsavedManagementChanges(saved), false);
+    assert.equal(hasUnsavedManagementChanges({ ...saved, clientIdField: '', storedClientId: '' }), false);
+  });
+
+  test('a staged removal, a typed secret, another Client ID or another controller URL are unsaved', () => {
+    assert.equal(hasUnsavedManagementChanges({ ...saved, removeStaged: true }), true);
+    assert.equal(hasUnsavedManagementChanges({ ...saved, clientSecretField: 's3cret' }), true);
+    assert.equal(hasUnsavedManagementChanges({ ...saved, clientIdField: 'other-client' }), true);
+    assert.equal(hasUnsavedManagementChanges({ ...saved, sameUrl: false }), true);
+  });
+
+  test('the outcome: ok, the reason of the failing check, or main\'s refusal; a malformed reply is "failed"', () => {
+    assert.equal(managementTestOutcome({ ok: true, capabilities: { manageApGroups: true, manageWifiNetworks: true, reason: null } }), 'ok');
+    assert.equal(managementTestOutcome({ ok: true, capabilities: { manageApGroups: false, manageWifiNetworks: false, reason: 'apGroupsMismatch' } }), 'apGroupsMismatch');
+    assert.equal(managementTestOutcome({ ok: false, error: 'notConnected' }), 'notConnected');
+    assert.equal(managementTestOutcome({ ok: false, error: 'superseded' }), 'superseded');
+    assert.equal(managementTestOutcome({ ok: false, error: 'invalid' }), 'failed');
+  });
+}); // End of the describe block for Test management access

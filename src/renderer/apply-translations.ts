@@ -46,6 +46,7 @@ import {
   siteModalMessage,
   siteModalTitle,
   statusText,
+  testManagementBtn,
   undoManagementRemovalBtn,
 } from './elements';
 import { renderApFilterOptions, renderApList } from './ap-list';
@@ -116,7 +117,8 @@ export function applyTranslations() {
   cancelCertResetBtn.textContent = t('cancel');
   confirmCertResetBtn.textContent = t('certResetAction');
   // Management-access section (the Client Secret placeholder depends on what
-  // is stored and is refreshed per open / per edit, see settings-modal.ts)
+  // is stored and is refreshed per open / per edit, see settings-modal.ts;
+  // the test's result line is written per run, see management.ts)
   managementHeading.textContent = t('managementTitle');
   managementHelp.textContent = t('managementHelp');
   labelClientId.textContent = t('clientId');
@@ -128,6 +130,7 @@ export function applyTranslations() {
   undoManagementRemovalBtn.textContent = t('managementUndoRemoval');
   cancelManagementRemoveBtn.textContent = t('cancel');
   confirmManagementRemoveBtn.textContent = t('managementRemoveAction');
+  testManagementBtn.textContent = t('managementTest');
 
   // Move dialog: review defaults (move-dialog.ts rewrites the title and the
   // move button's label for each phase and plan)

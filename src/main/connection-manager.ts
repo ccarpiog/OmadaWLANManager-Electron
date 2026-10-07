@@ -3,7 +3,8 @@
 // act for the configured controller:
 // - the connect generation: every connect, disconnect and controller
 //   transition bumps it; an async flow that captured an older value is stale;
-// - the installed controller (the one the data/AP-move IPC handlers use);
+// - the installed controller (the one the data/AP-move and management-access
+//   IPC handlers use; in production a ControllerSession, controller-session.ts);
 // - the pending site selection (a connect that authenticated on a multi-site
 //   controller parks its controller here until OMADA_SELECT_SITE completes it);
 // - the pending certificate trust decision (a first-use rejection's
@@ -19,17 +20,27 @@
 // (applyConfigSave()) or a certificate reset (resetCertificate()) — goes
 // through invalidateControllerState(), which in ONE synchronous step bumps the
 // generation, consumes the pending trust decision, detaches the pending site
-// selection and the installed controller, starts their logouts on the outgoing
-// controller session, and switches to a fresh session. Every async flow
+// selection and the installed controller (closing them: a ControllerSession
+// drops its Open API client and token and discards its capability checks),
+// starts their logouts on the outgoing controller session, and switches to a
+// fresh session. Every async flow
 // (connect, trust) re-checks after each await that its generation and the
 // configured URL are still the ones it started with, and otherwise installs,
 // parks and persists nothing (a stale connect is logged out and reported as
 // connectionSuperseded, exactly like one overtaken by a newer connect).
+//
+// A new connect attempt claims the generation and, in the same synchronous
+// step, closes the installed controller (ManagedController.close(): a
+// ControllerSession drops its Open API client and token, discards its
+// capability checks and answers the management-access calls as not
+// connected) — see connect() for why its internal client stays installed
+// until the attempt succeeds.
 
 import { randomBytes } from 'crypto';
 import { CertificateActionResult, ConnectionResult } from '../shared/types';
 import { CertificatePin, CertificatePinRejection, controllerOriginOf, isValidFingerprint, normalizeHostname } from './cert-pinning';
 import type { ConnectOutcome } from './omada-api';
+import { redactErrorMessage } from './redact';
 
 // Upper bound for how long the outgoing controller session is kept open so the
 // logouts of the controllers detached by a transition can complete on it
@@ -37,13 +48,31 @@ import type { ConnectOutcome } from './omada-api';
 export const DEFAULT_LOGOUT_DRAIN_MS = 3000;
 
 /**
- * What the state machine needs from a controller instance (OmadaController in
- * production, a fake in the unit tests).
+ * What an installed controller adds to a successful connect or site-selection
+ * result (ControllerSession: the site name and the session nonce).
+ */
+export type InstalledDetails = Pick<ConnectionResult, 'siteName' | 'sessionNonce'>;
+
+/**
+ * What the state machine needs from a controller instance (ControllerSession
+ * in production, a fake in the unit tests).
  */
 export interface ManagedController {
   connect(preferredSiteId?: string): Promise<ConnectOutcome>;
   selectSite(siteId: string): boolean;
   logout(): Promise<void>;
+  // Optional: synchronously drops everything the instance holds besides its
+  // server-side session (ControllerSession: the Open API client — its token
+  // discarded — and any capability check in flight, whose late result is then
+  // ignored). Idempotent. Called when the instance is detached or released,
+  // before its logout starts, and when a newer connect attempt starts while
+  // it is installed (the instance must then keep serving the internal data
+  // and AP-move calls until it is released)
+  close?(): void;
+  // Optional: called synchronously when the instance becomes the installed
+  // controller (ControllerSession starts its capability checks here); returns
+  // the details the success result carries
+  activate?(): InstalledDetails;
 }
 
 /**
@@ -56,7 +85,7 @@ export interface ConnectionCredentials {
 }
 
 /**
- * Injected dependencies (index.ts: config.ts, OmadaController and the
+ * Injected dependencies (index.ts: config.ts, ControllerSession and the
  * ControllerTlsSessions of cert-verify.ts).
  */
 export interface ConnectionManagerDeps<C extends ManagedController> {
@@ -211,13 +240,30 @@ export class ConnectionManager<C extends ManagedController> {
   /**
    * Best-effort logout that never rejects (logout() swallows network errors
    * itself; this guard only keeps an unexpected rejection from surfacing).
+   * The instance is closed first (close(), synchronous), so nothing but the
+   * logout itself can still go out for it.
    * @param {C} controller - The controller to log out.
    * @returns {Promise<void>} Settles when the logout attempt is over.
    */
   private logoutQuietly(controller: C): Promise<void> {
+    controller.close?.();
     return controller.logout().catch((error) => {
-      console.warn('Error releasing a controller session:', error);
+      console.warn('Error releasing a controller session:', redactErrorMessage(error));
     });
+  }
+
+  /**
+   * Makes `controller` the installed controller and activates it
+   * (ManagedController.activate(): a ControllerSession starts its capability
+   * checks), returning the success result with the details it reports.
+   * Synchronous: callers have just verified that their flow is current.
+   * @param {C} controller - The controller that now owns the session.
+   * @returns {ConnectionResult} The success result.
+   */
+  private install(controller: C): ConnectionResult {
+    this.installed = controller;
+    const details = controller.activate?.();
+    return details ? { success: true, ...details } : { success: true };
   }
 
   /**
@@ -257,9 +303,11 @@ export class ConnectionManager<C extends ManagedController> {
   /**
    * Synchronously invalidates every controller-related state: bumps the
    * generation (so any in-flight connect or trust flow becomes stale), drops
-   * the pending certificate trust decision, and detaches the pending site
-   * selection's controller and the installed controller. The caller owns the
-   * returned controllers and must log them out.
+   * the pending certificate trust decision, and detaches and closes
+   * (ManagedController.close(): the Open API client and its token are dropped,
+   * capability checks in flight are discarded) the pending site selection's
+   * controller and the installed controller. The caller owns the returned
+   * controllers and must log them out.
    * Used by disconnect(), by invalidateControllerState() and on quit.
    * @returns {C[]} The detached controllers (installed and/or parked).
    */
@@ -274,6 +322,9 @@ export class ConnectionManager<C extends ManagedController> {
     if (this.installed) {
       detached.push(this.installed);
       this.installed = null;
+    }
+    for (const controller of detached) {
+      controller.close?.();
     }
     return detached;
   } // End of function detachAll()
@@ -365,7 +416,8 @@ export class ConnectionManager<C extends ManagedController> {
    * installed only after authentication succeeds while the attempt is still
    * current (isCurrent() after every await); a stale attempt is logged out and
    * reported as connectionSuperseded. A newer connect supersedes any pending
-   * site selection and trust decision. Multi-site (todo.md 1.11): with no
+   * site selection and trust decision, and closes the installed controller
+   * at once (see the comment in the body). Multi-site (todo.md 1.11): with no
    * pickable site the controller is parked as a pending site selection (not
    * installed) and needsSiteSelection is returned with an opaque nonce.
    * Certificate pinning (todo.md 4.4): the very first request (/api/info) is
@@ -378,6 +430,20 @@ export class ConnectionManager<C extends ManagedController> {
     const generation = ++this.generation;
     this.discardPendingSiteSelection();
     this.pendingTrust = null;
+    // The installed controller loses its management side NOW, before the
+    // first await: close() drops a ControllerSession's Open API client and
+    // token and discards its capability checks (a late result is ignored),
+    // and its session nonce answers notConnected on MANAGEMENT_CAPABILITIES /
+    // MANAGEMENT_TEST from here on — the new internal login may take long,
+    // and no Open API session of the old connection may stay usable
+    // meanwhile. Its INTERNAL client deliberately stays installed (phase-7
+    // behavior): the data and AP-move handlers keep their controller during
+    // the window, it is released (logged out) only once this attempt
+    // succeeds or parks a site selection, and a failed or superseded attempt
+    // leaves it to the next disconnect (the renderer disconnects after a
+    // failed attempt) or controller transition. close() is idempotent, so
+    // the later release closes nothing twice
+    this.installed?.close?.();
     const credentials = this.deps.getCredentials();
 
     if (!credentials.url || !credentials.username || !credentials.password) {
@@ -423,8 +489,7 @@ export class ConnectionManager<C extends ManagedController> {
         return { success: false, needsSiteSelection: true, sites: outcome.sites, selectionNonce: nonce };
       }
 
-      this.installed = controller;
-      return { success: true };
+      return this.install(controller);
     } catch (error) {
       console.error('Error connecting to the Omada controller:', error);
       // The login may have partially succeeded before the failure: log the
@@ -467,12 +532,12 @@ export class ConnectionManager<C extends ManagedController> {
     // released its predecessor) — released defensively regardless
     this.pendingSite = null;
     const previous = this.installed;
-    this.installed = pending.controller;
+    const result = this.install(pending.controller);
     if (previous) {
       this.releaseController(previous);
     }
     this.deps.saveStoredSiteId(siteId);
-    return { success: true };
+    return result;
   } // End of function selectSite()
 
   /**

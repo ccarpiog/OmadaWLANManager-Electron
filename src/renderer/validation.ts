@@ -6,7 +6,7 @@
 // check the controller-URL mirror against the main-process rules
 // (tests/unit/renderer-validation.test.ts).
 
-import type { CertificateDetails, GroupListing } from '../shared/types';
+import type { CertificateDetails, GroupListing, ManagementCapabilities, ManagementCheckError, ManagementReason } from '../shared/types';
 
 // Format guards for identifiers crossing the IPC boundary (from the
 // controller via the main process, and back when applying a change). The main
@@ -22,6 +22,25 @@ const MAX_CERTIFICATE_HOST_LENGTH = 300;
 // Length cap for the controller version of a group listing (same value as
 // MAX_CONTROLLER_VERSION_LENGTH in src/main/controller-version.ts)
 const MAX_CONTROLLER_VERSION_LENGTH = 64;
+// Length cap for the site name of a connect result (display only)
+const MAX_SITE_NAME_LENGTH = 256;
+// Length cap for the opaque session nonce of a connect result (main sends 32
+// hex characters; the renderer only checks presence, type and size)
+const MAX_SESSION_NONCE_LENGTH = 64;
+// A management diagnostic as main builds it (error codes, HTTP status,
+// errorCode, counts): anything else is dropped before it reaches the DOM
+const DIAGNOSTIC_REGEX = /^[A-Za-z0-9 ,.:_-]{1,160}$/;
+// Every ManagementReason (src/shared/types.ts); the Record type makes the
+// compiler require each one, so a new reason cannot be forgotten here
+const MANAGEMENT_REASONS: Record<ManagementReason, true> = {
+  legacyController: true,
+  managementNotConfigured: true,
+  invalidCredentials: true,
+  tokenFailed: true,
+  siteNotFound: true,
+  apGroupsMismatch: true,
+  probeFailed: true,
+};
 
 /**
  * Validates a MAC address format (six hex pairs separated by ':' or '-').
@@ -113,6 +132,97 @@ export function parseGroupListing(raw: unknown): GroupListing {
     groups: candidate.groups as GroupListing['groups'],
   };
 } // End of function parseGroupListing()
+
+/**
+ * Validates the site name of a connect / site-selection result (display
+ * only): a non-empty string within the length cap, else null.
+ * @param {unknown} raw - The `siteName` field received over IPC.
+ * @returns {string | null} The site name, or null.
+ */
+export function parseSiteName(raw: unknown): string | null {
+  return typeof raw === 'string' && raw.length > 0 && raw.length <= MAX_SITE_NAME_LENGTH ? raw : null;
+}
+
+/**
+ * Validates the opaque session nonce of a connect / site-selection result:
+ * only its presence, type and size are checked (main interprets it).
+ * @param {unknown} raw - The `sessionNonce` field received over IPC.
+ * @returns {string | null} The nonce, or null.
+ */
+export function parseSessionNonce(raw: unknown): string | null {
+  return typeof raw === 'string' && raw.length > 0 && raw.length <= MAX_SESSION_NONCE_LENGTH ? raw : null;
+}
+
+/**
+ * Tells whether a value is a known management reason code.
+ * @param {unknown} value - The candidate.
+ * @returns {value is ManagementReason} True for a ManagementReason.
+ */
+export function isManagementReason(value: unknown): value is ManagementReason {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(MANAGEMENT_REASONS, value);
+}
+
+/**
+ * Validates management capabilities received over IPC, failing closed: both
+ * flags must be booleans and the reason null or a known code; management is
+ * on only with both flags true and no reason (a reason forces both flags
+ * off; no reason with a flag off is inconsistent and rejected). The
+ * diagnostic is kept only in main's codes-and-counts form.
+ * @param {unknown} raw - The `capabilities` field received over IPC.
+ * @returns {ManagementCapabilities | null} The capabilities, or null when malformed.
+ */
+export function parseManagementCapabilities(raw: unknown): ManagementCapabilities | null {
+  if (typeof raw !== 'object' || raw === null) {
+    return null;
+  }
+  const candidate = raw as Record<string, unknown>;
+  if (typeof candidate.manageApGroups !== 'boolean' || typeof candidate.manageWifiNetworks !== 'boolean') {
+    return null;
+  }
+  const reason = candidate.reason;
+  if (reason !== null && !isManagementReason(reason)) {
+    return null;
+  }
+  if (reason === null && !(candidate.manageApGroups && candidate.manageWifiNetworks)) {
+    return null;
+  }
+  const capabilities: ManagementCapabilities =
+    reason === null
+      ? { manageApGroups: true, manageWifiNetworks: true, reason: null }
+      : { manageApGroups: false, manageWifiNetworks: false, reason };
+  if (typeof candidate.diagnostic === 'string' && DIAGNOSTIC_REGEX.test(candidate.diagnostic)) {
+    capabilities.diagnostic = candidate.diagnostic;
+  }
+  return capabilities;
+} // End of function parseManagementCapabilities()
+
+/**
+ * A management-access reply after validation: the capabilities, or why there
+ * are none ('invalid' for a malformed reply).
+ */
+export type ParsedManagementResult =
+  | { ok: true; capabilities: ManagementCapabilities }
+  | { ok: false; error: ManagementCheckError | 'invalid' };
+
+/**
+ * Validates a getManagementCapabilities() / testManagementAccess() reply.
+ * @param {unknown} raw - The reply received over IPC.
+ * @returns {ParsedManagementResult} The validated reply.
+ */
+export function parseManagementResult(raw: unknown): ParsedManagementResult {
+  if (typeof raw !== 'object' || raw === null) {
+    return { ok: false, error: 'invalid' };
+  }
+  const candidate = raw as Record<string, unknown>;
+  if (candidate.success === true) {
+    const capabilities = parseManagementCapabilities(candidate.capabilities);
+    return capabilities === null ? { ok: false, error: 'invalid' } : { ok: true, capabilities };
+  }
+  if (candidate.success === false && (candidate.error === 'notConnected' || candidate.error === 'superseded')) {
+    return { ok: false, error: candidate.error };
+  }
+  return { ok: false, error: 'invalid' };
+} // End of function parseManagementResult()
 
 /**
  * Validates and normalizes the controller URL. Mirrors the main-process rules

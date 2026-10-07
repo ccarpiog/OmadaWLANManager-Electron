@@ -6,6 +6,7 @@ import {
   getCertificatePin,
   getConfiguredUrl,
   getConnectionCredentials,
+  getManagementCredentials,
   getRendererConfig,
   getStoredSiteId,
   saveCertificatePin,
@@ -14,7 +15,7 @@ import {
 } from './config';
 import { CertificateTrustSource, ControllerTlsSessions, installCertificateVerifyProc, isCertificateErrorAllowed } from './cert-verify';
 import { ConnectionManager } from './connection-manager';
-import { OmadaController } from './omada-api';
+import { applyManagementAccessChange, ControllerSession, getSessionCapabilities, testManagementAccess } from './controller-session';
 import { createNetTransport } from './net-transport';
 import {
   CertificateActionResult,
@@ -23,6 +24,7 @@ import {
   IPC_CHANNELS,
   ConnectionResult,
   GroupListing,
+  ManagementCapabilitiesResult,
   RendererConfig
 } from '../shared/types';
 
@@ -50,18 +52,23 @@ function getControllerSession(): Electron.Session {
 }
 
 // Production transport: Electron's net module on the current controller
-// session (net-transport.ts)
+// session (net-transport.ts). Both clients of a ControllerSession — the
+// internal one and the Open API one — use it, so every Open API call goes
+// through the same pinned, replaceable session as the internal calls
 const controllerTransport = createNetTransport(getControllerSession);
 
 // The connection state machine (connection-manager.ts): connect generation,
-// installed controller, pending site selection, pending certificate trust and
-// the pin-rejection bookkeeping, plus the atomic controller transitions run
-// on a controller URL change and on a certificate reset. The IPC handlers
-// below only check the sender and the payload shapes, then delegate to it.
-const connectionManager = new ConnectionManager<OmadaController>({
+// installed controller session, pending site selection, pending certificate
+// trust and the pin-rejection bookkeeping, plus the atomic controller
+// transitions run on a controller URL change and on a certificate reset. Each
+// controller is a ControllerSession (controller-session.ts): the facade over
+// the internal client and, once management access is verified, the Open API
+// client, with the management capabilities. The IPC handlers below only
+// check the sender and the payload shapes, then delegate to these two.
+const connectionManager = new ConnectionManager<ControllerSession>({
   getCredentials: getConnectionCredentials,
   createController: (credentials) =>
-    new OmadaController(credentials.url, credentials.username, credentials.password, controllerTransport),
+    new ControllerSession({ ...credentials, transport: controllerTransport, getManagementCredentials, getConfiguredUrl }),
   getConfiguredUrl,
   getStoredSiteId,
   saveStoredSiteId,
@@ -95,9 +102,9 @@ const RENDERER_HTML_PATH = path.normalize(path.join(__dirname, '../renderer/inde
 const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
 const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
-// Format guard for the opaque one-time nonces (site selection, certificate
-// trust): exactly 32 lowercase hex characters (16 random bytes — see
-// createNonce() in connection-manager.ts)
+// Format guard for the opaque nonces (site selection, certificate trust, the
+// controller session): exactly 32 lowercase hex characters (16 random bytes —
+// see createNonce() in connection-manager.ts)
 const NONCE_REGEX = /^[0-9a-f]{32}$/;
 
 // Length caps for strings arriving over IPC (defense against absurd payloads)
@@ -364,8 +371,15 @@ ipcMain.handle(IPC_CHANNELS.CONFIG_LOAD, async (event): Promise<RendererConfig> 
 // connectionManager.applyConfigSave() in the same synchronous step as the
 // write: every in-flight connect becomes stale, the pending site selection
 // and certificate trust decision are discarded, the installed controller is
-// detached and logged out, and the controller session is replaced. The reply
-// then carries connectionReset so the renderer drops its connected UI.
+// detached and logged out (its Open API client and token dropped), and the
+// controller session is replaced. The reply then carries connectionReset so
+// the renderer drops its connected UI. A save that keeps the URL but touches
+// the management access (Client ID, Client Secret, removal) drops the
+// installed session's Open API client and capabilities at once and starts NO
+// check run here (applyManagementAccessChange()): the Settings flow
+// reconnects after every successful save, so the new session's checks are
+// the single run that recomputes the capabilities with the new credentials
+// (without a reconnect, the next capabilities or Test request runs them).
 ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (event, payload: unknown): Promise<ConfigSaveResult> => {
   assertTrustedIpcSender(event);
   if (!isValidConfigSavePayload(payload)) {
@@ -384,6 +398,8 @@ ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (event, payload: unknown): Promis
   const reply: ConfigSaveResult = { success: true, managementAccess: result.managementAccess };
   if (result.urlChanged) {
     reply.connectionReset = true;
+  } else {
+    applyManagementAccessChange(connectionManager, payload);
   }
   return reply;
 }); // End of the CONFIG_SAVE handler
@@ -394,6 +410,9 @@ ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (event, payload: unknown): Promis
 // renderer maps to its es/en i18n strings; `detail` carries the underlying
 // technical message when one exists. Serialization, multi-site parking and
 // certificate pinning: see ConnectionManager.connect() (connection-manager.ts).
+// A success carries the site name and the session nonce, and starts the
+// management capability checks in the background (ControllerSession
+// .activate()): they never delay or fail the connect.
 ipcMain.handle(IPC_CHANNELS.OMADA_CONNECT, async (event): Promise<ConnectionResult> => {
   assertTrustedIpcSender(event);
   return connectionManager.connect();
@@ -420,11 +439,11 @@ ipcMain.handle(IPC_CHANNELS.OMADA_SELECT_SITE, async (event, siteId: unknown, no
 }); // End of the OMADA_SELECT_SITE handler
 
 /**
- * Returns the installed controller, or throws when none is (not connected,
- * or detached by a disconnect or a controller transition).
- * @returns {OmadaController} The installed controller.
+ * Returns the installed controller session, or throws when none is (not
+ * connected, or detached by a disconnect or a controller transition).
+ * @returns {ControllerSession} The installed controller session.
  */
-function requireController(): OmadaController {
+function requireController(): ControllerSession {
   const controller = connectionManager.controller;
   if (!controller) {
     throw new Error('Not connected to the controller');
@@ -514,3 +533,42 @@ ipcMain.handle(IPC_CHANNELS.CERT_RESET, async (event, ...extra: unknown[]): Prom
   }
   return connectionManager.resetCertificate();
 }); // End of the CERT_RESET handler
+
+/**
+ * Shape guard shared by the management-access channels: exactly one argument,
+ * the session nonce of a connect result (32 lowercase hex characters).
+ * @param {unknown} sessionNonce - The first argument.
+ * @param {unknown[]} extra - Any further arguments (must be none).
+ * @returns {string} The nonce.
+ * @throws {Error} On extra arguments or a malformed nonce.
+ */
+function requireSessionNonce(sessionNonce: unknown, extra: unknown[]): string {
+  if (extra.length > 0) {
+    throw new Error('IPC call rejected: unexpected arguments');
+  }
+  if (typeof sessionNonce !== 'string' || !NONCE_REGEX.test(sessionNonce)) {
+    throw new Error('IPC call rejected: invalid session nonce format');
+  }
+  return sessionNonce;
+}
+
+// The management capabilities of the installed controller session (spec
+// §2.2: flags plus a reason code, never a raw response). Session-owned like a
+// site selection: the renderer echoes the session nonce of its connect
+// result; once a newer connect attempt has started (the installed session is
+// closed) the answer is notConnected at once, and an answer for another
+// session — or for one replaced or closed while the checks ran — is
+// superseded (getSessionCapabilities()). Waits for the checks in flight.
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_CAPABILITIES, async (event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagementCapabilitiesResult> => {
+  assertTrustedIpcSender(event);
+  return getSessionCapabilities(connectionManager, requireSessionNonce(sessionNonce, extra));
+}); // End of the MANAGEMENT_CAPABILITIES handler
+
+// "Test management access" (Settings): runs the installed session's checks
+// again with the configured credentials (stored, or session-only) and reports
+// the result, which also becomes the session's capabilities; same session
+// ownership as MANAGEMENT_CAPABILITIES (testManagementAccess()).
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_TEST, async (event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagementCapabilitiesResult> => {
+  assertTrustedIpcSender(event);
+  return testManagementAccess(connectionManager, requireSessionNonce(sessionNonce, extra));
+}); // End of the MANAGEMENT_TEST handler

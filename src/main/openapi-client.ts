@@ -1,9 +1,9 @@
 // Omada Open API client (docs/management-design.md §2.1, §3, §5; todo.md 4.8).
 // Electron-free: every request goes through an injected OmadaTransport
-// (omada-transport.ts). Production will pass the net transport bound to the
-// pinned ControllerTlsSessions session (phase 15b's ControllerSession); the
-// unit tests pass a fake (tests/unit/openapi-client.test.ts). Not used by the
-// connect flow yet.
+// (omada-transport.ts). In production ControllerSession (controller-session.ts)
+// creates it with the net transport bound to the pinned ControllerTlsSessions
+// session, only after the internal connect passed the certificate pin check;
+// the unit tests pass a fake (tests/unit/openapi-client.test.ts).
 //
 // - Token: TP-Link's client-credentials flow, `POST
 //   /openapi/authorize/token?grant_type=client_credentials` with the JSON body
@@ -18,6 +18,9 @@
 //   and retry ONCE. Every acquisition goes through one shared in-flight
 //   promise (like sharedRelogin() in omada-api.ts), so concurrent requests
 //   share it; a second rejection surfaces as 'tokenRejected', never a loop.
+//   close() drops every token reference (the current token, the acquisition
+//   in flight, the tokens remembered for scrubbing); an operation in flight
+//   then ends as 'clientClosed' as soon as it resumes and sends nothing more.
 // - Paths: every call names its API version explicitly ('v1' | 'v2', no
 //   default) and its path segments, which are percent-encoded one by one.
 // - Errors: OpenApiError with a stable `code` and a sanitized diagnostic
@@ -458,7 +461,8 @@ export class OpenApiClient {
   #token: AccessTokenState | null = null;
   // The single in-flight token acquisition shared by every request
   #acquiring: Promise<AccessTokenState> | null = null;
-  // Tokens this client received (newest last), scrubbed from diagnostics
+  // Tokens this client received (newest last), scrubbed from diagnostics;
+  // emptied by close()
   #knownTokens: string[] = [];
   #closed = false;
 
@@ -499,21 +503,45 @@ export class OpenApiClient {
   }
 
   /**
-   * Closes the client: the token is forgotten, every later request fails with
-   * 'clientClosed', and a request in flight fails the same way when its
-   * response arrives (nothing it receives is used or cached).
+   * Closes the client (idempotent): every bearer-token reference is dropped —
+   * the current token, the shared acquisition in flight and the tokens
+   * remembered for scrubbing diagnostics — and every later call fails with
+   * 'clientClosed'. An operation in flight fails the same way as soon as it
+   * resumes, whatever its transport call returned (a response or a failure):
+   * nothing it receives is used or cached, and it sends nothing more (no
+   * retry, no re-acquire, no next page). Nothing after close needs the
+   * remembered tokens: errors raised before close were scrubbed when they
+   * were built, and a closed client builds no diagnostic from controller or
+   * transport text (the 'clientClosed' error carries fixed text only).
    */
   close(): void {
     this.#closed = true;
     this.#token = null;
     this.#acquiring = null;
+    this.#knownTokens = [];
+  }
+
+  /**
+   * Makes sure the client holds a usable access token, acquiring one (through
+   * the shared acquisition) when none is cached or it is about to expire;
+   * sends nothing while a cached token is still valid. This is "token
+   * acquisition succeeds", check 3 of docs/management-design.md §2.2.
+   * @returns {Promise<void>} Resolves once a token is held.
+   * @throws {OpenApiError} 'invalidCredentials', 'httpError', 'apiError',
+   *   'malformedResponse', 'timeout', 'networkError' or 'clientClosed'.
+   */
+  async authorize(): Promise<void> {
+    this.#assertOpen();
+    await this.#currentToken();
+    this.#assertOpen();
   }
 
   /**
    * Sends one Open API call: GET/POST/PATCH/PUT/DELETE on
    * `/openapi/{version}/{omadacId}/{segments…}` with the access token, a JSON
    * body when given, and the extra headers. A token rejection makes it
-   * re-acquire once (shared) and retry once.
+   * re-acquire once (shared) and retry once. After every await the client
+   * must still be open (close() turns the call into 'clientClosed').
    * @param {OpenApiMethod} method - HTTP method.
    * @param {OpenApiVersion} version - API version of this endpoint (explicit).
    * @param {readonly string[]} segments - Path segments after the controller id.
@@ -529,6 +557,7 @@ export class OpenApiClient {
 
     const firstToken = await this.#currentToken();
     const first = await this.#call(method, url, firstToken, body, extraHeaders);
+    this.#assertOpen();
     if (first.kind === 'ok') {
       return first.result;
     }
@@ -537,6 +566,7 @@ export class OpenApiClient {
     // request) and retry once; a second rejection is final
     const secondToken = await this.#tokenAfterRejection(firstToken);
     const second = await this.#call(method, url, secondToken, body, extraHeaders);
+    this.#assertOpen();
     if (second.kind === 'ok') {
       return second.result;
     }
@@ -585,6 +615,8 @@ export class OpenApiClient {
         }
       }
       const result = await this.request('GET', version, segments, { query });
+      // Closed meanwhile: neither this page nor a next one is used
+      this.#assertOpen();
       const pageData = validateOpenApiPage(result, what);
       for (const entry of pageData.data) {
         const item = validateEntry(entry);
@@ -666,6 +698,7 @@ export class OpenApiClient {
    * @returns {Promise<string>} The token for the single retry.
    */
   async #tokenAfterRejection(rejectedToken: string): Promise<string> {
+    this.#assertOpen();
     const token = this.#token;
     if (token !== null && token.accessToken !== rejectedToken && this.#now() < token.renewAt) {
       return token.accessToken;
@@ -677,10 +710,13 @@ export class OpenApiClient {
   } // End of function #tokenAfterRejection()
 
   /**
-   * Starts (or joins) the single in-flight token acquisition.
+   * Starts (or joins) the single in-flight token acquisition. A closed client
+   * neither starts nor joins one.
    * @returns {Promise<AccessTokenState>} The acquired token.
+   * @throws {OpenApiError} 'clientClosed' once close() was called.
    */
   #sharedAcquire(): Promise<AccessTokenState> {
+    this.#assertOpen();
     if (this.#acquiring === null) {
       const acquiring = this.#acquire().finally(() => {
         // Allow a later expiry or rejection to start a fresh acquisition
@@ -775,16 +811,20 @@ export class OpenApiClient {
 
   /**
    * Sends a request through the transport, turning transport failures into
-   * 'timeout' / 'networkError' with a scrubbed diagnostic.
+   * 'timeout' / 'networkError' with a scrubbed diagnostic — or into
+   * 'clientClosed' when the client was closed meanwhile: the failure text is
+   * then never surfaced (the remembered tokens it would be scrubbed against
+   * are gone).
    * @param {OmadaHttpRequest} request - The request.
    * @returns {Promise<OmadaHttpResponse>} Status and raw body.
-   * @throws {OpenApiError} 'timeout' or 'networkError'.
+   * @throws {OpenApiError} 'timeout', 'networkError' or 'clientClosed'.
    */
   async #send(request: OmadaHttpRequest): Promise<OmadaHttpResponse> {
     try {
       // The Open API is token-authenticated: response cookies are ignored
       return await this.#transport.send(request, () => undefined);
     } catch (error) {
+      this.#assertOpen();
       const message = error instanceof Error ? error.message : String(error);
       if (message.startsWith('Request timeout')) {
         throw new OpenApiError('timeout', this.#scrub(message));
