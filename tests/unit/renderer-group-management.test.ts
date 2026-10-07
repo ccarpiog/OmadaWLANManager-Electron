@@ -190,6 +190,15 @@ describe('deleteBlocks (Delete hidden for the default group; why it is unavailab
     assert.deepEqual(deleteBlocks(deleteInput({ apCount: null })), []);
   });
 
+  test('an unknown internal network list (null, ssidListUnknown) never reads as "no networks": the fresh view decides alone', () => {
+    assert.deepEqual(deleteBlocks(deleteInput({ networkCount: null })), []);
+    assert.deepEqual(deleteBlocks(deleteInput({ networkCount: null, managed: { id: 'x', name: 'x', isDefault: false, apCount: 0, networkNames: ['Casa'] } })), ['groupHasNetworks']);
+    assert.deepEqual(deleteBlocks(deleteInput({ networkCount: null, managed: undefined, managedStatus: 'ready' })), ['groupStateUnknown']);
+    assert.deepEqual(deleteBlocks(deleteInput({ networkCount: null, managed: undefined, managedStatus: 'loading' })), ['deleteChecking']);
+    assert.deepEqual(deleteBlocks(deleteInput({ networkCount: null, managed: { id: 'x', name: 'x', isDefault: false, apCount: 0 } })), ['groupStateUnknown']);
+    assert.deepEqual(deleteBlocks(deleteInput({ networkCount: null, apCount: 2 })), ['groupNotEmpty']);
+  });
+
   test('never offers a delete main\'s policy would refuse on the same fresh data', () => {
     const cases: ManagedApGroup[] = [
       { id: 'a', name: 'a', isDefault: true, apCount: 0, networkNames: [] },

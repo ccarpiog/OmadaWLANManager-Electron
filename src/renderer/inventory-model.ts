@@ -26,9 +26,19 @@
 //   their name broadcasts it; while any such AP exists, a network's AP count
 //   is only a lower bound (networkScopeKind()), never an exact count or a
 //   "no APs" statement.
+// - A group whose network list the controller did not report
+//   (`ssidListUnknown`, cloud session only: hasUnknownNetworks()) has
+//   unknown networks, never "no networks": its row is not Empty and says so
+//   (`networksUnknown`), an AP in it has unknown networks, and since it may
+//   broadcast any network, every network's group and AP counts become lower
+//   bounds while such a group exists (`unreportedGroupCount`,
+//   `unreportedApCount`). Counts that combine known and unknown groups are
+//   always shown as lower bounds ("at least N"; unknown when N is 0), never
+//   as exact. Local data never sets the flag: every result for it is
+//   unchanged (the optional fields are then absent).
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
-import { networkNames, normalizeSearch } from './move-plan';
+import { hasUnknownNetworks, networkNames, normalizeSearch } from './move-plan';
 import type { LinkTarget } from './nav-history';
 
 /**
@@ -51,12 +61,15 @@ export interface GroupRow {
   // The group's distinct network names, in listing order
   networks: string[];
   // True when the group broadcasts no Wi-Fi network (the §4.1 empty group:
-  // "No Wi-Fi networks — silences these APs")
+  // "No Wi-Fi networks — silences these APs"); never for unknown networks
   isEmpty: boolean;
   // True only when the controller flags the group as its default one
   isDefault: boolean;
   // True when another listed group has the same name
   ambiguous: boolean;
+  // Present (true) only when the controller did not report the group's
+  // network list: `networks` is then empty and means "unknown"
+  networksUnknown?: true;
 }
 
 /**
@@ -72,6 +85,12 @@ export interface NetworkRow {
   // APs that may broadcast it but whose group cannot be resolved (no group,
   // unlisted, or a shared name one of whose groups broadcasts it)
   unknownApCount: number;
+  // Present only while some listed group's network list is unknown (it may
+  // broadcast this network too): how many such groups (`groups.length` is
+  // then a lower bound) and how many APs are in one of them (more APs that
+  // may broadcast it)
+  unreportedGroupCount?: number;
+  unreportedApCount?: number;
 }
 
 /**
@@ -93,6 +112,10 @@ export interface NetworkBroadcasters {
   // APs whose group cannot be resolved (no group, unlisted, or a shared name
   // one of whose groups broadcasts it): they may broadcast the network
   unknownApCount: number;
+  // As in NetworkRow: present only while some listed group's network list
+  // is unknown
+  unreportedGroupCount?: number;
+  unreportedApCount?: number;
 }
 
 /**
@@ -102,7 +125,9 @@ export interface ApDetailsModel {
   ap: AccessPoint;
   group: ApGroupResolution;
   // The networks its group broadcasts (the AP's effective networks as far as
-  // the group listing tells), or null when its group cannot be resolved
+  // the group listing tells), or null when they are unknown: its group
+  // cannot be resolved (`group.kind` is not 'group') or the controller did
+  // not report its group's network list (`group.kind` is 'group')
   networks: string[] | null;
 }
 
@@ -154,7 +179,8 @@ export function groupMembers(group: WlanGroup, groups: readonly WlanGroup[], acc
 /**
  * Builds the AP groups master list, in listing order: per group its AP
  * count (null when the name is shared), its distinct network names, and the
- * Empty (no Wi-Fi networks) and Default flags.
+ * Empty (no Wi-Fi networks) and Default flags. A group whose network list
+ * is unknown is not Empty: its row carries `networksUnknown` instead.
  * @param {readonly WlanGroup[]} groups - The loaded groups.
  * @param {readonly AccessPoint[]} accessPoints - The loaded APs.
  * @returns {GroupRow[]} One row per group.
@@ -163,15 +189,20 @@ export function buildGroupRows(groups: readonly WlanGroup[], accessPoints: reado
   return groups.map(group => {
     const members = groupMembers(group, groups, accessPoints);
     const networks = networkNames(group);
-    return {
+    const unknown = hasUnknownNetworks(group);
+    const row: GroupRow = {
       group,
       apCount: members === null ? null : members.length,
       networks,
-      isEmpty: networks.length === 0,
+      isEmpty: networks.length === 0 && !unknown,
       isDefault: group.isDefault === true,
       ambiguous: members === null,
     };
-  });
+    if (unknown) {
+      row.networksUnknown = true;
+    }
+    return row;
+  }); // End of the group mapping
 } // End of function buildGroupRows()
 
 /**
@@ -216,66 +247,107 @@ function indexGroupsByName(groups: readonly WlanGroup[]): Map<string, WlanGroup[
 }
 
 /**
- * Tells whether a group broadcasts a network (by name).
+ * Tells whether a group is known to broadcast a network (by name): never a
+ * group whose network list is unknown (it only MAY broadcast it).
  * @param {WlanGroup} group - The group.
  * @param {string} name - The network name.
  * @returns {boolean} True when the group has the network.
  */
 function broadcasts(group: WlanGroup, name: string): boolean {
-  return group.ssidList.some(ssid => ssid.ssidName === name);
+  return !hasUnknownNetworks(group) && group.ssidList.some(ssid => ssid.ssidName === name);
 }
 
 /**
  * Tells whether an AP broadcasts a network, as far as its group name tells:
- * 'yes' or 'no' when the name resolves to exactly one listed group; for a
- * name several groups share, 'no' when none of them broadcasts it and
- * 'maybe' otherwise (the AP could be in any of them, as the AP details pane
- * states its networks as unknown); 'maybe' for an AP that reports no group
- * or a group the listing does not have.
+ * 'yes' or 'no' when the name resolves to exactly one listed group whose
+ * network list is known, 'unreported' when that one group's list is unknown
+ * (it may broadcast the network); for a name several groups share, 'no'
+ * when none of them broadcasts it or may (an unknown list), and 'maybe'
+ * otherwise (the AP could be in any of them, as the AP details pane states
+ * its networks as unknown); 'maybe' for an AP that reports no group or a
+ * group the listing does not have.
  * @param {AccessPoint} ap - The access point.
  * @param {string} name - The network name.
  * @param {ReadonlyMap<string, readonly WlanGroup[]>} groupsByName - From indexGroupsByName().
- * @returns {'yes' | 'no' | 'maybe'} Whether it broadcasts the network.
+ * @returns {'yes' | 'no' | 'maybe' | 'unreported'} Whether it broadcasts the network.
  */
-function apBroadcasts(ap: AccessPoint, name: string, groupsByName: ReadonlyMap<string, readonly WlanGroup[]>): 'yes' | 'no' | 'maybe' {
+function apBroadcasts(ap: AccessPoint, name: string, groupsByName: ReadonlyMap<string, readonly WlanGroup[]>): 'yes' | 'no' | 'maybe' | 'unreported' {
   const named = ap.wlanGroup === '' ? undefined : groupsByName.get(ap.wlanGroup);
   if (named === undefined || named.length === 0) {
     return 'maybe';
   }
-  if (!named.some(group => broadcasts(group, name))) {
+  if (named.length === 1 && hasUnknownNetworks(named[0])) {
+    return 'unreported';
+  }
+  if (!named.some(group => broadcasts(group, name) || hasUnknownNetworks(group))) {
     return 'no';
   }
   return named.length === 1 ? 'yes' : 'maybe';
 } // End of function apBroadcasts()
 
 /**
+ * Where every AP stands against one network (placeAps()).
+ */
+interface ApPlacement {
+  // The APs that broadcast it, in AP list order
+  aps: AccessPoint[];
+  // APs that may broadcast it without their group resolving
+  unknownApCount: number;
+  // APs in a (uniquely resolved) group whose network list is unknown
+  unreportedApCount: number;
+}
+
+/**
  * Places every AP against one network: the APs that broadcast it (in AP
- * list order) and how many may broadcast it without their group resolving.
+ * list order), how many may broadcast it without their group resolving, and
+ * how many are in a group whose network list is unknown.
  * @param {string} name - The network name.
  * @param {ReadonlyMap<string, readonly WlanGroup[]>} groupsByName - From indexGroupsByName().
  * @param {readonly AccessPoint[]} accessPoints - The loaded APs, in list order.
- * @returns {{ aps: AccessPoint[]; unknownApCount: number }} The placement.
+ * @returns {ApPlacement} The placement.
  */
-function placeAps(name: string, groupsByName: ReadonlyMap<string, readonly WlanGroup[]>, accessPoints: readonly AccessPoint[]): { aps: AccessPoint[]; unknownApCount: number } {
+function placeAps(name: string, groupsByName: ReadonlyMap<string, readonly WlanGroup[]>, accessPoints: readonly AccessPoint[]): ApPlacement {
   const aps: AccessPoint[] = [];
   let unknownApCount = 0;
+  let unreportedApCount = 0;
   for (const ap of accessPoints) {
     const placement = apBroadcasts(ap, name, groupsByName);
     if (placement === 'yes') {
       aps.push(ap);
     } else if (placement === 'maybe') {
       unknownApCount++;
+    } else if (placement === 'unreported') {
+      unreportedApCount++;
     }
-  }
-  return { aps, unknownApCount };
+  } // End of the loop over the APs
+  return { aps, unknownApCount, unreportedApCount };
 } // End of function placeAps()
+
+/**
+ * Adds the unknown-network-list facts to a network's row or detail, only
+ * while some listed group's network list is unknown (so the result for
+ * local data, which never sets the flag, is unchanged).
+ * @param {T} target - The row or detail.
+ * @param {number} unreportedGroupCount - Listed groups whose list is unknown.
+ * @param {number} unreportedApCount - APs in one of those groups.
+ * @returns {T} The same object.
+ */
+function withUnreported<T extends { unreportedGroupCount?: number; unreportedApCount?: number }>(target: T, unreportedGroupCount: number, unreportedApCount: number): T {
+  if (unreportedGroupCount > 0) {
+    target.unreportedGroupCount = unreportedGroupCount;
+    target.unreportedApCount = unreportedApCount;
+  }
+  return target;
+}
 
 /**
  * Builds the Wi-Fi networks master list: one row per distinct network name
  * (the sidebar's count), sorted by name, with the groups broadcasting it,
  * the APs whose (uniquely resolved) group broadcasts it and the APs that may
  * also broadcast it — the scope "N groups · M APs" (M a lower bound while
- * some APs may also broadcast it).
+ * some APs may also broadcast it; N too while some group's network list is
+ * unknown). Only names a group is known to broadcast are listed: a network
+ * only a group with an unknown list may broadcast is not known to exist.
  * @param {readonly WlanGroup[]} groups - The loaded groups.
  * @param {readonly AccessPoint[]} accessPoints - The loaded APs.
  * @returns {NetworkRow[]} One row per network name.
@@ -291,9 +363,11 @@ export function buildNetworkRows(groups: readonly WlanGroup[], accessPoints: rea
   } // End of the loop that indexes the groups by network name
 
   const groupsByName = indexGroupsByName(groups);
+  const unreportedGroupCount = groups.filter(hasUnknownNetworks).length;
   const rows = Array.from(byName, ([name, broadcasters]) => {
-    const { aps, unknownApCount } = placeAps(name, groupsByName, accessPoints);
-    return { name, groups: broadcasters, apCount: aps.length, unknownApCount };
+    const { aps, unknownApCount, unreportedApCount } = placeAps(name, groupsByName, accessPoints);
+    const row: NetworkRow = { name, groups: broadcasters, apCount: aps.length, unknownApCount };
+    return withUnreported(row, unreportedGroupCount, unreportedApCount);
   });
   return rows.sort((a, b) => a.name.localeCompare(b.name));
 } // End of function buildNetworkRows()
@@ -337,38 +411,55 @@ export function filterNetworkRows(rows: readonly NetworkRow[], query: string): N
 }
 
 /**
+ * Tells whether the Wi-Fi networks view (internal data) lists a network:
+ * some listed group is known to broadcast it. A network only a group with
+ * an unknown network list may broadcast is not listed (not known to exist),
+ * consistently with buildNetworkRows() and networkBroadcasters().
+ * @param {string} name - The network name.
+ * @param {readonly WlanGroup[]} groups - The loaded groups.
+ * @returns {boolean} True when the network is listed.
+ */
+export function isNetworkListed(name: string, groups: readonly WlanGroup[]): boolean {
+  return groups.some(group => broadcasts(group, name));
+}
+
+/**
  * Lists who broadcasts a network: the groups that have it, the APs whose
  * group (resolved uniquely) is one of them, and how many APs may broadcast
  * it without their group resolving (no group, an unlisted group, or a name
- * several groups share, one of which broadcasts it). Consistent with the
- * network's row (same AP count and unknown count).
+ * several groups share, one of which broadcasts it), plus — while some
+ * group's network list is unknown — how many such groups and APs may
+ * broadcast it too. Consistent with the network's row (same counts).
  * @param {string} name - The network name.
  * @param {readonly WlanGroup[]} groups - The loaded groups.
  * @param {readonly AccessPoint[]} accessPoints - The loaded APs, in list order.
  * @returns {NetworkBroadcasters | null} The broadcasters, or null when no
- *   listed group broadcasts the network (it is gone).
+ *   listed group is known to broadcast the network (it is gone).
  */
 export function networkBroadcasters(name: string, groups: readonly WlanGroup[], accessPoints: readonly AccessPoint[]): NetworkBroadcasters | null {
   const broadcasting = groups.filter(group => broadcasts(group, name));
   if (broadcasting.length === 0) {
     return null;
   }
-  const { aps, unknownApCount } = placeAps(name, indexGroupsByName(groups), accessPoints);
-  return { name, groups: broadcasting, aps, unknownApCount };
-}
+  const { aps, unknownApCount, unreportedApCount } = placeAps(name, indexGroupsByName(groups), accessPoints);
+  const detail: NetworkBroadcasters = { name, groups: broadcasting, aps, unknownApCount };
+  return withUnreported(detail, groups.filter(hasUnknownNetworks).length, unreportedApCount);
+} // End of function networkBroadcasters()
 
 /**
  * Describes one AP for its details pane: how its group resolves and its
  * effective networks as far as the group listing tells (its group's
- * networks; null when the group cannot be resolved). Per-AP SSID overrides
- * are not part of the loaded data, so they are never reflected here.
+ * networks; null when the group cannot be resolved or its network list is
+ * unknown). Per-AP SSID overrides are not part of the loaded data, so they
+ * are never reflected here.
  * @param {AccessPoint} ap - The access point.
  * @param {readonly WlanGroup[]} groups - The loaded groups.
  * @returns {ApDetailsModel} The details.
  */
 export function describeApDetails(ap: AccessPoint, groups: readonly WlanGroup[]): ApDetailsModel {
   const group = resolveApGroup(ap, groups);
-  return { ap, group, networks: group.kind === 'group' ? networkNames(group.group) : null };
+  const known = group.kind === 'group' && !hasUnknownNetworks(group.group);
+  return { ap, group, networks: known ? networkNames(group.group) : null };
 }
 
 /**

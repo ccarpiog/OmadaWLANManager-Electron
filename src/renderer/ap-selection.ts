@@ -10,6 +10,8 @@
 // rows the current filters show, in display order.
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
+import { networkScopeKind, type NetworkScopeKind } from './inventory-model';
+import { hasUnknownNetworks } from './move-plan';
 
 // Status filter values besides a numeric statusCategory ('0'..'4')
 export const STATUS_FILTER_ALL = 'all';
@@ -201,30 +203,80 @@ export function selectedAccessPoints(accessPoints: readonly AccessPoint[], selec
 /**
  * Counts the distinct Wi-Fi network (SSID) names across a group listing (the
  * sidebar's Wi-Fi networks total: a network bound to several groups counts
- * once).
+ * once). Only the known network lists count: while some group's list is
+ * unknown the total is a lower bound (distinctSsidCountKind()).
  * @param {readonly WlanGroup[]} groups - The loaded groups.
  * @returns {number} The number of distinct SSID names.
  */
 export function countDistinctSsids(groups: readonly WlanGroup[]): number {
   const names = new Set<string>();
   for (const group of groups) {
+    if (hasUnknownNetworks(group)) continue;
     for (const ssid of group.ssidList) {
       names.add(ssid.ssidName);
     }
   }
   return names.size;
+} // End of function countDistinctSsids()
+
+/**
+ * Tells how exact countDistinctSsids() is. A count that combines known and
+ * unknown network lists is shown as a lower bound ("at least N"), never as
+ * exact — the app's one rule for such counts (like a network's AP count,
+ * networkScopeKind()): 'exact' when every group's list is known, 'atLeast'
+ * when some list is unknown and some network is known, 'unknown' when some
+ * list is unknown and no network is known.
+ * @param {readonly WlanGroup[]} groups - The loaded groups.
+ * @returns {NetworkScopeKind} How the total reads.
+ */
+export function distinctSsidCountKind(groups: readonly WlanGroup[]): NetworkScopeKind {
+  return networkScopeKind(countDistinctSsids(groups), groups.filter(hasUnknownNetworks).length);
 }
 
 /**
+ * The string keys of the Wi-Fi networks list built from the internal data
+ * (its rows are the countDistinctSsids() names).
+ */
+export interface NetworkListKeys {
+  // The empty state when no network is listed: "No Wi-Fi networks
+  // available" only when every group's list is known
+  empty: 'noNetworks' | 'networksNotReported';
+  // The search summary: "Showing N of M", or "Showing N of at least M"
+  // while the total is a lower bound
+  summary: 'searchResultsCount' | 'searchResultsCountAtLeast';
+}
+
+/**
+ * Picks the texts of the Wi-Fi networks list (internal data) from how exact
+ * its total is (distinctSsidCountKind()): with an unknown total the empty
+ * list says the controller did not report the networks (never "no
+ * networks"), and while the total is not exact the search summary presents
+ * it as a lower bound. With every list known the keys are the usual ones.
+ * @param {readonly WlanGroup[]} groups - The loaded groups.
+ * @returns {NetworkListKeys} The keys to use.
+ */
+export function networkListKeys(groups: readonly WlanGroup[]): NetworkListKeys {
+  const kind = distinctSsidCountKind(groups);
+  return {
+    empty: kind === 'unknown' ? 'networksNotReported' : 'noNetworks',
+    summary: kind === 'exact' ? 'searchResultsCount' : 'searchResultsCountAtLeast',
+  };
+} // End of function networkListKeys()
+
+/**
  * Indexes groups by name (APs name their group, they do not carry its id).
- * When two groups share a name the first one wins.
+ * When two groups share a name the first one wins, except that a group
+ * whose network list is unknown wins over the ones whose list is known
+ * (fail-closed: an AP with that name then reads "Networks unknown", never a
+ * count it may not have).
  * @param {readonly WlanGroup[]} groups - The loaded groups.
  * @returns {Map<string, WlanGroup>} Group name to group.
  */
 export function indexGroupsByName(groups: readonly WlanGroup[]): Map<string, WlanGroup> {
   const index = new Map<string, WlanGroup>();
   for (const group of groups) {
-    if (!index.has(group.wlanName)) {
+    const indexed = index.get(group.wlanName);
+    if (indexed === undefined || (hasUnknownNetworks(group) && !hasUnknownNetworks(indexed))) {
       index.set(group.wlanName, group);
     }
   }
@@ -232,17 +284,22 @@ export function indexGroupsByName(groups: readonly WlanGroup[]): Map<string, Wla
 }
 
 /**
- * Returns the number of Wi-Fi networks an AP's group broadcasts, or null when
- * it is unknown (the AP has no group, or its group is not in the listing).
+ * Returns the number of Wi-Fi networks an AP's group broadcasts; 'unknown'
+ * when the controller did not report that group's network list (never 0);
+ * null when the group itself is unknown (the AP has no group, or its group is
+ * not in the listing).
  * @param {string} groupName - The AP's group name (`wlanGroup`).
  * @param {ReadonlyMap<string, WlanGroup>} groupsByName - From indexGroupsByName().
- * @returns {number | null} The network count, or null when unknown.
+ * @returns {number | 'unknown' | null} The network count, 'unknown', or null.
  */
-export function networkCountFor(groupName: string, groupsByName: ReadonlyMap<string, WlanGroup>): number | null {
+export function networkCountFor(groupName: string, groupsByName: ReadonlyMap<string, WlanGroup>): number | 'unknown' | null {
   if (groupName === '') {
     return null;
   }
   const group = groupsByName.get(groupName);
+  if (group !== undefined && hasUnknownNetworks(group)) {
+    return 'unknown';
+  }
   return group ? group.ssidList.length : null;
 }
 

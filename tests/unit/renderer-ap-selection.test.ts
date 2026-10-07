@@ -12,12 +12,14 @@ import {
   applySelection,
   countDistinctSsids,
   countSelection,
+  distinctSsidCountKind,
   filterAccessPoints,
   GROUP_FILTER_UNASSIGNED,
   indexGroupsByName,
   isFilterActive,
   matchesStatusFilter,
   networkCountFor,
+  networkListKeys,
   planRangeSelection,
   pruneSelection,
   rangeBetween,
@@ -27,6 +29,7 @@ import {
   STATUS_FILTER_UNKNOWN,
   type ApFilters,
 } from '../../src/renderer/ap-selection';
+import { translations } from '../../src/renderer/i18n-strings';
 import { isValidWlanId } from '../../src/renderer/validation';
 
 /**
@@ -228,7 +231,72 @@ describe('group-derived counts', () => {
     // Two groups named "Grupo A": the first one wins
     assert.equal(networkCountFor('Grupo A', index), 2);
   });
+
+  test('flag absent: the total is exact and the first same-named group wins', () => {
+    assert.equal(distinctSsidCountKind(GROUPS), 'exact');
+    assert.equal(distinctSsidCountKind([]), 'exact');
+    assert.equal(distinctSsidCountKind([GROUPS[2]]), 'exact');
+    assert.deepEqual([...indexGroupsByName(GROUPS).values()].map(group => group.wlanId), ['g1', 'g2', 'g3']);
+  });
 }); // End of describe group-derived counts
+
+describe('group-derived counts with unknown network lists (ssidListUnknown)', () => {
+  const CLOUD: WlanGroup = { wlanId: 'c1', wlanName: 'Nube', ssidList: [], ssidListUnknown: true };
+
+  test('the distinct SSID total counts the known lists only: a lower bound beside an unknown list, unknown when nothing is known', () => {
+    assert.equal(countDistinctSsids([...GROUPS, CLOUD]), 5);
+    assert.equal(distinctSsidCountKind([...GROUPS, CLOUD]), 'atLeast');
+    assert.equal(countDistinctSsids([CLOUD]), 0);
+    assert.equal(distinctSsidCountKind([CLOUD]), 'unknown');
+    assert.equal(distinctSsidCountKind([GROUPS[2], CLOUD]), 'unknown');
+    // A stray name in a flagged list never counts
+    assert.equal(countDistinctSsids([{ ...CLOUD, ssidList: [{ ssidName: 'Fantasma' }] }]), 0);
+  });
+
+  test('an AP\'s network count is "unknown" (never 0) for a group whose list was not reported', () => {
+    const index = indexGroupsByName([...GROUPS, CLOUD]);
+    assert.equal(networkCountFor('Nube', index), 'unknown');
+    assert.equal(networkCountFor('Nube', indexGroupsByName([{ ...CLOUD, ssidList: [{ ssidName: 'Fantasma' }] }])), 'unknown');
+    // The others are unchanged
+    assert.equal(networkCountFor('Grupo B', index), 3);
+    assert.equal(networkCountFor('zNinguna', index), 0);
+    assert.equal(networkCountFor('Grupo A', index), 2);
+    assert.equal(networkCountFor('', index), null);
+    assert.equal(networkCountFor('Desconocido', index), null);
+  });
+
+  test('a shared name with an unknown list reads "unknown" whatever the order (never a count it may not have)', () => {
+    const unknownB: WlanGroup = { wlanId: 'c2', wlanName: 'Grupo B', ssidList: [], ssidListUnknown: true };
+    assert.equal(networkCountFor('Grupo B', indexGroupsByName([...GROUPS, unknownB])), 'unknown');
+    assert.equal(networkCountFor('Grupo B', indexGroupsByName([unknownB, ...GROUPS])), 'unknown');
+    assert.equal(indexGroupsByName([unknownB, ...GROUPS]).get('Grupo B'), unknownB);
+  });
+
+  test('networkListKeys(): an unknown-only inventory never reads "No Wi-Fi networks available", and its summary is a lower bound', () => {
+    assert.deepEqual(networkListKeys([CLOUD]), { empty: 'networksNotReported', summary: 'searchResultsCountAtLeast' });
+    // A group without networks beside it: still nothing known
+    assert.deepEqual(networkListKeys([GROUPS[2], CLOUD]), { empty: 'networksNotReported', summary: 'searchResultsCountAtLeast' });
+  });
+
+  test('networkListKeys(): a mixed inventory presents its total as a lower bound ("of at least M")', () => {
+    assert.deepEqual(networkListKeys([...GROUPS, CLOUD]), { empty: 'noNetworks', summary: 'searchResultsCountAtLeast' });
+  });
+
+  test('networkListKeys(): flag absent, the keys are the usual ones (empty list, groups without networks, or networks)', () => {
+    for (const groups of [[], [GROUPS[2]], GROUPS]) {
+      assert.deepEqual(networkListKeys(groups), { empty: 'noNetworks', summary: 'searchResultsCount' });
+    }
+  });
+
+  test('both summary keys exist in es and en with the same placeholders', () => {
+    for (const language of [translations.es, translations.en]) {
+      for (const key of ['searchResultsCount', 'searchResultsCountAtLeast'] as const) {
+        assert.equal(language[key].includes('{shown}') && language[key].includes('{total}'), true, `${key}: ${language[key]}`);
+      }
+      assert.notEqual(language.networksNotReported, language.noNetworks);
+    }
+  });
+}); // End of describe group-derived counts with unknown network lists
 
 describe('sanitizeClientCount (optional client count at the IPC boundary)', () => {
   test('keeps non-negative integers', () => {

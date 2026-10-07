@@ -25,7 +25,7 @@ import {
   viewNav,
   viewNetworks,
 } from './elements';
-import { t, tGroup } from './i18n';
+import { t, tFormat, tGroup } from './i18n';
 import { setDrillBackLabel } from './layout';
 import { networksNavCount, renderNetworksStaleNotice } from './networks-view';
 import { renderReadOnlyBanner } from './notices';
@@ -73,12 +73,18 @@ export function showView(view: AppView): void {
 /**
  * Writes one sidebar count, or hides it when the total is unknown.
  * @param {HTMLButtonElement} button - The sidebar button.
- * @param {number | null} count - The total, or null while no data is loaded.
+ * @param {number | null} count - The total, or null while no data is
+ *   loaded (or while it is unknown).
+ * @param {boolean} [atLeast=false] - The total is a lower bound ("N+").
  */
-function setNavCount(button: HTMLButtonElement, count: number | null): void {
+function setNavCount(button: HTMLButtonElement, count: number | null, atLeast = false): void {
   const badge = button.querySelector('.nav-count');
   if (!(badge instanceof HTMLElement)) return;
-  badge.textContent = count === null ? '' : String(count);
+  let text = count === null ? '' : String(count);
+  if (count !== null && atLeast) {
+    text = tFormat('navCountAtLeast', { count: String(count) });
+  }
+  badge.textContent = text;
   badge.hidden = count === null;
 }
 
@@ -86,15 +92,17 @@ function setNavCount(button: HTMLButtonElement, count: number | null): void {
  * Renders the sidebar's TOTAL counts (never the filtered ones): access
  * points, groups (empty groups included) and the Wi-Fi networks — the
  * managed list's networks while the Wi-Fi networks view shows it, else the
- * distinct network names across the group listing (networksNavCount()).
- * Hidden until data has loaded; a failed refresh keeps the previous totals,
- * like the data on screen.
+ * distinct network names across the group listing (networksNavCount(): a
+ * lower bound "N+" while some group's network list is unknown, hidden when
+ * no network is known then). Hidden until data has loaded; a failed refresh
+ * keeps the previous totals, like the data on screen.
  */
 export function renderNavCounts(): void {
   const loaded = state.lastUpdatedAt !== null;
   setNavCount(navAccessPointsBtn, loaded ? state.accessPoints.length : null);
   setNavCount(navGroupsBtn, loaded ? state.wlanGroups.length : null);
-  setNavCount(navNetworksBtn, loaded ? networksNavCount() : null);
+  const networks = loaded ? networksNavCount() : null;
+  setNavCount(navNetworksBtn, networks === null ? null : networks.count, networks?.atLeast ?? false);
 }
 
 /**

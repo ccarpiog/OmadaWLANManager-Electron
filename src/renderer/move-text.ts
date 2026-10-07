@@ -43,13 +43,19 @@ export function networkCountText(count: number): string {
 
 /**
  * A destination option's details: the network count and the first network
- * names ("5 networks · Oficina, Taller, Almacén +2 more"), or the strong
- * empty-group label for a group without networks.
+ * names ("5 networks · Oficina, Taller, Almacén +2 more"), the strong
+ * empty-group label for a group without networks, or "Networks unknown"
+ * when the controller did not report the group's network list.
  * @param {readonly string[]} names - The group's network names, already in
  *   preview order (search matches first).
+ * @param {boolean} [networksUnknown=false] - The group's network list is
+ *   unknown (move-plan.ts hasUnknownNetworks()).
  * @returns {string} The localized details.
  */
-export function destinationDetailText(names: readonly string[]): string {
+export function destinationDetailText(names: readonly string[], networksUnknown = false): string {
+  if (networksUnknown) {
+    return t('networkCountUnknown');
+  }
   if (names.length === 0) {
     return t('emptyGroup');
   }
@@ -149,6 +155,23 @@ export function unknownSourcesNote(count: number): string | null {
   if (count === 0) return null;
   return count === 1 ? t('unknownSourcesOne') : tFormat('unknownSourcesMany', { count: String(count) });
 }
+
+/**
+ * The note for moving APs whose network change is unknown because the
+ * controller did not report a network list (`unreportedSourceCount`): the
+ * destination's (then every identified AP's change is unknown) or their
+ * current group's; null when there are none.
+ * @param {MovePlan} plan - The move plan.
+ * @returns {string | null} The localized note.
+ */
+export function unreportedSourcesNote(plan: MovePlan): string | null {
+  const count = plan.unreportedSourceCount ?? 0;
+  if (count === 0) return null;
+  if (plan.destinationNetworksUnknown === true) {
+    return count === 1 ? t('unreportedDestinationOne') : tFormat('unreportedDestinationMany', { count: String(count) });
+  }
+  return count === 1 ? t('unreportedSourcesOne') : tFormat('unreportedSourcesMany', { count: String(count) });
+} // End of function unreportedSourcesNote()
 
 /**
  * The current groups of the moving APs with their counts, e.g.

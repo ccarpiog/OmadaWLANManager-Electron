@@ -34,7 +34,7 @@ import {
 } from './elements';
 import { t, tFormat } from './i18n';
 import { createFocusTrap, updateBackgroundInert } from './modal-focus';
-import { summarizeMoveOutcomes, type MoveOutcome, type MovePlan, type RetryCheck } from './move-plan';
+import { hasUnknownNetworks, summarizeMoveOutcomes, type MoveOutcome, type MovePlan, type RetryCheck } from './move-plan';
 import {
   apCountText,
   clientsText,
@@ -45,6 +45,7 @@ import {
   retryNotes,
   sourceGroupsText,
   unknownSourcesNote,
+  unreportedSourcesNote,
 } from './move-text';
 
 // What the user chose in the results phase
@@ -86,14 +87,18 @@ interface ReviewRow {
 }
 
 /**
- * Builds the review list's rows for a plan.
+ * Builds the review list's rows for a plan. A destination whose network
+ * list the controller did not report reads "Networks unknown" (never the
+ * empty-group warning), and the moving APs whose network change is unknown
+ * are stated as such instead of being part of the diff.
  * @param {MovePlan} plan - The move plan.
  * @param {number} hiddenCount - Moving APs the filters hide.
  * @returns {ReviewRow[]} From, To, Access points, Wi-Fi networks, Clients.
  */
 function reviewRows(plan: MovePlan, hiddenCount: number): ReviewRow[] {
   const destination = plan.destination;
-  const empty = destination.ssidList.length === 0;
+  const networksUnknown = hasUnknownNetworks(destination);
+  const empty = destination.ssidList.length === 0 && !networksUnknown;
 
   const apDetails: ReviewRow['details'] = [];
   const already = plan.alreadyThere.length;
@@ -114,6 +119,17 @@ function reviewRows(plan: MovePlan, hiddenCount: number): ReviewRow[] {
   if (unknown !== null) {
     networkDetails.push({ text: unknown });
   }
+  const unreported = unreportedSourcesNote(plan);
+  if (unreported !== null) {
+    networkDetails.push({ text: unreported });
+  }
+
+  let toDetail: ReviewRow['details'][number] = { text: networkCountText(destination.ssidList.length) };
+  if (networksUnknown) {
+    toDetail = { text: t('networkCountUnknown') };
+  } else if (empty) {
+    toDetail = { text: t('emptyGroup'), warning: true };
+  }
 
   return [
     { key: 'from', label: t('moveFrom'), value: sourceGroupsText(plan), details: [] },
@@ -121,7 +137,7 @@ function reviewRows(plan: MovePlan, hiddenCount: number): ReviewRow[] {
       key: 'to',
       label: t('moveTo'),
       value: destination.wlanName,
-      details: [empty ? { text: t('emptyGroup'), warning: true } : { text: networkCountText(destination.ssidList.length) }],
+      details: [toDetail],
     },
     { key: 'aps', label: `${t('accessPoints')} (${apCountText(plan.moving.length)})`, value: plan.moving.map(ap => ap.name).join(', '), details: apDetails },
     { key: 'networks', label: t('wifiNetworks'), value: null, details: networkDetails },

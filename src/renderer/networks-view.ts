@@ -38,7 +38,7 @@
 // managed-networks-view.ts.
 // ============================================================================
 
-import { countDistinctSsids } from './ap-selection';
+import { countDistinctSsids, distinctSsidCountKind, networkListKeys } from './ap-selection';
 import { createSkeletonState, createStateBlock, currentContentState } from './content-state';
 import { createEmptyState } from './dom-helpers';
 import { networkDetail, networkList, networkListActions, networkListSummary, networkSearchInput } from './elements';
@@ -48,9 +48,11 @@ import {
   filterNetworkRows,
   groupLink,
   groupMembers,
+  isNetworkListed,
   matchesNetworkSearch,
   networkBroadcasters,
   searchKeepingItem,
+  type NetworkBroadcasters,
   type NetworkRow,
 } from './inventory-model';
 import {
@@ -71,6 +73,7 @@ import {
   handleMasterListKeydown,
   scopeText,
   setLiveText,
+  type UnreportedScope,
 } from './inventory-ui';
 import { applyPaneLayout, isSinglePane } from './layout';
 import type { LinkTarget } from './nav-history';
@@ -131,12 +134,24 @@ function createNetworkItem(row: NetworkRow): HTMLLIElement {
   header.appendChild(name);
   const scope = document.createElement('span');
   scope.className = 'item-subtitle master-item-meta network-scope';
-  scope.textContent = scopeText(row.groups.length, row.apCount, row.unknownApCount);
+  scope.textContent = scopeText(row.groups.length, row.apCount, row.unknownApCount, unreportedScope(row));
   button.appendChild(header);
   button.appendChild(scope);
   item.appendChild(button);
   return item;
 } // End of function createNetworkItem()
+
+/**
+ * The groups and APs whose network list the controller did not report, for
+ * a network's scope text (scopeText()), or undefined when every group's
+ * list is known (local data: the scope reads as it always did).
+ * @param {NetworkRow | NetworkBroadcasters} source - The network's row or detail.
+ * @returns {UnreportedScope | undefined} The counts, or undefined.
+ */
+function unreportedScope(source: NetworkRow | NetworkBroadcasters): UnreportedScope | undefined {
+  if (source.unreportedGroupCount === undefined) return undefined;
+  return { groupCount: source.unreportedGroupCount, apCount: source.unreportedApCount ?? 0 };
+}
 
 /**
  * The renderer state the managed source is decided from.
@@ -203,15 +218,20 @@ export function currentNetworksMode(): NetworksViewMode {
 
 /**
  * The Wi-Fi networks total for the sidebar: the managed list's length while
- * it is shown, else the distinct network names of the internal data.
- * @returns {number} The count.
+ * it is shown, else the distinct network names of the internal data — a
+ * lower bound (`atLeast`) while some group's network list is unknown, and
+ * null (no count shown) when no network is known then
+ * (distinctSsidCountKind()).
+ * @returns {{ count: number; atLeast: boolean } | null} The count, or null when unknown.
  */
-export function networksNavCount(): number {
+export function networksNavCount(): { count: number; atLeast: boolean } | null {
   if (state.managedNetworks !== null && currentNetworksMode() === 'managedReady') {
-    return state.managedNetworks.length;
+    return { count: state.managedNetworks.length, atLeast: false };
   }
-  return countDistinctSsids(state.wlanGroups);
-}
+  const kind = distinctSsidCountKind(state.wlanGroups);
+  if (kind === 'unknown') return null;
+  return { count: countDistinctSsids(state.wlanGroups), atLeast: kind === 'atLeast' };
+} // End of function networksNavCount()
 
 /**
  * Brings the selection in line with the source on screen: on the 14a view
@@ -269,13 +289,16 @@ function renderNetworkListActions(): void {
 /**
  * Renders the 14a master list from the internal data and the search, and
  * the aria-live results summary ("Showing N of M" while a search narrows
- * the list).
+ * the list). While some group's network list is unknown the total is not
+ * exact (networkListKeys()): the summary reads "of at least M", and an empty
+ * list says the networks were not reported instead of "no networks".
  * @param {string | null} focusedName - The network whose item had keyboard focus, or null.
  */
 function renderInternalNetworkList(focusedName: string | null): void {
   const rows = buildNetworkRows(state.wlanGroups, state.accessPoints);
+  const keys = networkListKeys(state.wlanGroups);
   if (rows.length === 0) {
-    networkList.replaceChildren(createEmptyState(t('noNetworks')));
+    networkList.replaceChildren(createEmptyState(t(keys.empty)));
     setLiveText(networkListSummary, '');
     return;
   }
@@ -292,7 +315,7 @@ function renderInternalNetworkList(focusedName: string | null): void {
     applyMasterRovingTabindex(networkList);
   }
   const searching = state.networkSearchText.trim() !== '';
-  setLiveText(networkListSummary, searching ? tFormat('searchResultsCount', { shown: String(visible.length), total: String(rows.length) }) : '');
+  setLiveText(networkListSummary, searching ? tFormat(keys.summary, { shown: String(visible.length), total: String(rows.length) }) : '');
 
   if (focusedName !== null) {
     const button = Array.from(networkList.querySelectorAll<HTMLButtonElement>('.master-item')).find(item => item.dataset.networkName === focusedName);
@@ -413,21 +436,32 @@ function renderInternalNetworkDetail(focusLink: LinkTarget | null, headingFocuse
     return;
   }
 
+  const unreported = unreportedScope(broadcasters);
   const scope = document.createElement('p');
   scope.className = 'detail-summary detail-scope';
-  scope.textContent = scopeText(broadcasters.groups.length, broadcasters.aps.length, broadcasters.unknownApCount);
+  scope.textContent = scopeText(broadcasters.groups.length, broadcasters.aps.length, broadcasters.unknownApCount, unreported);
 
   const groupRows = broadcasters.groups.map(group => {
     const members = groupMembers(group, state.wlanGroups, state.accessPoints);
     return [createCrossLink(groupLink(group), group.wlanName), createMeta(apCountOrUnknown(members === null ? null : members.length))];
   });
-  const groupsSection = createDetailSection('groups', `${tGroup('groupsTitle')} (${broadcasters.groups.length})`, [createLinkList(groupRows)]);
+  // While some group's network list is unknown (it may broadcast this
+  // network too) the groups listed are a lower bound: no count in the
+  // title, and a note saying how many groups are not included
+  let groupsTitle = `${tGroup('groupsTitle')} (${broadcasters.groups.length})`;
+  const groupsContent: HTMLElement[] = [createLinkList(groupRows)];
+  if (unreported !== undefined) {
+    const count = unreported.groupCount;
+    groupsTitle = tGroup('groupsTitle');
+    groupsContent.push(createNote(count === 1 ? t('networkUnreportedGroupsOne') : tFormat('networkUnreportedGroupsMany', { count: String(count) }), 'unreportedGroups'));
+  }
+  const groupsSection = createDetailSection('groups', groupsTitle, groupsContent);
 
   networkDetail.replaceChildren(
     createDetailHeading(HEADING_ID, broadcasters.name),
     scope,
     groupsSection,
-    createBroadcastingApsSection(broadcasters.aps, broadcasters.unknownApCount),
+    createBroadcastingApsSection(broadcasters.aps, broadcasters.unknownApCount, 0, unreported?.apCount ?? 0),
     createNote(t('networkManagementOnly'), 'managementOnly'),
   );
   restoreDetailFocus(focusLink, headingFocused);
@@ -706,10 +740,11 @@ export function currentNetworkItem(): string | null {
 /**
  * The display name of a Back-history item of this view as the data on
  * screen has it now, or null when it is gone: on the 14a view a network
- * name some group broadcasts (an id cannot be shown there); on the managed
- * list the network with that id, or the one network with that name
- * (findManagedNetwork(): each key only in its own namespace); null while
- * the managed list is loading or failed.
+ * name some group is known to broadcast (isNetworkListed(): the view lists
+ * no network only a group with an unknown network list may broadcast; an
+ * id cannot be shown there); on the managed list the network with that id,
+ * or the one network with that name (findManagedNetwork(): each key only in
+ * its own namespace); null while the managed list is loading or failed.
  * @param {string} item - The item ("id:…" or "name:…").
  * @returns {string | null} The name, or null.
  */
@@ -719,8 +754,7 @@ export function networkItemLabel(item: string): string | null {
   const mode = currentNetworksMode();
   if (mode === 'internal') {
     if (key.kind !== 'name') return null;
-    const broadcast = state.wlanGroups.some(group => group.ssidList.some(ssid => ssid.ssidName === key.value));
-    return broadcast ? displayName(key.value) : null;
+    return isNetworkListed(key.value, state.wlanGroups) ? displayName(key.value) : null;
   }
   if (mode !== 'managedReady' || state.managedNetworks === null) return null;
   const network = findManagedNetwork(state.managedNetworks, key);

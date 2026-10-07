@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T15:12:56Z",
+ "updated": "2026-10-07T15:40:22Z",
  "plan": "todo.md",
  "goal": "Add AP-group and Wi-Fi network management for Omada 6.3 to the Electron app, then remote controllers through the TP-Link cloud.",
  "phases": [
@@ -334,9 +334,25 @@
   {
    "id": "I-1b2",
    "title": "Cloud connection targets and wiring",
+   "status": "in_progress",
+   "risk": "high",
+   "summary": "Split into I-1b2a (renderer honors unknown network lists, done) and I-1b2b (connection targets, switching and wiring)."
+  },
+  {
+   "id": "I-1b2a",
+   "title": "Unknown network lists in the renderer",
+   "status": "done",
+   "risk": "high",
+   "summary": "Makes move planning, counts, the move review and the networks list treat a group with an unreported network list as unknown, not empty.",
+   "review": "docs/reviews/phaseI-1b2a.md",
+   "narrative": "docs/progress-archive/phase-i-1b2a.md"
+  },
+  {
+   "id": "I-1b2b",
+   "title": "Cloud connection targets and wiring",
    "status": "queued",
    "risk": "high",
-   "summary": "Adds local and cloud connection targets, switching over guarded IPC, persistence, race tests and unknown-network handling; split before starting."
+   "summary": "Adds local and cloud connection targets, switching over guarded IPC, persistence with a local fallback, nonce-bound data channels and race tests."
   },
   {
    "id": "I-1c",

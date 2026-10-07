@@ -33,6 +33,7 @@ import {
 import { t, tFormat, tGroup } from './i18n';
 import {
   countHiddenAps,
+  hasUnknownNetworks,
   isAmbiguousGroup,
   networkNames,
   orderNetworksForSearch,
@@ -40,7 +41,15 @@ import {
   planMove,
   type MovePlan,
 } from './move-plan';
-import { destinationDetailText, hiddenApsNote, moveActionLabel, moveStatusText, networkDiffRows, unknownSourcesNote } from './move-text';
+import {
+  destinationDetailText,
+  hiddenApsNote,
+  moveActionLabel,
+  moveStatusText,
+  networkDiffRows,
+  unknownSourcesNote,
+  unreportedSourcesNote,
+} from './move-text';
 import { applyPaneLayout } from './layout';
 import { isOperationInProgress, state } from './state';
 
@@ -90,7 +99,8 @@ export function focusDestinationRadio(wlanId: string): boolean {
  * wrapping a native radio (named by the group, described by its details)
  * with the group name and its details — the network count and the first
  * network names, the ones matching the search first, or the strong
- * "No Wi-Fi networks — silences these APs" label for an empty group. An
+ * "No Wi-Fi networks — silences these APs" label for an empty group
+ * ("Networks unknown" when the controller did not report them). An
  * ambiguous group (another group has its name) gets a disabled, never
  * checked radio and the reason on a line of its own (part of the radio's
  * description).
@@ -126,10 +136,11 @@ function createDestinationOption(group: WlanGroup, index: number): HTMLLabelElem
   name.id = nameId;
   name.textContent = group.wlanName;
 
+  const networksUnknown = hasUnknownNetworks(group);
   const detail = document.createElement('span');
-  detail.className = group.ssidList.length === 0 ? 'destination-detail is-silence' : 'destination-detail';
+  detail.className = group.ssidList.length === 0 && !networksUnknown ? 'destination-detail is-silence' : 'destination-detail';
   detail.id = detailId;
-  detail.textContent = destinationDetailText(orderNetworksForSearch(networkNames(group), state.destinationSearchText));
+  detail.textContent = destinationDetailText(orderNetworksForSearch(networkNames(group), state.destinationSearchText), networksUnknown);
   // A narrow pane ellipsizes the details: the tooltip keeps them whole
   detail.title = detail.textContent;
 
@@ -260,9 +271,11 @@ function createNetworkDiff(plan: MovePlan): HTMLElement {
 /**
  * Builds the preview lines for a destination: the destination's name and,
  * when some selected APs would move, how many of them the filters hide, the
- * networks they gain / lose / keep (only from APs whose current group is
- * known — the others are stated as unknown), and the strong empty-group
- * label when the destination silences them.
+ * networks they gain / lose / keep (only from APs whose network change is
+ * known — the others are stated as unknown, also when the controller did
+ * not report a network list), and the strong empty-group label when the
+ * destination silences them (never for a destination whose networks are
+ * unknown).
  * @param {WlanGroup} destination - The checked destination.
  * @param {MovePlan | null} plan - The plan for the selection, or null.
  * @returns {HTMLElement[]} The preview elements, in order.
@@ -283,7 +296,11 @@ function buildPreview(destination: WlanGroup, plan: MovePlan | null): HTMLElemen
   if (unknown !== null) {
     nodes.push(createPreviewLine('move-note move-unknown-note', unknown));
   }
-  if (destination.ssidList.length === 0) {
+  const unreported = unreportedSourcesNote(plan);
+  if (unreported !== null) {
+    nodes.push(createPreviewLine('move-note move-unreported-note', unreported));
+  }
+  if (destination.ssidList.length === 0 && !hasUnknownNetworks(destination)) {
     nodes.push(createPreviewLine('move-warning', t('emptyGroup')));
   }
   return nodes;

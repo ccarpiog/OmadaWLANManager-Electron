@@ -61,13 +61,15 @@ function groupFactValue(model: ApDetailsModel): HTMLElement | string {
 /**
  * Builds the networks section: the group's networks as cross-links, the
  * strong empty-group label for a group without networks, or a note when the
- * group (hence the networks) cannot be identified.
+ * networks are unknown — the group cannot be identified, or the controller
+ * did not report its network list.
  * @param {ApDetailsModel} model - The AP's details.
  * @returns {HTMLElement} The section.
  */
 function createNetworksSection(model: ApDetailsModel): HTMLElement {
   if (model.networks === null) {
-    return createDetailSection('networks', t('wifiNetworks'), [createNote(t('apNetworksUnknown'), 'networksUnknown')]);
+    const note = model.group.kind === 'group' ? t('apNetworksNotReported') : t('apNetworksUnknown');
+    return createDetailSection('networks', t('wifiNetworks'), [createNote(note, 'networksUnknown')]);
   }
   const title = `${t('wifiNetworks')} (${model.networks.length})`;
   if (model.networks.length === 0) {

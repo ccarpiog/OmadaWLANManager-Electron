@@ -173,8 +173,9 @@ export interface DeleteInput {
   isDefault: boolean;
   // APs the internal data places in the group (null: unknown, a shared name)
   apCount: number | null;
-  // Wi-Fi networks the internal data binds to it
-  networkCount: number;
+  // Wi-Fi networks the internal data binds to it (null: unknown, the
+  // controller did not report the group's network list)
+  networkCount: number | null;
 }
 
 /**
@@ -187,7 +188,9 @@ export interface DeleteInput {
  * still refused while the fresh view is being read ('deleteChecking'), or
  * when it is missing or lacks the AP count or the network list
  * ('groupStateUnknown'). The fresh view counts APs by group id, so a name
- * another group shares (internal AP count unknown) does not block on its own.
+ * another group shares (internal AP count unknown) does not block on its own;
+ * likewise an unknown internal network list never reads as "no networks":
+ * the delete then rests on the fresh view's network list alone.
  * @param {DeleteInput} input - The group's data.
  * @returns {DeleteBlock[] | null} The reasons, most specific first, or null
  *   when Delete is hidden (the default group).
@@ -201,7 +204,7 @@ export function deleteBlocks(input: DeleteInput): DeleteBlock[] | null {
   if ((managed?.apCount ?? 0) > 0 || (input.apCount ?? 0) > 0) {
     blocks.push('groupNotEmpty');
   }
-  if ((managed?.networkNames?.length ?? 0) > 0 || input.networkCount > 0) {
+  if ((managed?.networkNames?.length ?? 0) > 0 || (input.networkCount ?? 0) > 0) {
     blocks.push('groupHasNetworks');
   }
   if (blocks.length > 0) {

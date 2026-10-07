@@ -15,6 +15,15 @@
 // "gained" or "lost" is a group-level fact about the moving APs. Because APs
 // name their group, a group whose name another group shares is "ambiguous":
 // its members cannot be identified, so it is never a move destination.
+//
+// A group whose network list the controller did not report
+// (`ssidListUnknown`, set only by the cloud session; its `ssidList` is then
+// empty) has UNKNOWN networks, never "no networks" (hasUnknownNetworks()):
+// a move from or into it claims no network gained or lost for the APs it
+// concerns (they are counted apart, `unreportedSourceCount`), it is never
+// pinned under "Silence", and the destination search matches it by its own
+// name only (it has no network name to match). Local data never sets the
+// flag, so every result for it is unchanged.
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
 
@@ -84,11 +93,21 @@ export interface MovePlan {
   alreadyThere: AccessPoint[];
   // The current groups of the moving APs, in order of first appearance
   sources: SourceGroup[];
-  // Moving APs whose current networks are known (their group is listed
-  // under a unique name) and unknown (no group, an unlisted group, or a
-  // name several groups share)
+  // Moving APs whose network change is known (their group is listed under a
+  // unique name, and both its network list and the destination's are
+  // reported) and whose current networks are unknown (no group, an unlisted
+  // group, or a name several groups share)
   knownSourceCount: number;
   unknownSourceCount: number;
+  // Moving APs whose group is identified but whose network change is
+  // unknown because the controller did not report their group's network
+  // list or the destination's (hasUnknownNetworks()). Present only when
+  // non-zero; known + unknown + unreported = moving.length
+  unreportedSourceCount?: number;
+  // Present (true) only when the destination's network list was not
+  // reported: no moving AP's network change is known then, so `networks`
+  // claims nothing and every identified AP is in `unreportedSourceCount`
+  destinationNetworksUnknown?: true;
   networks: NetworkDiff;
   clients: ClientTotals;
 }
@@ -192,11 +211,28 @@ export function isApInGroup(ap: AccessPoint, group: WlanGroup, groups: readonly 
 }
 
 /**
- * Returns a group's Wi-Fi network names, in order, without repetitions.
+ * Tells whether a group's network list is unknown: the controller did not
+ * report it (`ssidListUnknown`, cloud session only). Its empty `ssidList`
+ * then means "unknown", never "no networks", so no consumer may read it as
+ * an empty group, a network count or a reach diff.
+ * @param {WlanGroup} group - The group.
+ * @returns {boolean} True when the group's networks are unknown.
+ */
+export function hasUnknownNetworks(group: WlanGroup): boolean {
+  return group.ssidListUnknown === true;
+}
+
+/**
+ * Returns a group's Wi-Fi network names, in order, without repetitions
+ * (none for a group whose list is unknown: hasUnknownNetworks() tells that
+ * apart from a group without networks).
  * @param {WlanGroup} group - The group.
  * @returns {string[]} The distinct SSID names.
  */
 export function networkNames(group: WlanGroup): string[] {
+  if (hasUnknownNetworks(group)) {
+    return [];
+  }
   return Array.from(new Set(group.ssidList.map(ssid => ssid.ssidName)));
 }
 
@@ -254,7 +290,11 @@ export function diffNetworks(sourceNetworks: ReadonlyArray<readonly string[]>, d
  * nothing and says why (`ambiguousDestination`), whatever the caller is. APs
  * whose own group name is ambiguous can still move into a unique
  * destination (they cannot be in it already); their current networks count
- * as unknown.
+ * as unknown. When the network list of an AP's group, or the destination's,
+ * was not reported (hasUnknownNetworks()), the AP's network change is
+ * unknown: it is left out of the diff and counted in
+ * `unreportedSourceCount` (and an unreported destination is flagged with
+ * `destinationNetworksUnknown`), so no network is claimed gained or lost.
  * @param {readonly AccessPoint[]} selectedAps - The selected APs, in list
  *   order (visible or hidden by filters).
  * @param {WlanGroup} destination - The destination group.
@@ -282,13 +322,17 @@ export function planMove(selectedAps: readonly AccessPoint[], destination: WlanG
     (isApInGroup(ap, destination, groups) ? alreadyThere : moving).push(ap);
   }
 
+  const destinationUnknown = hasUnknownNetworks(destination);
   const sourceCounts = new Map<string, number>();
   const sourceNetworks: string[][] = [];
+  let unreportedSourceCount = 0;
   const clients: ClientTotals = { total: 0, reporting: 0, missing: 0 };
   for (const ap of moving) {
     sourceCounts.set(ap.wlanGroup, (sourceCounts.get(ap.wlanGroup) ?? 0) + 1);
     const source = findUniqueGroupByName(groups, ap.wlanGroup);
-    if (source !== null) {
+    if (source !== null && (destinationUnknown || hasUnknownNetworks(source))) {
+      unreportedSourceCount++;
+    } else if (source !== null) {
       sourceNetworks.push(networkNames(source));
     }
     if (ap.clientNum !== undefined) {
@@ -299,17 +343,26 @@ export function planMove(selectedAps: readonly AccessPoint[], destination: WlanG
     }
   } // End of the loop that tallies the moving APs
 
-  return {
+  const plan: MovePlan = {
     destination,
     ambiguousDestination: false,
     moving,
     alreadyThere,
     sources: Array.from(sourceCounts, ([name, count]) => ({ name, count })),
     knownSourceCount: sourceNetworks.length,
-    unknownSourceCount: moving.length - sourceNetworks.length,
+    unknownSourceCount: moving.length - sourceNetworks.length - unreportedSourceCount,
     networks: diffNetworks(sourceNetworks, networkNames(destination)),
     clients,
   };
+  // The two optional facts exist only when a network list is unknown, so a
+  // plan from local data (which never sets the flag) is unchanged
+  if (unreportedSourceCount > 0) {
+    plan.unreportedSourceCount = unreportedSourceCount;
+  }
+  if (destinationUnknown) {
+    plan.destinationNetworksUnknown = true;
+  }
+  return plan;
 } // End of function planMove()
 
 /**
@@ -323,7 +376,11 @@ export function normalizeSearch(query: string): string {
 
 /**
  * Tells whether a group matches the destination search: by its name or by
- * the name of any network it broadcasts (case-insensitive substring).
+ * the name of any network it broadcasts (case-insensitive substring). A
+ * group whose network list is unknown (hasUnknownNetworks()) matches by its
+ * own name only: it has no network name to match, and its option shows
+ * "Networks unknown" rather than names, so a network search hiding it never
+ * contradicts what the pane shows.
  * @param {WlanGroup} group - The group.
  * @param {string} query - The search text as typed.
  * @returns {boolean} True when the group matches (always for an empty search).
@@ -332,13 +389,15 @@ export function matchesDestinationSearch(group: WlanGroup, query: string): boole
   const needle = normalizeSearch(query);
   return needle === '' ||
     group.wlanName.toLowerCase().includes(needle) ||
-    group.ssidList.some(ssid => ssid.ssidName.toLowerCase().includes(needle));
+    networkNames(group).some(name => name.toLowerCase().includes(needle));
 }
 
 /**
  * Splits the groups matching the destination search into the ones that
  * broadcast networks and the empty ones, which the pane pins in its
- * "Silence" section. Both keep the listing's order.
+ * "Silence" section. A group whose network list is unknown is not known to
+ * silence anything, so it stays with the others. Both keep the listing's
+ * order.
  * @param {readonly WlanGroup[]} groups - The loaded groups.
  * @param {string} query - The search text as typed.
  * @returns {{ networks: WlanGroup[]; silence: WlanGroup[] }} The two sections.
@@ -348,7 +407,7 @@ export function partitionDestinations(groups: readonly WlanGroup[], query: strin
   const silence: WlanGroup[] = [];
   for (const group of groups) {
     if (matchesDestinationSearch(group, query)) {
-      (group.ssidList.length === 0 ? silence : networks).push(group);
+      (group.ssidList.length === 0 && !hasUnknownNetworks(group) ? silence : networks).push(group);
     }
   }
   return { networks, silence };

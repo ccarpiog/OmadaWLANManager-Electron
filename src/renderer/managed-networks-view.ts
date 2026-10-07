@@ -75,16 +75,19 @@ const BINDINGS_BLOCKED_NOTE_ID = 'networkBindingsBlocked';
 /**
  * Builds the APs section of a network's detail (both sources): the APs that
  * broadcast it as cross-links with their status, then — when some APs may
- * broadcast it but their group cannot be identified — a note saying how
- * many. While the count is not exact (such APs, or bound groups the list
- * does not have) the title carries no count and "no access points" is never
- * stated; with every AP placed and none broadcasting it, the no-APs note.
+ * broadcast it but their group cannot be identified, or is a group whose
+ * network list the controller did not report — a note saying how many.
+ * While the count is not exact (such APs, or bound groups the list does not
+ * have) the title carries no count and "no access points" is never stated;
+ * with every AP placed and none broadcasting it, the no-APs note.
  * @param {readonly AccessPoint[]} aps - The APs that broadcast it, in list order.
  * @param {number} unknownApCount - APs that may broadcast it (group unknown).
  * @param {number} [unresolvedGroupCount] - Bound groups the list does not have.
+ * @param {number} [unreportedApCount] - APs that may broadcast it, in a
+ *   group whose network list is unknown (internal data only).
  * @returns {HTMLElement} The section.
  */
-export function createBroadcastingApsSection(aps: readonly AccessPoint[], unknownApCount: number, unresolvedGroupCount = 0): HTMLElement {
+export function createBroadcastingApsSection(aps: readonly AccessPoint[], unknownApCount: number, unresolvedGroupCount = 0, unreportedApCount = 0): HTMLElement {
   const content: HTMLElement[] = [];
   if (aps.length > 0) {
     content.push(createLinkList(aps.map(ap => [createCrossLink(apLink(ap), ap.name), createStatusElement(ap.statusCategory)])));
@@ -93,7 +96,11 @@ export function createBroadcastingApsSection(aps: readonly AccessPoint[], unknow
     const note = unknownApCount === 1 ? t('networkUnknownApsOne') : tFormat('networkUnknownApsMany', { count: String(unknownApCount) });
     content.push(createNote(note, 'unknownAps'));
   }
-  if (unknownApCount > 0 || unresolvedGroupCount > 0) {
+  if (unreportedApCount > 0) {
+    const note = unreportedApCount === 1 ? t('networkUnreportedApsOne') : tFormat('networkUnreportedApsMany', { count: String(unreportedApCount) });
+    content.push(createNote(note, 'unreportedAps'));
+  }
+  if (unknownApCount > 0 || unresolvedGroupCount > 0 || unreportedApCount > 0) {
     return createDetailSection('aps', t('accessPoints'), content);
   }
   if (aps.length === 0) {

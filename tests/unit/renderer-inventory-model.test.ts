@@ -7,7 +7,9 @@
 // unknown while APs that may broadcast it cannot be placed), the searches
 // of both views, who broadcast a network (APs whose group cannot be
 // identified counted apart, only when they may broadcast it), an AP's
-// effective networks, and the cross-link targets.
+// effective networks, and the cross-link targets; and groups whose network
+// list the controller did not report (`ssidListUnknown`): never Empty, and
+// every network's counts become lower bounds while such a group exists.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -22,6 +24,7 @@ import {
   filterNetworkRows,
   groupLink,
   groupMembers,
+  isNetworkListed,
   matchesGroupSearch,
   matchesNetworkSearch,
   networkBroadcasters,
@@ -262,3 +265,97 @@ describe('cross-link targets', () => {
     assert.equal(searchKeepingItem('zzz', false), '');
   });
 }); // End of the describe block for cross-link targets
+
+describe('unknown network lists (ssidListUnknown: the controller did not report a group\'s networks)', () => {
+  const CLOUD: WlanGroup = { ...group('c1', 'Nube', []), ssidListUnknown: true };
+  const NUBE_AP = ap('AA-00-00-00-00-09', 'Nube AP', 'Nube', 4);
+  const NUBE_AP_2 = ap('AA-00-00-00-00-0A', 'Nube AP 2', 'Nube');
+  const CLOUD_GROUPS = [...GROUPS, CLOUD];
+  const CLOUD_APS = [...APS, NUBE_AP, NUBE_AP_2];
+
+  test('group row: not Empty, flagged networksUnknown, no network name; the search matches its name only', () => {
+    const row = buildGroupRows(CLOUD_GROUPS, CLOUD_APS).find(candidate => candidate.group.wlanId === 'c1');
+    assert.deepEqual(row, { group: CLOUD, apCount: 2, networks: [], isEmpty: false, isDefault: false, ambiguous: false, networksUnknown: true });
+    assert.equal(row !== undefined && matchesGroupSearch(row, 'nub'), true);
+    assert.equal(row !== undefined && matchesGroupSearch(row, 'casa'), false);
+  });
+
+  test('flag absent: the group rows carry no networksUnknown and the other rows are unchanged beside an unknown group', () => {
+    const rows = buildGroupRows(GROUPS, APS);
+    assert.equal(rows.some(row => 'networksUnknown' in row), false);
+    assert.deepEqual(buildGroupRows(CLOUD_GROUPS, CLOUD_APS).slice(0, GROUPS.length), rows);
+  });
+
+  test('network rows: an unknown group may broadcast any network — no new row, group and AP counts become lower bounds, its APs counted apart', () => {
+    const rows = buildNetworkRows(CLOUD_GROUPS, CLOUD_APS);
+    const scope = Object.fromEntries(rows.map(row => [row.name, [row.groups.map(item => item.wlanId), row.apCount, row.unknownApCount, row.unreportedGroupCount, row.unreportedApCount]]));
+    assert.deepEqual(scope, {
+      Casa: [['g1', 'g2'], 3, 2, 1, 2],
+      Gemela: [['g5'], 0, 3, 1, 2],
+      Invitados: [['g1'], 2, 2, 1, 2],
+      Trabajo: [['g2', 'g6'], 1, 3, 1, 2],
+    });
+    // With every other AP placed, the APs of the unknown group alone keep
+    // each AP count from reading as exact
+    const placed = buildNetworkRows(CLOUD_GROUPS, [ALTILLO, CARPIO, JARDIN, SALON, NUBE_AP]);
+    for (const row of placed) {
+      assert.equal(row.unknownApCount, 0, row.name);
+      assert.notEqual(networkScopeKind(row.apCount, row.unknownApCount + (row.unreportedApCount ?? 0)), 'exact', row.name);
+    }
+  });
+
+  test('an unknown group without APs makes only the group count a lower bound (the AP count stays exact)', () => {
+    const rows = buildNetworkRows(CLOUD_GROUPS, [ALTILLO, CARPIO, JARDIN, SALON]);
+    assert.deepEqual(rows.map(row => [row.name, row.apCount, row.unknownApCount, row.unreportedGroupCount, row.unreportedApCount]), [
+      ['Casa', 3, 0, 1, 0],
+      ['Gemela', 0, 0, 1, 0],
+      ['Invitados', 2, 0, 1, 0],
+      ['Trabajo', 1, 0, 1, 0],
+    ]);
+  });
+
+  test('a shared name with an unknown twin: its AP may broadcast every network (unidentified), never "certainly not"', () => {
+    const pair = [group('p1', 'Par', ['Común']), { ...group('p2', 'Par', []), ssidListUnknown: true as const }, group('p3', 'Otro', ['Ajena'])];
+    const pairAp = ap('AA-00-00-00-00-08', 'Par AP', 'Par');
+    assert.deepEqual(buildNetworkRows(pair, [pairAp]).map(row => [row.name, row.apCount, row.unknownApCount, row.unreportedApCount]), [['Ajena', 0, 1, 0], ['Común', 0, 1, 0]]);
+  });
+
+  test('flag absent: network rows and details carry no unreported facts', () => {
+    assert.equal(buildNetworkRows(GROUPS, APS).some(row => 'unreportedGroupCount' in row || 'unreportedApCount' in row), false);
+    assert.deepEqual(Object.keys(networkBroadcasters('Casa', GROUPS, APS) ?? {}), ['name', 'groups', 'aps', 'unknownApCount']);
+  });
+
+  test('networkBroadcasters agrees with the rows; a network only an unknown group might broadcast is not listed', () => {
+    for (const row of buildNetworkRows(CLOUD_GROUPS, CLOUD_APS)) {
+      const detail = networkBroadcasters(row.name, CLOUD_GROUPS, CLOUD_APS);
+      assert.deepEqual(
+        [detail?.groups, detail?.aps.length, detail?.unknownApCount, detail?.unreportedGroupCount, detail?.unreportedApCount],
+        [row.groups, row.apCount, row.unknownApCount, row.unreportedGroupCount, row.unreportedApCount],
+        row.name,
+      );
+    }
+    assert.equal(networkBroadcasters('Huérfana', CLOUD_GROUPS, CLOUD_APS), null);
+    // A stray name in a flagged list is no known broadcast
+    assert.equal(networkBroadcasters('Fantasma', [{ ...group('x', 'X', ['Fantasma']), ssidListUnknown: true }], []), null);
+  });
+
+  test('isNetworkListed(): true exactly for the names of the network rows, with or without unknown groups', () => {
+    for (const groups of [GROUPS, CLOUD_GROUPS]) {
+      for (const row of buildNetworkRows(groups, APS)) {
+        assert.equal(isNetworkListed(row.name, groups), true, row.name);
+      }
+      assert.equal(isNetworkListed('Huérfana', groups), false);
+    }
+    assert.equal(isNetworkListed('Fantasma', [{ ...group('x', 'X', ['Fantasma']), ssidListUnknown: true }]), false);
+  });
+
+  test('AP details: an AP in an unknown group has its group resolved and its networks unknown (null), never "broadcasts nothing"', () => {
+    const details = describeApDetails(NUBE_AP, CLOUD_GROUPS);
+    assert.deepEqual(details.group, { kind: 'group', group: CLOUD });
+    assert.equal(details.networks, null);
+    assert.deepEqual(apGroupLink(details.group), { kind: 'group', target: 'c1' });
+    // The other APs are unchanged
+    assert.deepEqual(describeApDetails(JARDIN, CLOUD_GROUPS).networks, []);
+    assert.deepEqual(describeApDetails(ALTILLO, CLOUD_GROUPS).networks, ['Casa', 'Trabajo']);
+  });
+}); // End of the describe block for unknown network lists

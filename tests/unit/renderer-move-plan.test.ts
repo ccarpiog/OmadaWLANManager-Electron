@@ -5,7 +5,9 @@
 // the networks gained / lost / unchanged, the clients on the moving APs, the
 // destination search (group AND network names) with the "Silence"
 // partition, the error text of a failed move, the result aggregation, and
-// the "Retry failed" contract checked after the reload.
+// the "Retry failed" contract checked after the reload; and groups whose
+// network list the controller did not report (`ssidListUnknown`): never "no
+// networks", no claimed reach diff, never pinned under "Silence".
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -17,6 +19,7 @@ import {
   describeMoveError,
   diffNetworks,
   findUniqueGroupByName,
+  hasUnknownNetworks,
   isAmbiguousGroup,
   isApInGroup,
   matchesDestinationSearch,
@@ -59,6 +62,18 @@ const SILENT = group('g3', 'zNinguna', []);
 const TWIN_A = group('g4', 'Gemelo', ['A']);
 const TWIN_B = group('g5', 'Gemelo', ['B']);
 const GROUPS: WlanGroup[] = [DEFAULT, OFFICE, SILENT, TWIN_A, TWIN_B];
+
+/**
+ * Builds a group whose network list the controller did not report (the
+ * cloud session's `ssidList: []` + `ssidListUnknown: true`).
+ * @param {string} wlanId - Group id.
+ * @param {string} wlanName - Group name.
+ * @param {string[]} [ssids] - A stray list (must be ignored); empty by default.
+ * @returns {WlanGroup} The group.
+ */
+function unknownGroup(wlanId: string, wlanName: string, ssids: string[] = []): WlanGroup {
+  return { ...group(wlanId, wlanName, ssids), ssidListUnknown: true };
+}
 
 describe('findUniqueGroupByName()', () => {
   test('resolves a name exactly one group has', () => {
@@ -387,3 +402,102 @@ describe('checkRetry() (the "Retry failed" contract after the reload)', () => {
     assert.deepEqual(check, { retryMacs: ['m1', 'm4'], missingCount: 0, inDestinationCount: 0, destination: renamed, blocked: null });
   });
 });
+
+describe('unknown network lists (ssidListUnknown: the controller did not report a group\'s networks)', () => {
+  const CLOUD = unknownGroup('c1', 'Nube');
+  const CLOUD_B = unknownGroup('c2', 'Nube B');
+  const CLOUD_GROUPS: WlanGroup[] = [...GROUPS, CLOUD, CLOUD_B];
+  const NO_DIFF = { gained: [], lost: [], unchanged: [] };
+
+  test('hasUnknownNetworks() is true only for the flag; such a group has no network name, even a stray one', () => {
+    assert.equal(hasUnknownNetworks(CLOUD), true);
+    for (const known of GROUPS) {
+      assert.equal(hasUnknownNetworks(known), false, known.wlanName);
+    }
+    assert.deepEqual(networkNames(CLOUD), []);
+    assert.deepEqual(networkNames(unknownGroup('x', 'X', ['Casa'])), []);
+  });
+
+  test('an unknown destination claims no network change: every identified AP is "unreported", the unidentified ones stay unknown', () => {
+    const selected = [ap('m1', 'A1', 'Default', 3), ap('m2', 'A2', 'Oficina'), ap('m3', 'A3', ''), ap('m4', 'A4', 'Nube B')];
+    const plan = planMove(selected, CLOUD, CLOUD_GROUPS);
+    assert.equal(plan.destinationNetworksUnknown, true);
+    assert.equal(plan.knownSourceCount, 0);
+    assert.equal(plan.unknownSourceCount, 1);
+    assert.equal(plan.unreportedSourceCount, 3);
+    // Not "loses everything" (the empty-group reading) and not "no change"
+    assert.deepEqual(plan.networks, NO_DIFF);
+    // The rest of the plan is as usual
+    assert.equal(plan.ambiguousDestination, false);
+    assert.deepEqual(plan.moving.map(entry => entry.mac), ['m1', 'm2', 'm3', 'm4']);
+    assert.deepEqual(plan.sources, [{ name: 'Default', count: 1 }, { name: 'Oficina', count: 1 }, { name: '', count: 1 }, { name: 'Nube B', count: 1 }]);
+    assert.deepEqual(plan.clients, { total: 3, reporting: 1, missing: 3 });
+  });
+
+  test('an AP already in an unknown destination is skipped like any other', () => {
+    const plan = planMove([ap('m1', 'A1', 'Nube'), ap('m2', 'A2', 'Default')], CLOUD, CLOUD_GROUPS);
+    assert.deepEqual(plan.alreadyThere.map(entry => entry.mac), ['m1']);
+    assert.deepEqual(plan.moving.map(entry => entry.mac), ['m2']);
+    assert.equal(plan.unreportedSourceCount, 1);
+    assert.deepEqual(plan.networks, NO_DIFF);
+  });
+
+  test('mixed sources: the known AP keeps its diff, the AP from an unknown group is flagged apart (never "loses nothing")', () => {
+    const plan = planMove([ap('m1', 'A1', 'Default'), ap('m2', 'A2', 'Nube'), ap('m3', 'A3', 'Gemelo')], OFFICE, CLOUD_GROUPS);
+    assert.equal(plan.knownSourceCount, 1);
+    assert.equal(plan.unknownSourceCount, 1);
+    assert.equal(plan.unreportedSourceCount, 1);
+    assert.equal('destinationNetworksUnknown' in plan, false);
+    // Exactly the diff of the known AP alone
+    assert.deepEqual(plan.networks, {
+      gained: [{ name: 'Trabajo', apCount: 1 }, { name: 'IoT', apCount: 1 }],
+      lost: [{ name: 'Invitados', apCount: 1 }],
+      unchanged: ['Casa'],
+    });
+    assert.deepEqual(plan.networks, planMove([ap('m1', 'A1', 'Default')], OFFICE, CLOUD_GROUPS).networks);
+  });
+
+  test('only unknown sources into a known destination: nothing known to compare, every AP flagged', () => {
+    const plan = planMove([ap('m1', 'A1', 'Nube'), ap('m2', 'A2', 'Nube B')], SILENT, CLOUD_GROUPS);
+    assert.equal(plan.knownSourceCount, 0);
+    assert.equal(plan.unknownSourceCount, 0);
+    assert.equal(plan.unreportedSourceCount, 2);
+    // Not "loses every current network" (they are not known)
+    assert.deepEqual(plan.networks, NO_DIFF);
+  });
+
+  test('known + unknown + unreported always add up to the moving APs', () => {
+    const selected = [ap('m1', 'A1', 'Default'), ap('m2', 'A2', 'Nube'), ap('m3', 'A3', ''), ap('m4', 'A4', 'Borrado'), ap('m5', 'A5', 'Oficina')];
+    for (const destination of [OFFICE, SILENT, CLOUD, CLOUD_B]) {
+      const plan = planMove(selected, destination, CLOUD_GROUPS);
+      assert.equal(plan.knownSourceCount + plan.unknownSourceCount + (plan.unreportedSourceCount ?? 0), plan.moving.length, destination.wlanName);
+    }
+  });
+
+  test('flag absent: a plan carries no unreported facts and is the same whether unknown groups are listed or not', () => {
+    const plan = planMove([ap('m1', 'A1', 'Default'), ap('m2', 'A2', '')], OFFICE, GROUPS);
+    assert.deepEqual(Object.keys(plan), ['destination', 'ambiguousDestination', 'moving', 'alreadyThere', 'sources', 'knownSourceCount', 'unknownSourceCount', 'networks', 'clients']);
+    assert.deepEqual(planMove([ap('m1', 'A1', 'Default'), ap('m2', 'A2', '')], OFFICE, CLOUD_GROUPS), plan);
+  });
+
+  test('an unknown destination another group names is still refused as ambiguous, with no unreported facts', () => {
+    const twin = unknownGroup('c3', 'Oficina');
+    const plan = planMove([ap('m1', 'A1', 'Default')], twin, [...GROUPS, twin]);
+    assert.equal(plan.ambiguousDestination, true);
+    assert.equal('unreportedSourceCount' in plan, false);
+    assert.equal('destinationNetworksUnknown' in plan, false);
+  });
+
+  test('destination search: an unknown group matches by its own name only (it has no network name to match)', () => {
+    assert.equal(matchesDestinationSearch(CLOUD, 'NUB'), true);
+    assert.equal(matchesDestinationSearch(CLOUD, '  '), true);
+    assert.equal(matchesDestinationSearch(CLOUD, 'casa'), false);
+    assert.equal(matchesDestinationSearch(unknownGroup('x', 'X', ['Casa']), 'casa'), false);
+  });
+
+  test('partitionDestinations(): an unknown group is never pinned under "Silence"; the known groups are unchanged', () => {
+    assert.deepEqual(partitionDestinations(CLOUD_GROUPS, ''), { networks: [DEFAULT, OFFICE, TWIN_A, TWIN_B, CLOUD, CLOUD_B], silence: [SILENT] });
+    assert.deepEqual(partitionDestinations(CLOUD_GROUPS, 'nube b'), { networks: [CLOUD_B], silence: [] });
+    assert.deepEqual(partitionDestinations(CLOUD_GROUPS, 'casa'), { networks: [DEFAULT, OFFICE], silence: [] });
+  });
+}); // End of the describe block for unknown network lists

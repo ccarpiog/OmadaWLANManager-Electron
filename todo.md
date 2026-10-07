@@ -507,6 +507,47 @@ everything is built against the documented contract and fixtures.
     - Acceptance also includes (I-1b1 review): before the cloud session is installable, move planning, inventory and
       network counts must honor `ssidListUnknown` (no definitive "0 networks" and no reach diff for an unknown
       group), or the mapper fails closed.
+    - **Split (2026-10-07, before starting):**
+      - ✅ **I-1b2a — renderer honors `ssidListUnknown` (risk: high):** pure model changes plus unit tests in the
+        consumers the I-1b1 review lists (`move-plan.ts`, `inventory-model.ts`, `ap-selection.ts`,
+        `destination-pane.ts`, `move-dialog.ts`, `networks-view.ts`): a group whose network list is unknown never
+        reads as "0 networks", gives no reach diff in the move review and no wrong network count, with es / en text
+        for the unknown state. Local data never sets the flag, so local behavior and the smoke stay unchanged.
+        - **Done (I-1b2a):**
+          - One predicate, `hasUnknownNetworks()` (`move-plan.ts`); `networkNames()` returns `[]` for such a group, so a
+            stray name in a flagged list is never used.
+          - **Moves:** `planMove()` puts every identified AP whose group list or destination list is unknown in a new
+            optional `unreportedSourceCount` (out of the diff), and flags an unknown destination with
+            `destinationNetworksUnknown`. known + unknown + unreported = moving. The preview and the review keep the
+            known APs' diff and add the "Network change unknown for N APs" note (`unreportedSourcesNote()` in
+            `move-text.ts`, one wording per cause). An unknown destination reads "Networks unknown", never the
+            empty-group warning.
+          - **Destination pane:** an unknown group is never under "Silence". Search choice: it matches by its own name
+            only (no network name to match; its option shows "Networks unknown").
+          - **Counts:** a single group reads "Networks unknown": group row and detail (`GroupRow.networksUnknown`), AP
+            row (`networkCountFor()` → `'unknown'`), AP details (`networks: null` with a resolved group →
+            `apNetworksNotReported`), destination option. `indexGroupsByName()` lets a same-named unknown group win.
+          - **Lower-bound choice:** a count that combines known and unknown groups is a lower bound ("at least N"; unknown
+            when N is 0), following `networkScopeKind()`. Applied to the sidebar total (`distinctSsidCountKind()`,
+            badge "N+" or hidden) and to each network's scope: "at least N groups", AP count a lower bound, reason
+            `scopeUnreportedGroups…`. Network rows and details carry optional `unreportedGroupCount` /
+            `unreportedApCount`. The detail drops the counts from its titles and adds "Not included" notes.
+            `isNetworkListed()` backs `networkItemLabel()`.
+          - **Delete:** `DeleteInput.networkCount` accepts `null` (unknown). It never blocks alone: the fresh view
+            decides, as for a shared-name AP count.
+          - Optional fields are absent without the flag, so local results are byte-identical. 16 new es / en keys.
+          - Not touched: main, IPC, the cloud mapper, the managed-network and "Broadcast on" paths (they use bound
+            group ids, not `ssidList`).
+          - **Tests:** unit 1156 → 1180 (`renderer-move-plan`, `renderer-inventory-model`, `renderer-ap-selection`,
+            `renderer-group-management`: unknown, mixed and flag-absent cases). Smoke 271/271 unchanged.
+          - ✅ **Review fix** (`docs/reviews/phaseI-1b2a.md`, should-fix; unit 1180 → 1184): the internal Wi-Fi networks
+            list takes its keys from the pure `networkListKeys()` (`ap-selection.ts`, from `distinctSsidCountKind()`).
+            With nothing known, the empty list says `networksNotReported` instead of `noNetworks`. While the total is a
+            lower bound, the search summary reads `searchResultsCountAtLeast` ("Showing N of at least M"). Exact →
+            today's keys. The managed list is unchanged, since it lists networks directly.
+      - **I-1b2b — `ConnectionManager` targets and wiring (risk: high):** everything else in the I-1b2 bullet above
+        (targets, switch IPC, `localOmadacId`, persistence with the local fallback, session nonces on the `omada:*`
+        data channels, `CloudSessionError` mapping, race tests, smoke stub, `npm run tls-probe` green). After I-1b2a.
 
 ### I-1c Settings cloud section, controller switcher, docs — risk: high
 - **What (spec "UI"):**

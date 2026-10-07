@@ -158,6 +158,11 @@ export interface Translations {
   networkCountOne: string;
   networkCountMany: string;
   networkCountNone: string;
+  // A group whose network list the controller did not report (move-plan.ts
+  // hasUnknownNetworks()): never "No networks"; and the sidebar's network
+  // total as a lower bound while some group's list is unknown
+  networkCountUnknown: string;
+  navCountAtLeast: string;
   clientCountOne: string;
   clientCountMany: string;
   // AP groups and Wi-Fi networks views (groups-view.ts, networks-view.ts):
@@ -168,6 +173,11 @@ export interface Translations {
   networkSearch: string;
   networkSearchLabel: string;
   searchResultsCount: string;
+  // The Wi-Fi networks list's summary while its total is a lower bound, and
+  // its empty state while no group's networks are known (ap-selection.ts
+  // networkListKeys())
+  searchResultsCountAtLeast: string;
+  networksNotReported: string;
   noMatchingGroups: string;
   noMatchingNetworks: string;
   connectToSeeNetworks: string;
@@ -185,13 +195,25 @@ export interface Translations {
   apCountAtLeastMany: string;
   scopeUnknownApsOne: string;
   scopeUnknownApsMany: string;
+  // The other reason of a lower bound: groups whose network list is unknown
+  // (they may broadcast the network)
+  scopeUnreportedGroupsOne: string;
+  scopeUnreportedGroupsMany: string;
   groupCountOne: string;
   groupCountMany: string;
+  // A network's group count as a lower bound (some group's list is unknown)
+  groupCountAtLeastOne: string;
+  groupCountAtLeastMany: string;
   noApsInGroup: string;
   groupAmbiguousAps: string;
+  groupNetworksNotReported: string;
   networkNoAps: string;
   networkUnknownApsOne: string;
   networkUnknownApsMany: string;
+  networkUnreportedGroupsOne: string;
+  networkUnreportedGroupsMany: string;
+  networkUnreportedApsOne: string;
+  networkUnreportedApsMany: string;
   networkManagementOnly: string;
   // AP details pane (ap-details.ts), opened by a click on an AP row
   apDetailsTitle: string;
@@ -204,6 +226,7 @@ export interface Translations {
   apGroupUnlisted: string;
   apGroupAmbiguous: string;
   apNetworksUnknown: string;
+  apNetworksNotReported: string;
   apOverridesUnavailable: string;
   // Cross-navigation (navigation.ts): "Back to <previous item>"
   backTo: string;
@@ -253,6 +276,12 @@ export interface Translations {
   networkPartial: string;
   unknownSourcesOne: string;
   unknownSourcesMany: string;
+  // Moving APs whose network change is unknown because the controller did
+  // not report their group's network list, or the destination's
+  unreportedSourcesOne: string;
+  unreportedSourcesMany: string;
+  unreportedDestinationOne: string;
+  unreportedDestinationMany: string;
   moveNone: string;
   moveOne: string;
   moveMany: string;
@@ -739,6 +768,8 @@ export const translations: Record<Language, Translations> = {
     networkCountOne: '1 red',
     networkCountMany: '{count} redes',
     networkCountNone: 'Sin redes',
+    networkCountUnknown: 'Redes desconocidas',
+    navCountAtLeast: '{count}+',
     clientCountOne: '1 cliente',
     clientCountMany: '{count} clientes',
     groupSearch: 'Buscar grupos o redes…',
@@ -746,6 +777,8 @@ export const translations: Record<Language, Translations> = {
     networkSearch: 'Buscar redes o grupos…',
     networkSearchLabel: 'Buscar redes Wi-Fi por nombre o por grupo',
     searchResultsCount: 'Se muestran {shown} de {total}',
+    searchResultsCountAtLeast: 'Se muestran {shown} de al menos {total}',
+    networksNotReported: 'Redes Wi-Fi desconocidas: el controlador no informó de qué redes emiten sus grupos.',
     noMatchingGroups: 'Ningún grupo ni red coincide con "{query}"',
     noMatchingNetworks: 'Ninguna red ni grupo coincide con "{query}"',
     connectToSeeNetworks: 'Conecta al controlador para ver las redes Wi-Fi',
@@ -762,13 +795,22 @@ export const translations: Record<Language, Translations> = {
     apCountAtLeastMany: 'al menos {count} AP',
     scopeUnknownApsOne: 'no se puede identificar el grupo de 1 AP',
     scopeUnknownApsMany: 'no se puede identificar el grupo de {count} AP',
+    scopeUnreportedGroupsOne: 'el controlador no informó de las redes de 1 grupo',
+    scopeUnreportedGroupsMany: 'el controlador no informó de las redes de {count} grupos',
     groupCountOne: '1 grupo',
     groupCountMany: '{count} grupos',
+    groupCountAtLeastOne: 'al menos 1 grupo',
+    groupCountAtLeastMany: 'al menos {count} grupos',
     noApsInGroup: 'Ningún punto de acceso está en este grupo',
     groupAmbiguousAps: 'Otro grupo tiene el mismo nombre: la aplicación no puede saber qué puntos de acceso están en este (los AP solo informan del nombre de su grupo).',
+    groupNetworksNotReported: 'Redes desconocidas: el controlador no informó de las redes Wi-Fi de este grupo.',
     networkNoAps: 'Ningún punto de acceso está en los grupos que la emiten',
     networkUnknownApsOne: 'No se incluye 1 punto de acceso que puede emitirla: la aplicación no puede identificar su grupo (sin grupo, con un grupo que no está en la lista o con un nombre que comparten varios grupos).',
     networkUnknownApsMany: 'No se incluyen {count} puntos de acceso que pueden emitirla: la aplicación no puede identificar su grupo (sin grupo, con un grupo que no está en la lista o con un nombre que comparten varios grupos).',
+    networkUnreportedGroupsOne: 'No se incluye 1 grupo que puede emitirla: el controlador no informó de sus redes.',
+    networkUnreportedGroupsMany: 'No se incluyen {count} grupos que pueden emitirla: el controlador no informó de sus redes.',
+    networkUnreportedApsOne: 'No se incluye 1 punto de acceso que puede emitirla: el controlador no informó de las redes de su grupo.',
+    networkUnreportedApsMany: 'No se incluyen {count} puntos de acceso que pueden emitirla: el controlador no informó de las redes de su grupo.',
     networkManagementOnly: 'No se muestran la seguridad, las bandas ni si la red está activada: requieren acceso de gestión.',
     apDetailsTitle: 'Detalles del AP',
     apDetailsFor: 'Detalles de {ap}',
@@ -780,6 +822,7 @@ export const translations: Record<Language, Translations> = {
     apGroupUnlisted: '{group} (no está en la lista de grupos)',
     apGroupAmbiguous: '{group} (otro grupo tiene el mismo nombre)',
     apNetworksUnknown: 'Sus redes Wi-Fi son desconocidas: la aplicación no puede identificar su grupo.',
+    apNetworksNotReported: 'Sus redes Wi-Fi son desconocidas: el controlador no informó de las redes de su grupo.',
     apOverridesUnavailable: 'Estas son las redes de su grupo. Las redes personalizadas de este AP no se muestran (la aplicación aún no las lee): si tiene alguna en Omada, lo que emite realmente puede ser distinto.',
     backTo: 'Volver a {target}',
     back: 'Volver',
@@ -819,6 +862,10 @@ export const translations: Record<Language, Translations> = {
     networkPartial: '{name} ({count} de {total})',
     unknownSourcesOne: 'No se conocen las redes actuales de 1 AP (sin grupo o con un grupo no reconocido): no se incluye arriba',
     unknownSourcesMany: 'No se conocen las redes actuales de {count} AP (sin grupo o con un grupo no reconocido): no se incluyen arriba',
+    unreportedSourcesOne: 'Se desconoce el cambio de redes de 1 AP (el controlador no informó de las redes de su grupo actual): no se incluye arriba',
+    unreportedSourcesMany: 'Se desconoce el cambio de redes de {count} AP (el controlador no informó de las redes de su grupo actual): no se incluyen arriba',
+    unreportedDestinationOne: 'Se desconoce el cambio de redes de 1 AP: el controlador no informó de las redes del grupo de destino',
+    unreportedDestinationMany: 'Se desconoce el cambio de redes de {count} AP: el controlador no informó de las redes del grupo de destino',
     moveNone: 'Mover AP',
     moveOne: 'Mover AP',
     moveMany: 'Mover {count} AP',
@@ -1259,6 +1306,8 @@ export const translations: Record<Language, Translations> = {
     networkCountOne: '1 network',
     networkCountMany: '{count} networks',
     networkCountNone: 'No networks',
+    networkCountUnknown: 'Networks unknown',
+    navCountAtLeast: '{count}+',
     clientCountOne: '1 client',
     clientCountMany: '{count} clients',
     groupSearch: 'Search groups or networks…',
@@ -1266,6 +1315,8 @@ export const translations: Record<Language, Translations> = {
     networkSearch: 'Search networks or groups…',
     networkSearchLabel: 'Search Wi-Fi networks by name or group',
     searchResultsCount: 'Showing {shown} of {total}',
+    searchResultsCountAtLeast: 'Showing {shown} of at least {total}',
+    networksNotReported: 'Wi-Fi networks unknown: the controller did not report which networks its groups broadcast.',
     noMatchingGroups: 'No groups or networks match "{query}"',
     noMatchingNetworks: 'No networks or groups match "{query}"',
     connectToSeeNetworks: 'Connect to the controller to see Wi-Fi networks',
@@ -1282,13 +1333,22 @@ export const translations: Record<Language, Translations> = {
     apCountAtLeastMany: 'at least {count} APs',
     scopeUnknownApsOne: '1 AP\'s group cannot be identified',
     scopeUnknownApsMany: '{count} APs\' groups cannot be identified',
+    scopeUnreportedGroupsOne: 'the controller did not report the networks of 1 group',
+    scopeUnreportedGroupsMany: 'the controller did not report the networks of {count} groups',
     groupCountOne: '1 group',
     groupCountMany: '{count} groups',
+    groupCountAtLeastOne: 'at least 1 group',
+    groupCountAtLeastMany: 'at least {count} groups',
     noApsInGroup: 'No access points are in this group',
     groupAmbiguousAps: 'Another group has the same name: the app cannot tell which access points are in this one (access points report only their group\'s name).',
+    groupNetworksNotReported: 'Networks unknown: the controller did not report this group\'s Wi-Fi networks.',
     networkNoAps: 'No access points are in the groups that broadcast it',
     networkUnknownApsOne: 'Not included: 1 access point that may broadcast it, whose group the app cannot identify (no group, a group not in the list, or a name several groups share).',
     networkUnknownApsMany: 'Not included: {count} access points that may broadcast it, whose group the app cannot identify (no group, a group not in the list, or a name several groups share).',
+    networkUnreportedGroupsOne: 'Not included: 1 group that may broadcast it, whose networks the controller did not report.',
+    networkUnreportedGroupsMany: 'Not included: {count} groups that may broadcast it, whose networks the controller did not report.',
+    networkUnreportedApsOne: 'Not included: 1 access point that may broadcast it, in a group whose networks the controller did not report.',
+    networkUnreportedApsMany: 'Not included: {count} access points that may broadcast it, in groups whose networks the controller did not report.',
     networkManagementOnly: 'Security, bands and whether the network is enabled are not shown: they need management access.',
     apDetailsTitle: 'AP details',
     apDetailsFor: 'Details of {ap}',
@@ -1300,6 +1360,7 @@ export const translations: Record<Language, Translations> = {
     apGroupUnlisted: '{group} (not in the group list)',
     apGroupAmbiguous: '{group} (another group has the same name)',
     apNetworksUnknown: 'Its Wi-Fi networks are unknown: the app cannot identify its group.',
+    apNetworksNotReported: 'Its Wi-Fi networks are unknown: the controller did not report its group\'s networks.',
     apOverridesUnavailable: 'These are its group\'s networks. Per-AP Wi-Fi network overrides are not shown (the app does not read them yet): if this AP has any in Omada, what it actually broadcasts may differ.',
     backTo: 'Back to {target}',
     back: 'Back',
@@ -1339,6 +1400,10 @@ export const translations: Record<Language, Translations> = {
     networkPartial: '{name} ({count} of {total})',
     unknownSourcesOne: 'Current networks unknown for 1 AP (no group, or a group the app cannot identify): not included above',
     unknownSourcesMany: 'Current networks unknown for {count} APs (no group, or a group the app cannot identify): not included above',
+    unreportedSourcesOne: 'Network change unknown for 1 AP (the controller did not report the networks of its current group): not included above',
+    unreportedSourcesMany: 'Network change unknown for {count} APs (the controller did not report the networks of their current group): not included above',
+    unreportedDestinationOne: 'Network change unknown for 1 AP: the controller did not report the destination group\'s networks',
+    unreportedDestinationMany: 'Network change unknown for {count} APs: the controller did not report the destination group\'s networks',
     moveNone: 'Move APs',
     moveOne: 'Move AP',
     moveMany: 'Move {count} APs',

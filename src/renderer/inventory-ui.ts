@@ -45,28 +45,60 @@ export function groupCountText(count: number): string {
 }
 
 /**
+ * A group count as a lower bound: "at least 1 group" / "at least N groups".
+ * @param {number} count - The groups known.
+ * @returns {string} The localized count.
+ */
+export function groupCountAtLeastText(count: number): string {
+  return count === 1 ? t('groupCountAtLeastOne') : tFormat('groupCountAtLeastMany', { count: String(count) });
+}
+
+/**
+ * The groups and APs whose network list the controller did not report, for
+ * a network's scope (inventory-model.ts `unreportedGroupCount` and
+ * `unreportedApCount`): they may broadcast any network.
+ */
+export interface UnreportedScope {
+  groupCount: number;
+  apCount: number;
+}
+
+/**
  * A network's scope from the internal data (§4.5): "N groups · M APs" when
  * every AP is placed; otherwise a lower bound ("at least M APs") or "AP
  * count unknown" followed by the reason (how many APs' groups cannot be
  * identified) — never "No APs" while some AP may broadcast the network.
+ * While some group's network list is unknown (`unreported`), the group
+ * count is a lower bound too ("at least N groups"), the APs in such groups
+ * make the AP count one, and the reason says how many groups' networks
+ * were not reported.
  * @param {number} groupCount - Groups broadcasting the network.
  * @param {number} apCount - APs known to broadcast it (in those groups).
  * @param {number} unknownApCount - APs that may broadcast it (their group
  *   cannot be identified).
+ * @param {UnreportedScope} [unreported] - Groups with an unknown network
+ *   list and their APs (absent, or no group: none).
  * @returns {string} The localized scope.
  */
-export function scopeText(groupCount: number, apCount: number, unknownApCount: number): string {
-  const groups = groupCountText(groupCount);
-  const kind = networkScopeKind(apCount, unknownApCount);
-  if (kind === 'exact') {
+export function scopeText(groupCount: number, apCount: number, unknownApCount: number, unreported?: UnreportedScope): string {
+  const unreportedGroups = unreported?.groupCount ?? 0;
+  const groups = unreportedGroups > 0 ? groupCountAtLeastText(groupCount) : groupCountText(groupCount);
+  const kind = networkScopeKind(apCount, unknownApCount + (unreportedGroups > 0 ? (unreported?.apCount ?? 0) : 0));
+  if (kind === 'exact' && unreportedGroups === 0) {
     return `${groups} · ${apCountOrUnknown(apCount)}`;
   }
-  let aps = t('apCountUnknown');
+  let aps = kind === 'exact' ? apCountOrUnknown(apCount) : t('apCountUnknown');
   if (kind === 'atLeast') {
     aps = apCount === 1 ? t('apCountAtLeastOne') : tFormat('apCountAtLeastMany', { count: String(apCount) });
   }
-  const reason = unknownApCount === 1 ? t('scopeUnknownApsOne') : tFormat('scopeUnknownApsMany', { count: String(unknownApCount) });
-  return `${groups} · ${aps}; ${reason}`;
+  const reasons: string[] = [];
+  if (unknownApCount > 0) {
+    reasons.push(unknownApCount === 1 ? t('scopeUnknownApsOne') : tFormat('scopeUnknownApsMany', { count: String(unknownApCount) }));
+  }
+  if (unreportedGroups > 0) {
+    reasons.push(unreportedGroups === 1 ? t('scopeUnreportedGroupsOne') : tFormat('scopeUnreportedGroupsMany', { count: String(unreportedGroups) }));
+  }
+  return [`${groups} · ${aps}`, ...reasons].join('; ');
 } // End of function scopeText()
 
 /**

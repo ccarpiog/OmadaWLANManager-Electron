@@ -173,7 +173,8 @@ function renderGroupListActions(): void {
 
 /**
  * Builds the counts line of a group: "N APs · M networks", or the AP count
- * followed by the strong §4.1 empty-group label for a group without networks.
+ * followed by the strong §4.1 empty-group label for a group without networks
+ * ("Networks unknown" when the controller did not report them).
  * @param {GroupRow} row - The group's row.
  * @param {string} className - The element's class.
  * @returns {HTMLSpanElement} The counts element.
@@ -187,7 +188,11 @@ function createGroupCounts(row: GroupRow, className: string): HTMLSpanElement {
   counts.appendChild(aps);
   const networks = document.createElement('span');
   networks.className = row.isEmpty ? 'group-network-count is-silence' : 'group-network-count';
-  networks.textContent = ` · ${row.isEmpty ? t('emptyGroup') : networkCountText(row.networks.length)}`;
+  let networksText = row.isEmpty ? t('emptyGroup') : networkCountText(row.networks.length);
+  if (row.networksUnknown === true) {
+    networksText = t('networkCountUnknown');
+  }
+  networks.textContent = ` · ${networksText}`;
   counts.appendChild(networks);
   counts.title = counts.textContent ?? '';
   return counts;
@@ -369,7 +374,9 @@ function createWriteActions(row: GroupRow): HTMLElement[] {
     managedStatus: state.managedGroupsStatus,
     isDefault: row.isDefault,
     apCount: row.apCount,
-    networkCount: row.networks.length,
+    // Unknown (null) when the controller did not report the group's network
+    // list: never "no networks" (the fresh view decides alone then)
+    networkCount: row.networksUnknown === true ? null : row.networks.length,
   });
   if (blocks === null) {
     return [actions];
@@ -426,11 +433,15 @@ function createCapacitySection(group: WlanGroup): HTMLElement {
 
 /**
  * Builds the networks section of the detail: the networks bound to the
- * group as read-only cross-links, or the strong empty-group label.
+ * group as read-only cross-links, the strong empty-group label, or (without
+ * a count) the note that the controller did not report them.
  * @param {GroupRow} row - The group's row.
  * @returns {HTMLElement} The section.
  */
 function createNetworksSection(row: GroupRow): HTMLElement {
+  if (row.networksUnknown === true) {
+    return createDetailSection('networks', t('wifiNetworks'), [createNote(t('groupNetworksNotReported'), 'networksUnknown')]);
+  }
   const title = `${t('wifiNetworks')} (${row.networks.length})`;
   if (row.isEmpty) {
     return createDetailSection('networks', title, [createNote(t('emptyGroup'), 'emptyGroup', 'is-silence')]);

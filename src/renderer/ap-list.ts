@@ -137,7 +137,8 @@ export function clearApSearch(): void {
 
 /**
  * Builds the counts part of a row's details: the number of Wi-Fi networks of
- * the AP's group ("No networks" for a group without networks; omitted when
+ * the AP's group ("No networks" for a group without networks, "Networks
+ * unknown" when the controller did not report the group's list; omitted when
  * the group is unknown) and the client count when the controller reported
  * one.
  * @param {AccessPoint} ap - The access point.
@@ -147,7 +148,9 @@ export function clearApSearch(): void {
 function describeApCounts(ap: AccessPoint, groupsByName: ReadonlyMap<string, WlanGroup>): string {
   const parts: string[] = [];
   const networks = networkCountFor(ap.wlanGroup, groupsByName);
-  if (networks !== null) {
+  if (networks === 'unknown') {
+    parts.push(t('networkCountUnknown'));
+  } else if (networks !== null) {
     if (networks === 0) {
       parts.push(t('networkCountNone'));
     } else {
