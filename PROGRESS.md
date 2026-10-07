@@ -284,3 +284,5 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 17b: `9f52776` ("Show the managed Wi-Fi network list when management is on"), pushed to origin/main (`7b1e177..9f52776`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 18a: `985f6e2` ("Add Wi-Fi network create, edit, enable and delete behind guarded IPC"), pushed to origin/main (`fec4a4f..985f6e2`). A follow-up commit records this SHA. Tree clean after it.
 - Phase 18b: `ecd9d3d` ("Add Wi-Fi network create, edit, password, enable and delete to the networks view"), pushed to origin/main (`a5c3e02..ecd9d3d`). A follow-up commit records this SHA. Tree clean after it.
+- Inbox triage (I-1 queued): `71826e3` (script commit), pushed with phase 19a.
+- Phase 19a: `afa7182` ("Add the Wi-Fi network AP-group binding write with capacity checks behind guarded IPC"), pushed to origin/main (`eb581f4..afa7182`). A follow-up commit records this SHA. Tree clean after it.

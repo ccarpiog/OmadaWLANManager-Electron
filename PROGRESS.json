@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T09:58:06Z",
+ "updated": "2026-10-07T09:58:28Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -257,7 +257,8 @@
    "risk": "high",
    "summary": "Adds the Open API write that sets which AP groups broadcast a network, with scope and per-band capacity checks on fresh data, behind guarded IPC.",
    "review": "docs/reviews/phase19a.md",
-   "narrative": "docs/progress-archive/phase-19a.md"
+   "narrative": "docs/progress-archive/phase-19a.md",
+   "commit": "afa7182"
   },
   {
    "id": "19b",
