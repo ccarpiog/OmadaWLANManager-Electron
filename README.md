@@ -280,11 +280,11 @@ omada-electron/
 │   │   ├── net-transport.ts   # Production transport (Electron's net module)
 │   │   ├── cert-verify.ts     # Certificate hooks + replaceable controller session
 │   │   ├── connection-manager.ts # Connection state machine (connect, site choice, trust, reset, URL change)
-│   │   ├── controller-session.ts # Controller session facade (internal + Open API clients, management capability checks, AP-group operations)
-│   │   ├── openapi-client.ts  # Open API client (token, paths, pagination, AP-group calls)
+│   │   ├── controller-session.ts # Controller session facade (internal + Open API clients, management capability checks, AP-group operations, Wi-Fi network reads)
+│   │   ├── openapi-client.ts  # Open API client (token, paths, pagination, AP-group calls, Wi-Fi network reads)
 │   │   ├── omada-validators.ts, cookie-jar.ts, url.ts, # Pure, unit-tested helpers
 │   │   │   cert-pinning.ts, config-model.ts, controller-version.ts, redact.ts,
-│   │   │   ap-group-policy.ts, ipc-guards.ts
+│   │   │   ap-group-policy.ts, ipc-guards.ts, wifi-network-model.ts
 │   │   └── preload.ts  # Preload script for secure IPC
 │   ├── renderer/       # Renderer process (Browser), bundled by esbuild
 │   │   ├── index.html  # Main HTML

@@ -1,6 +1,7 @@
 // Pure shape guards for the session-owned IPC channels (docs/management-design.md
-// §3): the management-access channels of phase 15b and the AP-group channels
-// of phase 16a. index.ts calls them right after assertTrustedIpcSender(); the
+// §3): the management-access channels of phase 15b, the AP-group channels of
+// phase 16a and the Wi-Fi network read of phase 17a (requireSessionNonce()).
+// index.ts calls them right after assertTrustedIpcSender(); the
 // unit tests (tests/unit/ipc-guards.test.ts) and the smoke stub
 // (tests/smoke/stub-main.cjs, which requires the compiled module) use the very
 // same functions. A malformed call throws (the IPC invoke rejects, like the

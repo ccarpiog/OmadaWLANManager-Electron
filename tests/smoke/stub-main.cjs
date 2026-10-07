@@ -10,12 +10,13 @@
 //
 // Invariant D4 (docs/management-design.md §1): this file never loads
 // dist/main/index.js, config.js, net-transport.js or anything else that does
-// network or touches the user's config. It only requires five pure compiled
+// network or touches the user's config. It only requires six pure compiled
 // modules (shared/types.js for the channel table, main/url.js for URL
 // normalization and the same-controller check, main/controller-version.js for
 // the version -> group-model rule, main/ap-group-policy.js and
 // main/ipc-guards.js for the AP-group name rules, delete policy, DTO and IPC
-// shape guards), refuses to start unless HOME points away from the real
+// shape guards, main/wifi-network-model.js for the Wi-Fi network validators
+// and DTO), refuses to start unless HOME points away from the real
 // home directory, keeps Electron's userData under that temp HOME, writes no
 // files, and cancels every non-file: request the window makes.
 
@@ -36,11 +37,14 @@ const RENDERER_HTML_PATH = path.normalize(path.join(distDir, 'renderer', 'index.
 const { IPC_CHANNELS } = require(path.join(distDir, 'shared', 'types.js'));
 const { isSameControllerUrl, normalizeControllerUrl } = require(path.join(distDir, 'main', 'url.js'));
 const { groupModelForVersion, normalizeControllerVersion } = require(path.join(distDir, 'main', 'controller-version.js'));
-const { checkApGroupDeletion, hasApGroupNameConflict, toApGroupSsidLimits, toManagedApGroup, validateApGroupName } = require(
+const { AP_GROUP_ID_REGEX, checkApGroupDeletion, hasApGroupNameConflict, toApGroupSsidLimits, toManagedApGroup, validateApGroupName } = require(
   path.join(distDir, 'main', 'ap-group-policy.js')
 );
 const { parseApGroupCreateRequest, parseApGroupDeleteRequest, parseApGroupRenameRequest, requireSessionNonce } = require(
   path.join(distDir, 'main', 'ipc-guards.js')
+);
+const { MAX_MANAGED_NETWORKS, toManagedNetwork, validateOpenApiSsid, validateOpenApiSsidDetail, validateSsidBindings } = require(
+  path.join(distDir, 'main', 'wifi-network-model.js')
 );
 
 // Format guards mirrored from src/main/index.ts (keep in sync)
@@ -139,6 +143,21 @@ function defaultScenario() {
     // { success: false, error: 'groupLimitReached', diagnostic: 'apiError,
     // errorCode -33201' } }); nothing is applied then
     apGroupResults: {},
+    // Wi-Fi network read (management:networks, phase 17a): the fake
+    // controller's networks as RAW Open API payloads, each { entry, detail,
+    // bindings } — `entry` one entry of the v2 catalog, `detail` the v1 detail
+    // `result`, `bindings` the v1 …/ap-groups `result`. The stub runs them
+    // through the REAL validators and DTO builder (wifi-network-model.js) in
+    // the order ControllerSession.listManagedNetworks() reads them, so a
+    // malformed payload is refused with the same code and diagnostic (e.g.
+    // 'ssids: malformedResponse'), and a secret in a payload never reaches the
+    // reply. null (default): derived from wlanGroups (fakeNetworks())
+    networks: null,
+    // When set, management:networks returns this verbatim once the guard and
+    // the session and capability checks passed — the controller's answer
+    // (e.g. { success: false, error: 'requestFailed', diagnostic: 'ssids:
+    // httpError, HTTP 503' })
+    networksResult: null,
     accessPoints: [],
     // The controllerVer the fake controller's /api/info reports (null = absent:
     // the legacy group model, like the real defensive default). OMADA_GET_WLANS
@@ -498,6 +517,75 @@ function scriptedApGroupResult(channel) {
   const result = (stub.scenario.apGroupResults || {})[channel];
   return result ? structuredClone(result) : null;
 }
+
+/**
+ * The fake controller's Wi-Fi networks as raw Open API payloads (see
+ * `networks` in the scenario). Derived by default from wlanGroups: one
+ * WPA-Personal network (2.4 + 5 GHz, enabled, a throwaway passphrase that
+ * must never reach the renderer) per distinct SSID name, sorted by name,
+ * bound to the groups listing it — only groups whose id passes the same
+ * AP-group id rule as the real validators (AP_GROUP_ID_REGEX, 24 hex digits:
+ * the fixture's malformed-id group is left out, since one such id would make
+ * the whole binding list, and so the scope, unknown).
+ * @returns {Array<{ entry: unknown; detail: unknown; bindings: unknown }>} The networks.
+ */
+function fakeNetworks() {
+  if (Array.isArray(stub.scenario.networks)) {
+    return structuredClone(stub.scenario.networks);
+  }
+  const groups = stub.scenario.wlanGroups.filter((group) => AP_GROUP_ID_REGEX.test(group.wlanId));
+  const names = [...new Set(groups.flatMap((group) => (group.ssidList || []).map((ssid) => ssid.ssidName)))].sort((a, b) => a.localeCompare(b));
+  return names.map((name, index) => {
+    const id = `5f00c0ffee${String(index + 1).padStart(14, '0')}`;
+    const groupIds = groups.filter((group) => (group.ssidList || []).some((ssid) => ssid.ssidName === name)).map((group) => group.wlanId);
+    return {
+      entry: { id, ssidId: id, name, description: true, chooseDevices: 1, band: 3, security: 3, broadcast: true },
+      detail: { id, name, ssidEnable: true, chooseDevices: 1, band: 3, security: 3, apGroupIds: groupIds, pskSetting: { securityKey: 'stub-passphrase-never-shown', versionPsk: 2, encryptionPsk: 3 } },
+      bindings: { apGroups: groupIds.map((groupId) => ({ id: groupId })) },
+    };
+  }); // End of the per-name mapping
+} // End of function fakeNetworks()
+
+/**
+ * The reply of a successful-session network read, like
+ * ControllerSession.listManagedNetworks(): the catalog entries validated
+ * (one malformed entry fails the read, duplicates by id dropped), the size
+ * cap, then per network its detail and its bindings validated, in catalog
+ * order, and the real DTO builder; the first malformed payload ends the read
+ * with the session's codes-only diagnostic.
+ * @returns {object} The ManagedNetworksResult.
+ */
+function readFakeNetworks() {
+  const fakes = fakeNetworks();
+  const listed = [];
+  const seen = new Set();
+  for (const fake of fakes) {
+    const entry = validateOpenApiSsid(fake.entry);
+    if (entry === null) {
+      return { success: false, error: 'requestFailed', diagnostic: 'ssids: malformedResponse' };
+    }
+    if (!seen.has(entry.id)) {
+      seen.add(entry.id);
+      listed.push({ entry, fake });
+    }
+  } // End of the loop that validates the catalog
+  if (listed.length > MAX_MANAGED_NETWORKS) {
+    return { success: false, error: 'networkListIncomplete', diagnostic: `ssids ${listed.length}, over ${MAX_MANAGED_NETWORKS}` };
+  }
+  const networks = [];
+  for (const { entry, fake } of listed) {
+    const detail = validateOpenApiSsidDetail(fake.detail, entry.id);
+    if (detail === null) {
+      return { success: false, error: 'requestFailed', diagnostic: 'ssid detail: malformedResponse' };
+    }
+    const bindings = validateSsidBindings(fake.bindings);
+    if (bindings === null) {
+      return { success: false, error: 'requestFailed', diagnostic: 'ssid ap-groups: malformedResponse' };
+    }
+    networks.push(toManagedNetwork(entry, detail, bindings));
+  } // End of the loop that reads each network's detail and bindings
+  return { success: true, networks };
+} // End of function readFakeNetworks()
 
 /**
  * Returns a copy of a list sorted by a string field with localeCompare, like
@@ -942,6 +1030,33 @@ const handlers = {
     stub.apGroupWrites.push({ op: 'delete', apGroupId: request.apGroupId });
     return { success: true };
   }, // End of the MANAGEMENT_AP_GROUP_DELETE handler
+
+  /**
+   * MANAGEMENT_NETWORKS: the real shape guard (requireSessionNonce()), the
+   * session ownership (notConnected / superseded) and the capability check
+   * (manageWifiNetworks, else managementUnavailable), then the scripted
+   * answer (networksResult) or the fake networks through the real
+   * validators and DTO builder (readFakeNetworks()).
+   * @param {unknown} sessionNonce - The session nonce echoed by the renderer.
+   * @param {...unknown} extra - Must be empty.
+   * @returns {object} The ManagedNetworksResult.
+   */
+  [IPC_CHANNELS.MANAGEMENT_NETWORKS]: (sessionNonce, ...extra) => {
+    const nonce = requireSessionNonce(sessionNonce, extra);
+    if (!stub.connected || stub.sessionNonce === null) {
+      return { success: false, error: 'notConnected' };
+    }
+    if (nonce !== stub.sessionNonce) {
+      return { success: false, error: 'superseded' };
+    }
+    if (!currentCapabilities().manageWifiNetworks) {
+      return { success: false, error: 'managementUnavailable' };
+    }
+    if (stub.scenario.networksResult) {
+      return structuredClone(stub.scenario.networksResult);
+    }
+    return readFakeNetworks();
+  }, // End of the MANAGEMENT_NETWORKS handler
 }; // End of the fake handlers table
 
 // Every channel of the shared table must have a fake, and vice versa: a

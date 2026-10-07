@@ -27,6 +27,10 @@
 //   deleteApGroup() send exactly the documented v1 calls; their only caller
 //   is ControllerSession, which checks the capabilities, the name rules and
 //   the delete policy (ap-group-policy.ts) on fresh data first.
+// - Wi-Fi network reads (todo.md 4.10): listSsids() (the v2 catalog, paged),
+//   getSsidDetail() (v1) and getSsidApGroups() (v1 bindings), each answer
+//   validated by wifi-network-model.ts, which keeps allowlisted values only
+//   (never the passphrase); a malformed answer is 'malformedResponse'.
 // - Errors: OpenApiError with a stable `code` and a sanitized diagnostic
 //   (redact.ts plus the client's own secret and tokens scrubbed by value);
 //   never a raw request or response body, the Client Secret or a token.
@@ -36,6 +40,15 @@
 import { MAX_AP_GROUP_NAME_LENGTH } from './ap-group-policy';
 import { HttpMethod, OmadaHttpRequest, OmadaHttpResponse, OmadaTransport } from './omada-transport';
 import { redactText } from './redact';
+import {
+  isSsidId,
+  OpenApiSsid,
+  OpenApiSsidBindings,
+  OpenApiSsidDetail,
+  validateOpenApiSsid,
+  validateOpenApiSsidDetail,
+  validateSsidBindings
+} from './wifi-network-model';
 
 /** The Open API version of one endpoint (spec §2.1: SSID list/create are v2, the rest v1). */
 export type OpenApiVersion = 'v1' | 'v2';
@@ -96,9 +109,13 @@ export const DEFAULT_TOKEN_LIFETIME_S = 300;
 // proactive renewal still happens within a day)
 export const MAX_TOKEN_LIFETIME_S = 24 * 60 * 60;
 
-// Pagination (spec: `page` from 1, `pageSize` 1–1000). The walk stops on a
-// short page, on reaching `totalRows`, or defensively at MAX_PAGES (like the
-// internal client's site listing), and deduplicates entries by id
+// Pagination (spec: `page` from 1, `pageSize` 1–1000). With a sane
+// `totalRows` the walk goes on until the raw entries fetched reach it (short
+// pages included: the controller may cap the page size); without one a short
+// page ends it. Anything that makes completeness unprovable — an empty or
+// repeating page before the end, a changed `totalRows`, the defensive
+// MAX_PAGES cap — marks the listing incomplete (`truncated`), never silently
+// shorter. Entries are deduplicated by id (see listAll())
 export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 1000;
 export const MAX_PAGES = 50;
@@ -179,7 +196,12 @@ export interface OpenApiListOptions {
   onPage?: (result: unknown, page: number) => void;
 }
 
-/** The result of a paginated listing: deduplicated items and whether the page cap cut it. */
+/**
+ * The result of a paginated listing: the deduplicated items and whether the
+ * listing may be incomplete (`truncated`: the page cap cut it, or the walk
+ * could not prove it complete — see listAll()). Every caller treats a
+ * truncated list as incomplete, never as the whole listing.
+ */
 export interface PagedList<T> {
   items: T[];
   truncated: boolean;
@@ -188,9 +210,13 @@ export interface PagedList<T> {
 /** One validated page of an Open API listing (`result` of a paged call). */
 export interface OpenApiPage {
   data: unknown[];
-  // `totalRows`, or null when absent or not a sane non-negative number
+  // `totalRows`, or null when absent or not a sane count (a non-negative
+  // safe integer)
   totalRows: number | null;
 }
+
+// Why listAll() could not prove a listing complete (logged, codes only)
+type ListIncompleteReason = 'pageCap' | 'emptyPage' | 'noProgress' | 'totalChanged';
 
 /** A site as listed by `GET /openapi/v1/{omadacId}/sites`. */
 export interface OpenApiSite {
@@ -363,7 +389,7 @@ export function validateTokenResult(result: unknown, nowMs: number): AccessToken
 /**
  * Validates the `result` of one page of a paged Open API listing:
  * `result.data` must be an array; `totalRows` is kept when it is a sane
- * non-negative number.
+ * count (a non-negative safe integer), otherwise it is null (not reported).
  * @param {unknown} result - Raw `result` of a paged response.
  * @param {string} what - What is listed (for the error diagnostic).
  * @returns {OpenApiPage} The page.
@@ -375,7 +401,7 @@ export function validateOpenApiPage(result: unknown, what: string): OpenApiPage 
     throw malformed(what);
   }
   const rawTotal = (result as Record<string, unknown>).totalRows;
-  const totalRows = typeof rawTotal === 'number' && Number.isFinite(rawTotal) && rawTotal >= 0 ? rawTotal : null;
+  const totalRows = isCount(rawTotal) ? rawTotal : null;
   return { data, totalRows };
 }
 
@@ -659,15 +685,33 @@ export class OpenApiClient {
 
   /**
    * Walks every page of a paged Open API listing (`page` from 1, `pageSize`),
-   * validating each entry and deduplicating by id. Stops on a short page, on
-   * reaching `totalRows`, or at the page cap (then `truncated` is true and a
-   * warning is logged).
+   * validating each entry and deduplicating by id (the first occurrence is
+   * kept). `truncated` is false only when the walk PROVED the listing
+   * complete; otherwise it is true and the reason is logged (codes only) —
+   * never a silently shorter list:
+   * - a sane `totalRows` on the first page (see validateOpenApiPage()): the
+   *   walk goes on until the raw entries fetched (duplicates included, so a
+   *   repeated entry never costs an extra request) reach it, whatever the
+   *   page lengths — a controller that caps the page size below the
+   *   requested one is still read completely. Incomplete: an empty page
+   *   before the total is reached ('emptyPage');
+   * - no sane `totalRows` on the first page: a short (or empty) page ends
+   *   the walk, as before;
+   * - either way, incomplete: a page whose `totalRows` differs from the first
+   *   page's — absent or insane vs a sane one included — ('totalChanged': the
+   *   listing changed during the walk, or the controller contradicts
+   *   itself); a non-empty page that adds no new id ('noProgress': it only
+   *   repeats entries, e.g. a controller ignoring `page`); still unfinished at
+   *   the page cap ('pageCap').
+   * Every iteration either ends the walk or moves to the next page, and the
+   * page cap ends it at the latest: at most `maxPages` requests, never a loop.
    * @param {OpenApiVersion} version - API version of this endpoint (explicit).
    * @param {readonly string[]} segments - Path segments after the controller id.
    * @param {(entry: unknown) => T} validateEntry - Validates one entry (throws OpenApiError).
    * @param {(item: T) => string} idOf - The id to deduplicate by.
    * @param {OpenApiListOptions} [options] - Page size, page cap, extra query.
-   * @returns {Promise<PagedList<T>>} The items, in response order, and the truncation flag.
+   * @returns {Promise<PagedList<T>>} The items, in response order, and whether
+   *   the listing may be incomplete (`truncated`).
    * @throws {OpenApiError} From request() or the validators.
    */
   async listAll<T>(
@@ -689,7 +733,11 @@ export class OpenApiClient {
     const items: T[] = [];
     const seenIds = new Set<string>();
     let fetchedEntries = 0; // Raw entries fetched (pre-deduplication)
-    let truncated = false;
+    let pagesFetched = 0;
+    // The first page's sane `totalRows` (null: none); every later page must
+    // report the same value
+    let expectedTotal: number | null = null;
+    let incomplete: ListIncompleteReason | null = null;
 
     for (let page = 1; ; page++) {
       const query: OpenApiQuery = { page, pageSize };
@@ -703,6 +751,8 @@ export class OpenApiClient {
       this.#assertOpen();
       const pageData = validateOpenApiPage(result, what);
       options.onPage?.(result, page);
+      pagesFetched = page;
+      let newItems = 0;
       for (const entry of pageData.data) {
         const item = validateEntry(entry);
         const id = idOf(item);
@@ -711,27 +761,52 @@ export class OpenApiClient {
         }
         seenIds.add(id);
         items.push(item);
+        newItems++;
       } // End of the loop that validates the page's entries
       fetchedEntries += pageData.data.length;
 
-      // A short (or empty) page, or reaching the reported total, ends the
-      // walk; the total is compared with raw entries so duplicates never
-      // cause extra requests
-      if (pageData.data.length < pageSize || (pageData.totalRows !== null && fetchedEntries >= pageData.totalRows)) {
+      // Completeness (see the JSDoc): the first page decides whether the
+      // walk follows `totalRows` or the short-page rule
+      if (page === 1) {
+        expectedTotal = pageData.totalRows;
+      } else if (pageData.totalRows !== expectedTotal) {
+        incomplete = 'totalChanged';
+        break;
+      }
+      const totalReached = expectedTotal !== null && fetchedEntries >= expectedTotal;
+      if (pageData.data.length === 0) {
+        // The end of a short-page walk, or of an empty listing; before the
+        // reported total is reached, a gap
+        if (expectedTotal !== null && !totalReached) {
+          incomplete = 'emptyPage';
+        }
+        break;
+      }
+      if (newItems === 0) {
+        incomplete = 'noProgress';
+        break;
+      }
+      if (expectedTotal !== null ? totalReached : pageData.data.length < pageSize) {
         break;
       }
       if (page >= maxPages) {
-        truncated = true;
-        console.warn(`Open API listing (${what}) truncated at ${maxPages} pages (${fetchedEntries} entries fetched)`);
+        incomplete = 'pageCap';
         break;
       }
     } // End of the loop that walks the listing's pages
 
-    return { items, truncated };
+    if (incomplete !== null) {
+      const total = expectedTotal === null ? 'no totalRows' : `totalRows ${expectedTotal}`;
+      console.warn(`Open API listing (${what}) incomplete: ${incomplete} after ${pagesFetched} pages (${fetchedEntries} entries fetched, ${total})`);
+    }
+    return { items, truncated: incomplete !== null };
   } // End of function listAll()
 
   /**
-   * Lists the sites the Open API application can see (v1, paged).
+   * Lists the sites the Open API application can see (v1, paged). A
+   * `truncated` (possibly incomplete, see listAll()) list still proves that
+   * the sites it holds are visible, so ControllerSession uses the flag only
+   * in its 'siteNotFound' diagnostic (a site missing from it fails the check).
    * @returns {Promise<PagedList<OpenApiSite>>} The sites.
    * @throws {OpenApiError} On any failure.
    */
@@ -742,7 +817,10 @@ export class OpenApiClient {
   /**
    * Lists the AP groups of one site (`GET /openapi/v1/{omadacId}/sites/{siteId}/ap-groups`,
    * paged), with `apNum`, `ssidNameList` and `remainingBinding` when reported,
-   * plus the per-group SSID limits of the first page.
+   * plus the per-group SSID limits of the first page. A `truncated` list
+   * (possibly incomplete, see listAll()) is refused by every caller:
+   * 'apGroupsMismatch' in the capability check, 'groupListIncomplete' for the
+   * managed list and before any AP-group write (ControllerSession).
    * @param {string} siteId - The site id (percent-encoded into the path).
    * @returns {Promise<OpenApiApGroupList>} The AP groups and the limits.
    * @throws {OpenApiError} On any failure; Error on an unusable site id.
@@ -823,6 +901,90 @@ export class OpenApiClient {
     }
     await this.request('DELETE', 'v1', ['sites', siteId, 'ap-groups', apGroupId]);
   }
+
+  /**
+   * Lists the Wi-Fi networks of one site: the paged v2 catalog
+   * `GET /openapi/v2/{omadacId}/sites/{siteId}/wireless-network/ssids?page&pageSize`
+   * (listAll(): ⌈N / page size⌉ GET requests — the page size is
+   * DEFAULT_PAGE_SIZE, or the smaller one a controller caps it to —, at
+   * least 1, at most MAX_PAGES; deduplicated by id). Each entry is validated
+   * by validateOpenApiSsid(): one malformed entry rejects the whole listing.
+   * A possibly incomplete catalog comes back `truncated` (see listAll());
+   * ControllerSession refuses it with the explicit error
+   * 'networkListIncomplete', and a complete one over MAX_MANAGED_NETWORKS too
+   * — never a shorter list.
+   * @param {string} siteId - The site id.
+   * @returns {Promise<PagedList<OpenApiSsid>>} The validated entries and the truncation flag.
+   * @throws {OpenApiError} On any failure ('malformedResponse' for a garbage
+   *   page or entry); Error on an unusable site id.
+   */
+  async listSsids(siteId: string): Promise<PagedList<OpenApiSsid>> {
+    if (!isUsableId(siteId)) {
+      throw new Error('Invalid site id');
+    }
+    return this.listAll(
+      'v2',
+      ['sites', siteId, 'wireless-network', 'ssids'],
+      /**
+       * Validates one catalog entry (one malformed entry rejects the listing).
+       * @param {unknown} entry - The raw entry.
+       * @returns {OpenApiSsid} The validated entry.
+       */
+      (entry) => {
+        const ssid = validateOpenApiSsid(entry);
+        if (ssid === null) {
+          throw malformed('ssids');
+        }
+        return ssid;
+      },
+      (ssid) => ssid.id
+    );
+  } // End of function listSsids()
+
+  /**
+   * Reads one network's detail: exactly one
+   * `GET /openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}`,
+   * validated by validateOpenApiSsidDetail() (the answer must name this SSID;
+   * of the passphrase only "a key is reported" is kept).
+   * @param {string} siteId - The site id.
+   * @param {string} ssidId - The SSID id (from the catalog).
+   * @returns {Promise<OpenApiSsidDetail>} The validated detail.
+   * @throws {OpenApiError} On any failure ('malformedResponse' for an answer
+   *   the validator rejects); Error on an unusable argument.
+   */
+  async getSsidDetail(siteId: string, ssidId: string): Promise<OpenApiSsidDetail> {
+    if (!isUsableId(siteId) || !isSsidId(ssidId)) {
+      throw new Error('Invalid SSID detail arguments');
+    }
+    const result = await this.request('GET', 'v1', ['sites', siteId, 'wireless-network', 'ssids', ssidId]);
+    const detail = validateOpenApiSsidDetail(result, ssidId);
+    if (detail === null) {
+      throw malformed('ssid detail');
+    }
+    return detail;
+  } // End of function getSsidDetail()
+
+  /**
+   * Reads the AP groups one network is bound to: exactly one
+   * `GET /openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}/ap-groups`,
+   * validated by validateSsidBindings() (only the group ids are kept).
+   * @param {string} siteId - The site id.
+   * @param {string} ssidId - The SSID id (from the catalog).
+   * @returns {Promise<OpenApiSsidBindings>} The validated bindings.
+   * @throws {OpenApiError} On any failure ('malformedResponse' for a non-array
+   *   or mixed `apGroups` list); Error on an unusable argument.
+   */
+  async getSsidApGroups(siteId: string, ssidId: string): Promise<OpenApiSsidBindings> {
+    if (!isUsableId(siteId) || !isSsidId(ssidId)) {
+      throw new Error('Invalid SSID bindings arguments');
+    }
+    const result = await this.request('GET', 'v1', ['sites', siteId, 'wireless-network', 'ssids', ssidId, 'ap-groups']);
+    const bindings = validateSsidBindings(result);
+    if (bindings === null) {
+      throw malformed('ssid ap-groups');
+    }
+    return bindings;
+  } // End of function getSsidApGroups()
 
   /**
    * Throws 'clientClosed' once close() was called.

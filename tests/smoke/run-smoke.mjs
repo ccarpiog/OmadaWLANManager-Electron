@@ -172,10 +172,12 @@ const AP = Object.fromEntries(data.accessPoints.map((ap) => [ap.name, ap]));
 const GROUP = Object.fromEntries(data.wlanGroups.map((group) => [group.wlanName, group]));
 const LEGACY_GROUP = Object.fromEntries(data.legacyWlanGroups.map((group) => [group.wlanName, group]));
 const EXPECTED_BRIDGE = [
-  'connect', 'createApGroup', 'deleteApGroup', 'disconnect', 'getAccessPoints', 'getManagedApGroups', 'getManagementCapabilities',
+  'connect', 'createApGroup', 'deleteApGroup', 'disconnect', 'getAccessPoints', 'getManagedApGroups', 'getManagedNetworks', 'getManagementCapabilities',
   'getWlanGroups', 'loadConfig', 'platform', 'renameApGroup', 'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup',
   'testManagementAccess', 'trustCertificate',
 ];
+// The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
+const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
 // One launch per run*() function in main()
 const EXPECTED_LAUNCHES = 6;
 // Fingerprints of the fake controller's self-signed certificates (launch 3)
@@ -4929,6 +4931,10 @@ async function runManagementCapabilities(electronInfo) {
     await check('[caps] AP-group management bridge (phase 16a, no UI yet): the four new preload methods reach their channels with the session nonce, and the stub answers with the real guards, DTO and codes — list with per-band capacity; create (trimmed) → nameTaken (case-insensitive) / nameRequired; rename → nameUnchanged; delete refused for the default group, a group with APs, and the new group while fresh data shows APs, networks or no AP count, then deleted; management off, a stale nonce and malformed payloads refused', async () => {
       return apGroupBridgeVerdict(session);
     });
+
+    await check('[caps] Wi-Fi network read bridge (phase 17a, no UI yet): getManagedNetworks() reaches management:networks with the session nonce and the stub answers through the real validators and DTO — the networks derived from the groups, then "All access points", one bound to 3 groups, an unknown scope and a binding list with a non-24-hex AP-group id (unknown scope, never filtered); no passphrase or sentinel secret in any reply; a malformed catalog / detail / bindings and a scripted error answered with codes; management off, a stale nonce and a malformed nonce refused', async () => {
+      return networkBridgeVerdict(session);
+    });
   } finally {
     session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
     await session.app.close().catch(() => {});
@@ -5040,6 +5046,119 @@ async function apGroupBridgeVerdict(session) {
     callsTo(after, 'management:ap-groups')[listCallsBefore].args[0] === nonce;
   return verdict(ok, { outcome, writes: after.apGroupWrites });
 } // End of function apGroupBridgeVerdict()
+
+/**
+ * The phase 17a Wi-Fi network bridge check of the [caps] launch: drives
+ * getManagedNetworks() against the stub (no UI involved) with the networks
+ * derived from the fixture groups, then scripted raw payloads (an "All
+ * access points" network, one bound to three groups, one with values the ops
+ * doc does not define, one whose bound AP-group ids include one that is not
+ * 24 hex digits — the whole list dropped, an unknown scope —, sentinel
+ * secrets at every depth), malformed payloads and errors; restores the
+ * stub's network knobs afterwards.
+ * @param {object} session - The launch.
+ * @returns {Promise<{ ok: boolean; detail: unknown }>} The verdict.
+ */
+async function networkBridgeVerdict(session) {
+  const { page } = session;
+  const before = await stubState(session);
+  const nonce = before.sessionNonce;
+  const callsBefore = callsTo(before, 'management:networks').length;
+  const [g1, g2, g3] = ['Default', 'zGrupo B', 'zNinguna'].map((name) => GROUP[name].wlanId);
+  const ids = ['5f00c0ffee0000000000c0a1', '5f00c0ffee0000000000c0a2', '5f00c0ffee0000000000c0a3', '5f00c0ffee0000000000c0a4'];
+  // 24 characters, but not hex digits: not an AP-group id
+  const badGroupId = 'zGrupoCorrupto0000000000';
+  const scripted = [
+    {
+      entry: { id: ids[0], name: 'Todos los AP', description: false, chooseDevices: 0, band: 7, security: 0 },
+      detail: { id: ids[0], chooseDevices: 0, band: 7, security: 0 },
+      bindings: { apGroups: [] },
+    },
+    {
+      entry: { id: ids[1], name: 'Tres grupos', ssidEnable: true, chooseDevices: 1, band: 2, security: 3, securityKey: 'SENTINEL-smoke-catalog-key' },
+      detail: {
+        id: ids[1], ssidEnable: true, chooseDevices: 1, band: 2, security: 3, apGroupIds: [g3, g1, g2],
+        pskSetting: { securityKey: 'SENTINEL-smoke-key', history: ['SENTINEL-smoke-old-key'] },
+        entSetting: { radiusSecret: 'SENTINEL-smoke-radius' },
+        ppskSetting: { keys: [{ key: 'SENTINEL-smoke-ppsk' }] },
+        unknownKey: { deep: [{ token: 'SENTINEL-smoke-deep' }] },
+      },
+      bindings: { apGroups: [{ id: g1, name: 'SENTINEL-smoke-group-name' }, { id: g2 }, { id: g3 }], extra: 'SENTINEL-smoke-extra' },
+    },
+    {
+      entry: { id: ids[2], name: 'Rara', description: 'SENTINEL-smoke-description', chooseDevices: 7, band: 0, security: 9 },
+      detail: { id: ids[2], chooseDevices: 7 },
+      bindings: {},
+    },
+    {
+      entry: { id: ids[3], name: 'Grupo corrupto', ssidEnable: true, chooseDevices: 1, band: 1, security: 0 },
+      detail: { id: ids[3], chooseDevices: 1, apGroupIds: [g1, badGroupId] },
+      bindings: { apGroups: [{ id: g1 }, { id: badGroupId }] },
+    },
+  ];
+  const valid = scripted[0];
+  const outcome = {};
+  try {
+    outcome.derived = await callBridge(page, 'getManagedNetworks', nonce);
+    await configureStub(session, { networks: scripted });
+    outcome.scripted = await callBridge(page, 'getManagedNetworks', nonce);
+    await configureStub(session, { networks: [{ entry: { name: 'Sin id' }, detail: {}, bindings: {} }] });
+    outcome.badCatalog = await callBridge(page, 'getManagedNetworks', nonce);
+    await configureStub(session, { networks: [{ ...valid, detail: { id: ids[1] } }] });
+    outcome.badDetail = await callBridge(page, 'getManagedNetworks', nonce);
+    await configureStub(session, { networks: [{ ...valid, bindings: { apGroups: [{ id: g1 }, null] } }] });
+    outcome.badBindings = await callBridge(page, 'getManagedNetworks', nonce);
+    await configureStub(session, { networks: null, networksResult: { success: false, error: 'requestFailed', diagnostic: 'ssids: httpError, HTTP 503' } });
+    outcome.scriptedError = await callBridge(page, 'getManagedNetworks', nonce);
+    await configureStub(session, { networksResult: null, managementReason: 'apGroupsMismatch' });
+    outcome.off = await callBridge(page, 'getManagedNetworks', nonce);
+    await configureStub(session, { managementReason: null });
+    outcome.stale = await callBridge(page, 'getManagedNetworks', 'f'.repeat(32));
+    outcome.badNonce = await callBridge(page, 'getManagedNetworks', 'ABC');
+  } finally {
+    await configureStub(session, { networks: null, networksResult: null, managementReason: null });
+  }
+  const after = await stubState(session);
+  const derived = (outcome.derived.value && outcome.derived.value.networks) || [];
+  const expectedNames = [...new Set(data.wlanGroups.flatMap((group) => group.ssidList.map((ssid) => ssid.ssidName)))];
+  const derivedOk =
+    outcome.derived.value.success === true && derived.length === expectedNames.length &&
+    expectedNames.every((name) => {
+      const network = derived.find((candidate) => candidate.name === name);
+      const groupIds = data.wlanGroups.filter((group) => group.ssidList.some((ssid) => ssid.ssidName === name)).map((group) => group.wlanId);
+      return network && network.scope === 'apGroups' && isDeepStrictEqual([...network.apGroupIds].sort(), groupIds.sort()) &&
+        network.security === 'wpaPersonal' && network.enabled === true && network.hasPassphrase === true &&
+        isDeepStrictEqual(network.bands, ['band2g', 'band5g']) && isDeepStrictEqual(Object.keys(network).sort(), NETWORK_DTO_KEYS);
+    });
+  /**
+   * The error code and diagnostic of one recorded bridge outcome.
+   * @param {string} key - The outcome's key.
+   * @returns {string} "error | diagnostic".
+   */
+  const failure = (key) => (outcome[key].value ? `${outcome[key].value.error} | ${outcome[key].value.diagnostic}` : 'none');
+  const replies = JSON.stringify(outcome);
+  const ok =
+    derivedOk &&
+    isDeepStrictEqual(outcome.scripted.value, {
+      success: true,
+      networks: [
+        { id: ids[0], name: 'Todos los AP', security: 'open', bands: ['band2g', 'band5g', 'band6g'], enabled: false, hasPassphrase: false, scope: 'allAccessPoints', apGroupIds: [] },
+        { id: ids[1], name: 'Tres grupos', security: 'wpaPersonal', bands: ['band5g'], enabled: true, hasPassphrase: true, scope: 'apGroups', apGroupIds: [g1, g2, g3] },
+        { id: ids[2], name: 'Rara', security: 'unknown', bands: null, enabled: null, hasPassphrase: null, scope: 'unknown', apGroupIds: null },
+        { id: ids[3], name: 'Grupo corrupto', security: 'open', bands: ['band2g'], enabled: true, hasPassphrase: false, scope: 'unknown', apGroupIds: null },
+      ],
+    }) &&
+    failure('badCatalog') === 'requestFailed | ssids: malformedResponse' &&
+    failure('badDetail') === 'requestFailed | ssid detail: malformedResponse' &&
+    failure('badBindings') === 'requestFailed | ssid ap-groups: malformedResponse' &&
+    failure('scriptedError') === 'requestFailed | ssids: httpError, HTTP 503' &&
+    failure('off') === 'managementUnavailable | undefined' && failure('stale') === 'superseded | undefined' &&
+    /invalid session nonce format/.test(outcome.badNonce.rejected || '') &&
+    !replies.includes('SENTINEL') && !replies.includes('stub-passphrase') &&
+    callsTo(after, 'management:networks')[callsBefore].args[0] === nonce &&
+    after.scenario.networks === null && after.scenario.networksResult === null;
+  return verdict(ok, { outcome });
+} // End of function networkBridgeVerdict()
 
 // ============================================================================
 // Launch 6: AP group management (phase 16b) — New group, Rename, Delete with

@@ -2,8 +2,10 @@
 // fake transport (no Electron, no network) and the fixtures in
 // tests/fixtures/openapi/: the client-credentials token request, the
 // `AccessToken=` header, proactive renewal, re-acquire-once on a rejected
-// token through ONE shared acquisition, no retry loop, pagination with dedupe
-// and the page cap, explicit v1/v2 paths, PUT/DELETE pass-through, the
+// token through ONE shared acquisition, no retry loop, pagination with dedupe,
+// the page cap and its completeness rules (a sane totalRows is followed past
+// short pages; an empty or repeating page before it, or a changed totalRows,
+// is an explicit truncation), explicit v1/v2 paths, PUT/DELETE pass-through, the
 // validators, the stable error codes, that no secret or token ever shows
 // up in an error, a diagnostic or the client object itself, and that close()
 // drops every token reference (also the ones only private fields hold) and
@@ -29,6 +31,7 @@ import {
 import apGroupWriteFixtures from '../fixtures/openapi/ap-group-writes.json';
 import apGroupFixtures from '../fixtures/openapi/ap-groups.json';
 import siteFixtures from '../fixtures/openapi/sites.json';
+import ssidFixtures from '../fixtures/openapi/ssids.json';
 import tokenFixtures from '../fixtures/openapi/token.json';
 import { FakeTransport, type FakeReply, type RecordedRequest } from './helpers/fake-transport';
 import { reachableStrings } from './helpers/reachable-strings';
@@ -67,6 +70,26 @@ function ok(result: unknown): FakeReply {
  */
 function sitesPage(ids: string[], totalRows?: number): FakeReply {
   return ok({ totalRows, currentPage: 1, currentSize: ids.length, data: ids.map((siteId) => ({ siteId, name: `Site ${siteId}` })) });
+}
+
+/**
+ * Generated site ids site-<from> … site-<from + count - 1>.
+ * @param {number} from - The first number.
+ * @param {number} count - How many.
+ * @returns {string[]} The ids.
+ */
+function siteIds(from: number, count: number): string[] {
+  return Array.from({ length: count }, (_, index) => `site-${from + index}`);
+}
+
+/**
+ * The path of one page of the site listing.
+ * @param {number} page - The page number.
+ * @param {number} [pageSize] - The page size asked for.
+ * @returns {string} The path with its query.
+ */
+function sitesPagePath(page: number, pageSize = 100): string {
+  return `${SITES}?page=${page}&pageSize=${pageSize}`;
 }
 
 // The controller's "access token expired" answer (unverified code, see TOKEN_REJECTED_ERROR_CODES)
@@ -315,6 +338,101 @@ describe('OpenApiClient: pagination', () => {
     assert.equal(small.items.length, 3);
   }); // End of test "the defensive page cap (${MAX_PAGES} pages by default, or..."
 
+  test('a sane totalRows wins over a short page: the walk goes on until the raw entries fetched reach it', async () => {
+    const { client, transport } = setup();
+    transport
+      .on('POST', TOKEN_PATH, tokenReply('AT-1'))
+      .on('GET', sitesPagePath(1), sitesPage(siteIds(0, 100), 150))
+      .on('GET', sitesPagePath(2), sitesPage(siteIds(100, 30), 150))
+      .on('GET', sitesPagePath(3), sitesPage(siteIds(130, 20), 150));
+    const list = await client.listSites();
+    assert.equal(list.truncated, false);
+    assert.deepEqual(list.items.map((site) => site.id), siteIds(0, 150), 'the rows after the short page 2 are read too');
+    assert.deepEqual(transport.log().slice(1), [1, 2, 3].map((page) => `GET ${sitesPagePath(page)}`));
+  }); // End of test "a sane totalRows wins over a short page..."
+
+  test('a controller that caps the page size (asked 100, serves 40) is read completely; the page cap still bounds such a walk', async () => {
+    const { client, transport } = setup();
+    transport
+      .on('POST', TOKEN_PATH, tokenReply('AT-1'))
+      .on('GET', sitesPagePath(1), sitesPage(siteIds(0, 40), 100))
+      .on('GET', sitesPagePath(2), sitesPage(siteIds(40, 40), 100))
+      .on('GET', sitesPagePath(3), sitesPage(siteIds(80, 20), 100));
+    const list = await client.listSites();
+    assert.deepEqual(list, { items: siteIds(0, 100).map((id) => ({ id, name: `Site ${id}` })), truncated: false });
+    assert.equal(transport.requests.length, 1 + 3);
+
+    const capped = setup();
+    let next = 0;
+    capped.transport.on('POST', TOKEN_PATH, tokenReply('AT-1'));
+    for (let page = 1; page <= 4; page++) {
+      capped.transport.on('GET', sitesPagePath(page), () => sitesPage(siteIds((next += 10), 10), 999999));
+    }
+    const short = await capped.client.listAll('v1', ['sites'], validateOpenApiSite, (site) => site.id, { maxPages: 3 });
+    assert.equal(short.truncated, true, 'unfinished at the page cap');
+    assert.equal(capped.transport.requests.length, 1 + 3, 'never more than the page cap');
+  }); // End of test "a controller that caps the page size..."
+
+  test('an empty page before totalRows is reached is explicitly incomplete (truncated), and nothing more is requested; totalRows 0 with an empty page is complete', async () => {
+    const cases: Array<[string, FakeReply, FakeReply, number]> = [
+      ['full page, then an empty one', sitesPage(siteIds(0, 100), 150), sitesPage([], 150), 100],
+      ['short page, then an empty one', sitesPage(siteIds(0, 4), 10), sitesPage([], 10), 4]
+    ];
+    for (const [label, first, second, kept] of cases) {
+      const { client, transport } = setup();
+      transport
+        .on('POST', TOKEN_PATH, tokenReply('AT-1'))
+        .on('GET', sitesPagePath(1), first)
+        .on('GET', sitesPagePath(2), second)
+        .on('GET', sitesPagePath(3), sitesPage(siteIds(500, 10), 150));
+      const list = await client.listSites();
+      assert.equal(list.truncated, true, label);
+      assert.equal(list.items.length, kept, label);
+      assert.equal(transport.requests.length, 1 + 2, `${label}: the walk stopped at the empty page`);
+    } // End of the loop over the empty-page cases
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', sitesPagePath(1), sitesPage([], 0));
+    assert.deepEqual(await client.listSites(), { items: [], truncated: false });
+  }); // End of test "an empty page before totalRows is reached..."
+
+  test('a totalRows that changes between pages (another value, dropped, or appearing on a later page) is explicitly incomplete at once', async () => {
+    const cases: Array<[number | undefined, number | undefined]> = [
+      [150, 160],
+      [150, 149],
+      [150, undefined],
+      [undefined, 150]
+    ];
+    for (const [first, second] of cases) {
+      const { client, transport } = setup();
+      transport
+        .on('POST', TOKEN_PATH, tokenReply('AT-1'))
+        .on('GET', sitesPagePath(1), sitesPage(siteIds(0, 100), first))
+        .on('GET', sitesPagePath(2), sitesPage(siteIds(100, 50), second))
+        .on('GET', sitesPagePath(3), sitesPage(siteIds(150, 10), second));
+      const list = await client.listSites();
+      const label = `totalRows ${first} then ${second}`;
+      assert.equal(list.truncated, true, label);
+      assert.equal(transport.requests.length, 1 + 2, `${label}: no page after the contradiction`);
+    } // End of the loop over the changing totals
+  }); // End of test "a totalRows that changes between pages..."
+
+  test('a page that only repeats earlier entries makes no progress: truncated at once, with or without totalRows (a controller ignoring `page`)', async () => {
+    const cases: Array<[string, FakeReply]> = [
+      ['totalRows 150, the same 50 rows on every page', sitesPage(siteIds(0, 50), 150)],
+      ['no totalRows, the same full page on every page', sitesPage(siteIds(0, 100))]
+    ];
+    for (const [label, reply] of cases) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1'));
+      for (let page = 1; page <= MAX_PAGES; page++) {
+        transport.on('GET', sitesPagePath(page), reply);
+      }
+      const list = await client.listSites();
+      assert.equal(list.truncated, true, label);
+      assert.equal(transport.requests.length, 1 + 2, `${label}: stopped at the first page without a new entry`);
+    } // End of the loop over the repeating-page cases
+  }); // End of test "a page that only repeats earlier entries..."
+
   test('the page size is checked (1–1000)', async () => {
     const { client } = setup();
     for (const pageSize of [0, 1001, 2.5]) {
@@ -430,11 +548,15 @@ describe('Open API validators (fixtures)', () => {
     }
   });
 
-  test('validateOpenApiPage(): a page needs a data array', () => {
+  test('validateOpenApiPage(): a page needs a data array; totalRows is kept only as a sane count', () => {
     for (const fixture of siteFixtures.invalidPages) {
       assert.throws(() => validateOpenApiPage((fixture as { result?: unknown }).result, 'sites'), OpenApiError, fixture.name);
     }
     assert.deepEqual(validateOpenApiPage({ data: [], totalRows: -1 }, 'sites'), { data: [], totalRows: null });
+    for (const insane of [2.5, '5', Number.POSITIVE_INFINITY, Number.NaN, 2 ** 53, null, true]) {
+      assert.equal(validateOpenApiPage({ data: [], totalRows: insane }, 'sites').totalRows, null, String(insane));
+    }
+    assert.equal(validateOpenApiPage({ data: [], totalRows: 0 }, 'sites').totalRows, 0);
   });
 
   test('malformed payloads reached through the client fail the call with malformedResponse', async () => {
@@ -857,3 +979,166 @@ describe('OpenApiClient: AP-group write contract (fixtures: tests/fixtures/opena
     }
   });
 }); // End of the describe block for the AP-group write contract
+
+/**
+ * Resolves an SSID contract path of tests/fixtures/openapi/ssids.json.
+ * @param {string} template - The path with {omadacId} / {siteId} / {ssidId}.
+ * @param {string} [ssidId] - The SSID id (default: the fixture's).
+ * @returns {string} The path.
+ */
+function ssidPath(template: string, ssidId: string = ssidFixtures.ssidId): string {
+  return template.replace('{omadacId}', OMADAC_ID).replace('{siteId}', ssidFixtures.siteId).replace('{ssidId}', ssidId);
+}
+
+/**
+ * Asserts the contract of one recorded SSID read: GET, the exact versioned
+ * path (+ query), the access-token header, JSON accepted, no body.
+ * @param {RecordedRequest} request - The recorded request.
+ * @param {string} path - The expected path including the query string.
+ * @param {'v1' | 'v2'} version - The expected API version.
+ */
+function assertReadContract(request: RecordedRequest, path: string, version: 'v1' | 'v2'): void {
+  assert.equal(request.method, 'GET');
+  assert.equal(request.path, path);
+  assert.ok(request.path.startsWith(`/openapi/${version}/${OMADAC_ID}/sites/${ssidFixtures.siteId}/wireless-network/ssids`), `explicit ${version} path`);
+  assert.equal(request.headers.Authorization, 'AccessToken=AT-1');
+  assert.equal(request.headers.Accept, 'application/json');
+  assert.equal(request.body, undefined, 'no body');
+  assert.equal(request.headers['Content-Type'], undefined);
+}
+
+/**
+ * One catalog entry with a generated id (for multi-page listings).
+ * @param {number} index - The entry's number.
+ * @returns {Record<string, unknown>} The raw entry.
+ */
+function generatedSsid(index: number): Record<string, unknown> {
+  return { id: `5f00c0ffee${String(index).padStart(14, '0')}`, name: `Red ${index}`, description: true, chooseDevices: 1, band: 3, security: 3 };
+}
+
+describe('OpenApiClient: Wi-Fi network read contract (fixtures: tests/fixtures/openapi/ssids.json)', () => {
+  const { siteId, ssidId } = ssidFixtures;
+  const catalogPath = ssidPath(ssidFixtures.catalog.path);
+  const detailPath = ssidPath(ssidFixtures.detail.path);
+  const bindingsPath = ssidPath(ssidFixtures.bindings.path);
+
+  test('listSsids(): GET /openapi/v2/{omadacId}/sites/{siteId}/wireless-network/ssids?page=1&pageSize=100, entries validated by allowlist', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', `${catalogPath}?page=1&pageSize=100`, ok(ssidFixtures.catalog.page));
+    const list = await client.listSsids(siteId);
+    assert.equal(list.truncated, false);
+    assert.deepEqual(JSON.parse(JSON.stringify(list.items)), ssidFixtures.catalog.expected);
+    assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `GET ${catalogPath}?page=1&pageSize=100`]);
+    assertReadContract(transport.requests[1], `${catalogPath}?page=1&pageSize=100`, 'v2');
+  });
+
+  test('listSsids(): pagination walks page=1, page=2 … until a short page or totalRows, deduplicating by id; the page cap marks it truncated', async () => {
+    const { client, transport } = setup();
+    const first = Array.from({ length: 100 }, (_, index) => generatedSsid(index));
+    const second = [...Array.from({ length: 30 }, (_, index) => generatedSsid(100 + index)), generatedSsid(0)];
+    transport
+      .on('POST', TOKEN_PATH, tokenReply('AT-1'))
+      .on('GET', `${catalogPath}?page=1&pageSize=100`, ok({ totalRows: 131, data: first }))
+      .on('GET', `${catalogPath}?page=2&pageSize=100`, ok({ totalRows: 131, data: second }));
+    const list = await client.listSsids(siteId);
+    assert.equal(list.items.length, 130, 'the repeated id is kept once');
+    assert.equal(list.truncated, false);
+    assert.deepEqual(transport.log().slice(1), [`GET ${catalogPath}?page=1&pageSize=100`, `GET ${catalogPath}?page=2&pageSize=100`]);
+
+    const capped = setup();
+    capped.transport.on('POST', TOKEN_PATH, tokenReply('AT-1'));
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const data = Array.from({ length: 100 }, (_, index) => generatedSsid(page * 1000 + index));
+      capped.transport.on('GET', `${catalogPath}?page=${page}&pageSize=100`, ok({ totalRows: 999999, data }));
+    }
+    const truncated = await capped.client.listSsids(siteId);
+    assert.equal(truncated.truncated, true);
+    assert.equal(capped.transport.requests.length, 1 + MAX_PAGES, 'never more than the page cap');
+  }); // End of test "listSsids(): pagination walks..."
+
+  test('listSsids(): a garbage page, or ONE malformed entry among valid ones, rejects the whole listing as malformedResponse', async () => {
+    for (const page of ssidFixtures.validators.garbagePages) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', `${catalogPath}?page=1&pageSize=100`, ok(page));
+      await expectOpenApiError(client.listSsids(siteId), 'malformedResponse');
+    }
+    for (const { name, entry } of ssidFixtures.validators.catalogInvalid) {
+      const { client, transport } = setup();
+      const data = [...ssidFixtures.catalog.page.data, entry];
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', `${catalogPath}?page=1&pageSize=100`, ok({ totalRows: data.length, data }));
+      const error = await expectOpenApiError(client.listSsids(siteId), 'malformedResponse');
+      assert.match(error.diagnostic, /\(ssids\)/, name);
+    }
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', `${catalogPath}?page=1&pageSize=100`, { body: { msg: 'no errorCode' } });
+    await expectOpenApiError(client.listSsids(siteId), 'malformedResponse');
+  }); // End of test "listSsids(): a garbage page..."
+
+  test('getSsidDetail(): GET /openapi/v1/…/wireless-network/ssids/{ssidId} (no query); only allowlisted values, never the key', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', detailPath, ok(ssidFixtures.detail.result));
+    const detail = await client.getSsidDetail(siteId, ssidId);
+    assert.deepEqual(JSON.parse(JSON.stringify(detail)), ssidFixtures.detail.expected);
+    assert.ok(!JSON.stringify(detail).includes(ssidFixtures.detail.result.pskSetting.securityKey));
+    assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `GET ${detailPath}`]);
+    assertReadContract(transport.requests[1], detailPath, 'v1');
+  });
+
+  test('getSsidApGroups(): GET /openapi/v1/…/wireless-network/ssids/{ssidId}/ap-groups (no query); only the group ids', async () => {
+    const { client, transport } = setup();
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', bindingsPath, ok(ssidFixtures.bindings.result));
+    assert.deepEqual(await client.getSsidApGroups(siteId, ssidId), ssidFixtures.bindings.expected);
+    assert.deepEqual(transport.log(), [`POST ${TOKEN_PATH}`, `GET ${bindingsPath}`]);
+    assertReadContract(transport.requests[1], bindingsPath, 'v1');
+  });
+
+  test('malformed details and bindings are malformedResponse, and the error never quotes the payload (no passphrase)', async () => {
+    const secret = ssidFixtures.secrets.detail.pskSetting.securityKey;
+    const details = [...ssidFixtures.validators.detailInvalid.map(({ result }) => result), { ...ssidFixtures.secrets.detail, id: '5f00c0ffee0000000000c002' }];
+    for (const result of details) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', detailPath, ok(result));
+      const error = await expectOpenApiError(client.getSsidDetail(siteId, ssidId), 'malformedResponse');
+      assert.ok(!error.message.includes(secret) && !inspect(error).includes(secret));
+    }
+    for (const { name, result } of ssidFixtures.validators.bindingsInvalid) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', bindingsPath, ok(result));
+      await expectOpenApiError(client.getSsidApGroups(siteId, ssidId), 'malformedResponse').then((error) => assert.match(error.diagnostic, /ssid ap-groups/, name));
+    }
+  }); // End of test "malformed details and bindings are malformedResponse..."
+
+  test('controller errors: an errorCode is apiError carrying it, HTTP 500 is httpError; nothing is retried', async () => {
+    const reads: Array<[string, (client: OpenApiClient) => Promise<unknown>]> = [
+      [detailPath, (client) => client.getSsidDetail(siteId, ssidId)],
+      [bindingsPath, (client) => client.getSsidApGroups(siteId, ssidId)],
+      [`${catalogPath}?page=1&pageSize=100`, (client) => client.listSsids(siteId)]
+    ];
+    for (const [path, read] of reads) {
+      const { client, transport } = setup();
+      transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', path, { body: { errorCode: -1300, msg: 'Failed to get site information.' } });
+      const error = await expectOpenApiError(read(client), 'apiError');
+      assert.equal(error.controllerErrorCode, -1300);
+      assert.equal(transport.requestsTo('GET', path).length, 1);
+      const failing = setup();
+      failing.transport.on('POST', TOKEN_PATH, tokenReply('AT-1')).on('GET', path, { status: 500, body: '<html>oops</html>' });
+      assert.equal((await expectOpenApiError(read(failing.client), 'httpError')).httpStatus, 500);
+    } // End of the loop over the three reads
+  }); // End of test "controller errors: an errorCode is apiError..."
+
+  test('unusable arguments are refused before anything is sent; a closed client sends nothing', async () => {
+    const { client, transport } = setup();
+    await assert.rejects(client.listSsids(''), /Invalid site id/);
+    for (const badId of ['', '..', '../sites', 'a b', 'x'.repeat(129)]) {
+      await assert.rejects(client.getSsidDetail(siteId, badId), /Invalid SSID detail arguments/, badId);
+      await assert.rejects(client.getSsidApGroups(siteId, badId), /Invalid SSID bindings arguments/, badId);
+    }
+    await assert.rejects(client.getSsidDetail('', ssidId), /Invalid SSID detail arguments/);
+    assert.deepEqual(transport.requests, []);
+    client.close();
+    await expectOpenApiError(client.listSsids(siteId), 'clientClosed');
+    await expectOpenApiError(client.getSsidDetail(siteId, ssidId), 'clientClosed');
+    await expectOpenApiError(client.getSsidApGroups(siteId, ssidId), 'clientClosed');
+    assert.deepEqual(transport.requests, []);
+  }); // End of test "unusable arguments are refused..."
+}); // End of the describe block for the Wi-Fi network read contract

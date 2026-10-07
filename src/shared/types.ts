@@ -208,8 +208,9 @@ export interface SiteInfo {
 // single-site controller and a remembered site), and `sessionNonce`, an
 // opaque token identifying the installed controller session: the renderer
 // echoes it back verbatim with the management-access calls
-// (getManagementCapabilities(), testManagementAccess() and the AP-group
-// calls), so they only ever act on the session it is showing.
+// (getManagementCapabilities(), testManagementAccess(), the AP-group calls
+// and getManagedNetworks()), so they only ever act on the session it is
+// showing.
 // When authentication succeeds but the controller manages several sites and
 // none could be picked automatically, `success` is false with no `error`,
 // `needsSiteSelection` is true, `sites` lists the authorized sites, and
@@ -261,7 +262,8 @@ export type ManagementReason =
 
 // The management capabilities of the connected controller, computed in main
 // (flags plus a reason code — never a raw controller response).
-// `manageApGroups` (phase 16) and `manageWifiNetworks` (phases 17–19) are
+// `manageApGroups` (phase 16) and `manageWifiNetworks` (phases 17–19; the
+// network read of getManagedNetworks() requires it) are
 // true only when every §2.2 check passed; `reason` says why they are off
 // (null when they are on). `diagnostic` optionally adds a short technical
 // detail built by main from error codes and counts only (e.g. "httpError,
@@ -396,6 +398,63 @@ export interface ApGroupActionResult {
   apGroupId?: string;
 }
 
+// The security mode of a Wi-Fi network (Open API `security`: 0 open, 2
+// WPA-Enterprise, 3 WPA-Personal, 4 PPSK without RADIUS, 5 PPSK with RADIUS).
+// 'unknown' when the controller reported it in no sane way, reported another
+// value, or its catalog and detail disagree — never guessed.
+export type NetworkSecurity = 'open' | 'wpaEnterprise' | 'wpaPersonal' | 'ppskWithoutRadius' | 'ppskWithRadius' | 'unknown';
+
+// One radio band of a Wi-Fi network (the same keys as ApGroupBandValues)
+export type NetworkBand = 'band2g' | 'band5g' | 'band6g';
+
+// Where a Wi-Fi network is broadcast: 'allAccessPoints' — the controller
+// reports "all devices" (`chooseDevices` 0); 'apGroups' — it reports "not all
+// devices" (`chooseDevices` 1) and its bound AP groups are known
+// (`apGroupIds`); 'unknown' — anything else (a missing, unrecognized or
+// contradictory device selection, or unknown bindings), never "all".
+export type NetworkScope = 'allAccessPoints' | 'apGroups' | 'unknown';
+
+// One Wi-Fi network as the management views see it (Open API data, validated
+// in main and built by allowlist: it never carries a passphrase, PSK / PPSK
+// key, RADIUS secret or any other controller field). `null` means unknown
+// (not reported sanely, or contradictory) — never a default:
+// - `bands` — the bands it uses, in the order 2.4 / 5 / 6 GHz;
+// - `enabled` — its enable state (spec §5 fallback);
+// - `hasPassphrase` — true for a WPA-Personal network whose passphrase the
+//   controller reports as set, false for an open network, null otherwise
+//   (the passphrase itself never leaves main);
+// - `apGroupIds` — the ids of the AP groups it is bound to (the same values
+//   as the internal `wlanId`s), as the controller reports them, also for an
+//   'allAccessPoints' network.
+export interface ManagedNetwork {
+  id: string;
+  name: string;
+  security: NetworkSecurity;
+  bands: NetworkBand[] | null;
+  enabled: boolean | null;
+  hasPassphrase: boolean | null;
+  scope: NetworkScope;
+  apGroupIds: string[] | null;
+}
+
+// Why getManagedNetworks() failed. 'notConnected' / 'superseded' as for the
+// capabilities (a late result is discarded); 'managementUnavailable' — the
+// capabilities say Wi-Fi network management is off; 'networkListIncomplete'
+// — the controller lists more networks than one read handles (or the list
+// could not be read completely); 'requestFailed' — the controller could not
+// be asked, refused, or answered something malformed (`diagnostic` carries
+// the failed call and error codes only).
+export type ManagedNetworksError = ManagementCheckError | 'managementUnavailable' | 'networkListIncomplete' | 'requestFailed';
+
+// Result of getManagedNetworks(): the site's Wi-Fi networks, in the
+// controller's catalog order.
+export interface ManagedNetworksResult {
+  success: boolean;
+  error?: ManagedNetworksError;
+  diagnostic?: string;
+  networks?: ManagedNetwork[];
+}
+
 // Data loaded from controller
 export interface ControllerData {
   accessPoints: AccessPoint[];
@@ -425,6 +484,7 @@ export interface OmadaAPI {
   createApGroup(request: ApGroupCreateRequest): Promise<ApGroupActionResult>;
   renameApGroup(request: ApGroupRenameRequest): Promise<ApGroupActionResult>;
   deleteApGroup(request: ApGroupDeleteRequest): Promise<ApGroupActionResult>;
+  getManagedNetworks(sessionNonce: string): Promise<ManagedNetworksResult>;
 }
 
 // IPC channel names (type-safe)
@@ -456,6 +516,10 @@ export const IPC_CHANNELS = {
   MANAGEMENT_AP_GROUP_CREATE: 'management:ap-group-create',
   MANAGEMENT_AP_GROUP_RENAME: 'management:ap-group-rename',
   MANAGEMENT_AP_GROUP_DELETE: 'management:ap-group-delete',
+
+  // Wi-Fi network read model (Open API, management on only): the site's
+  // networks with their scope and bindings, never a passphrase
+  MANAGEMENT_NETWORKS: 'management:networks',
 } as const;
 
 // Type for IPC channel values

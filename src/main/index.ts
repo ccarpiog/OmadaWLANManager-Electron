@@ -22,6 +22,7 @@ import {
   deleteApGroupReply,
   getSessionCapabilities,
   managedApGroupsReply,
+  managedNetworksReply,
   renameApGroupReply,
   testManagementAccess
 } from './controller-session';
@@ -42,6 +43,7 @@ import {
   ConnectionResult,
   GroupListing,
   ManagedApGroupsResult,
+  ManagedNetworksResult,
   ManagementCapabilitiesResult,
   RendererConfig
 } from '../shared/types';
@@ -608,3 +610,16 @@ ipcMain.handle(IPC_CHANNELS.MANAGEMENT_AP_GROUP_DELETE, async (event, payload: u
   assertTrustedIpcSender(event);
   return deleteApGroupReply(connectionManager, parseApGroupDeleteRequest(payload, extra));
 }); // End of the MANAGEMENT_AP_GROUP_DELETE handler
+
+// The Wi-Fi network read model (todo.md 4.10; spec §2.3, §3, §4.5): the
+// site's networks with their security, bands, enable state, scope and bound
+// AP-group ids. The trusted sender, then the pure guard (exactly one
+// argument: the 32-hex session nonce), then the installed session named by
+// it (notConnected / superseded otherwise, also when it changes while the
+// read runs); 'managementUnavailable' unless Wi-Fi network management is on
+// (ControllerSession.listManagedNetworks()). The reply is the allowlisted DTO
+// — never a passphrase or another secret — with codes-only diagnostics.
+ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORKS, async (event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagedNetworksResult> => {
+  assertTrustedIpcSender(event);
+  return managedNetworksReply(connectionManager, requireSessionNonce(sessionNonce, extra));
+}); // End of the MANAGEMENT_NETWORKS handler

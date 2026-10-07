@@ -1,0 +1,241 @@
+{
+  "description": "The documented contract of the Open API Wi-Fi network (SSID) reads (docs/omada-openapi-ops.md, controller 6.3.0.45 spec): the v2 catalog page, the v1 detail and the v1 AP-group bindings, with method and versioned path ({omadacId}, {siteId}, {ssidId} placeholders), plus validator cases for src/main/wifi-network-model.ts and a payload set whose every secret-looking value (and every unknown key) holds a string starting with SENTINEL: none of them may reach the DTO or an IPC reply. Every id and name is made up.",
+  "siteId": "64f0c0ffee0000000000a001",
+  "ssidId": "5f00c0ffee0000000000c001",
+  "catalog": {
+    "method": "GET",
+    "path": "/openapi/v2/{omadacId}/sites/{siteId}/wireless-network/ssids",
+    "page": {
+      "totalRows": 3,
+      "currentPage": 1,
+      "currentSize": 100,
+      "data": [
+        { "ssidId": "5f00c0ffee0000000000c001", "id": "5f00c0ffee0000000000c001", "name": "Casa", "description": true, "chooseDevices": 1, "band": 3, "guestNetEnable": false, "security": 3, "broadcast": true, "vlanEnable": false },
+        { "ssidId": "5f00c0ffee0000000000c002", "id": "5f00c0ffee0000000000c002", "name": "Invitados", "description": false, "chooseDevices": 1, "band": 1, "guestNetEnable": true, "security": 0, "broadcast": true, "vlanEnable": true, "vlanId": 20, "vlanPoolIds": "20" },
+        { "ssidId": "5f00c0ffee0000000000c003", "id": "5f00c0ffee0000000000c003", "name": "Todos", "description": true, "chooseDevices": 0, "band": 7, "guestNetEnable": false, "security": 2, "broadcast": false, "vlanEnable": false }
+      ]
+    },
+    "expected": [
+      { "id": "5f00c0ffee0000000000c001", "name": "Casa", "enabled": true, "security": "wpaPersonal", "bands": ["band2g", "band5g"], "deviceSelection": "selected" },
+      { "id": "5f00c0ffee0000000000c002", "name": "Invitados", "enabled": false, "security": "open", "bands": ["band2g"], "deviceSelection": "selected" },
+      { "id": "5f00c0ffee0000000000c003", "name": "Todos", "enabled": true, "security": "wpaEnterprise", "bands": ["band2g", "band5g", "band6g"], "deviceSelection": "all" }
+    ]
+  },
+  "detail": {
+    "method": "GET",
+    "path": "/openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}",
+    "result": {
+      "ssidId": "5f00c0ffee0000000000c001",
+      "id": "5f00c0ffee0000000000c001",
+      "name": "Casa",
+      "band": 3,
+      "guestNetEnable": false,
+      "security": 3,
+      "broadcast": true,
+      "vlanEnable": false,
+      "hidePwd": false,
+      "pskSetting": { "securityKey": "fixture-passphrase-1", "versionPsk": 2, "encryptionPsk": 3, "gikRekeyPskEnable": false },
+      "mloEnable": false,
+      "pmfMode": 2,
+      "enable11r": false,
+      "deviceType": 1,
+      "ssidEnable": true,
+      "chooseDevices": 1,
+      "prohibitWifiShare": false,
+      "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5c", "6512a0e1f3b2c41d2e3f4a5b"]
+    },
+    "expected": {
+      "id": "5f00c0ffee0000000000c001",
+      "enabled": true,
+      "security": "wpaPersonal",
+      "bands": ["band2g", "band5g"],
+      "deviceSelection": "selected",
+      "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5c", "6512a0e1f3b2c41d2e3f4a5b"],
+      "hasSecurityKey": true
+    }
+  },
+  "bindings": {
+    "method": "GET",
+    "path": "/openapi/v1/{omadacId}/sites/{siteId}/wireless-network/ssids/{ssidId}/ap-groups",
+    "result": {
+      "apGroups": [
+        { "id": "6512a0e1f3b2c41d2e3f4a5b", "name": "Default", "apNum": 4, "remainingBinding": { "0": 6, "1": 6, "2": 8 } },
+        { "id": "6512a0e1f3b2c41d2e3f4a5c", "name": "zGrupo B", "apNum": 1, "remainingBinding": { "0": 7, "1": 7, "2": 8 } }
+      ],
+      "maxSsids2G": 8,
+      "maxSsids5G": 8,
+      "maxSsids6G": 8,
+      "maxSsidsMlo": 4
+    },
+    "expected": { "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5b", "6512a0e1f3b2c41d2e3f4a5c"] }
+  },
+  "validators": {
+    "catalogValid": [
+      {
+        "name": "ssidEnable (boolean) wins over description",
+        "entry": { "id": "5f00c0ffee0000000000c010", "name": "Taller", "ssidEnable": false, "description": true },
+        "expected": { "id": "5f00c0ffee0000000000c010", "name": "Taller", "enabled": false }
+      },
+      {
+        "name": "a non-boolean ssidEnable falls back to a boolean description (spec §5)",
+        "entry": { "id": "5f00c0ffee0000000000c011", "name": "Taller", "ssidEnable": "yes", "description": false },
+        "expected": { "id": "5f00c0ffee0000000000c011", "name": "Taller", "enabled": false }
+      },
+      {
+        "name": "a description that is text is not an enable state: not reported",
+        "entry": { "id": "5f00c0ffee0000000000c012", "name": "Taller", "description": "Red del taller" },
+        "expected": { "id": "5f00c0ffee0000000000c012", "name": "Taller" }
+      },
+      {
+        "name": "only the deprecated ssidId: it is the id",
+        "entry": { "ssidId": "5f00c0ffee0000000000c013", "name": "Taller" },
+        "expected": { "id": "5f00c0ffee0000000000c013", "name": "Taller" }
+      },
+      {
+        "name": "unrecognized security, band and device selection are marked, never defaulted",
+        "entry": { "id": "5f00c0ffee0000000000c014", "name": "Rara", "security": 1, "band": 8, "chooseDevices": 2 },
+        "expected": { "id": "5f00c0ffee0000000000c014", "name": "Rara", "security": "unrecognized", "bands": "unrecognized", "deviceSelection": "unrecognized" }
+      },
+      {
+        "name": "wrong types and band 0 are unrecognized",
+        "entry": { "id": "5f00c0ffee0000000000c015", "name": "Rara", "security": "3", "band": 0, "chooseDevices": "0" },
+        "expected": { "id": "5f00c0ffee0000000000c015", "name": "Rara", "security": "unrecognized", "bands": "unrecognized", "deviceSelection": "unrecognized" }
+      },
+      {
+        "name": "null values are not reported",
+        "entry": { "id": "5f00c0ffee0000000000c016", "name": "Nula", "security": null, "band": null, "chooseDevices": null, "ssidEnable": null, "description": null },
+        "expected": { "id": "5f00c0ffee0000000000c016", "name": "Nula" }
+      }
+    ],
+    "catalogInvalid": [
+      { "name": "null", "entry": null },
+      { "name": "a number", "entry": 42 },
+      { "name": "a string", "entry": "Casa" },
+      { "name": "an array", "entry": [{ "id": "5f00c0ffee0000000000c001", "name": "Casa" }] },
+      { "name": "an empty object", "entry": {} },
+      { "name": "missing id", "entry": { "name": "Casa" } },
+      { "name": "numeric id", "entry": { "id": 42, "name": "Casa" } },
+      { "name": "empty id", "entry": { "id": "", "name": "Casa" } },
+      { "name": "id with a space", "entry": { "id": "5f00 c0ffee", "name": "Casa" } },
+      { "name": "id with a path", "entry": { "id": "../sites", "name": "Casa" } },
+      { "name": "unusable id although ssidId is usable", "entry": { "id": 7, "ssidId": "5f00c0ffee0000000000c001", "name": "Casa" } },
+      { "name": "id and ssidId disagree", "entry": { "id": "5f00c0ffee0000000000c001", "ssidId": "5f00c0ffee0000000000c002", "name": "Casa" } },
+      { "name": "missing name", "entry": { "id": "5f00c0ffee0000000000c001" } },
+      { "name": "numeric name", "entry": { "id": "5f00c0ffee0000000000c001", "name": 42 } },
+      { "name": "empty name", "entry": { "id": "5f00c0ffee0000000000c001", "name": "" } }
+    ],
+    "detailInvalid": [
+      { "name": "null", "result": null },
+      { "name": "an array", "result": [] },
+      { "name": "a string", "result": "detail" },
+      { "name": "no id at all", "result": { "name": "Casa", "ssidEnable": true } },
+      { "name": "another SSID's id", "result": { "id": "5f00c0ffee0000000000c002", "name": "Invitados" } },
+      { "name": "id and ssidId disagree", "result": { "id": "5f00c0ffee0000000000c001", "ssidId": "5f00c0ffee0000000000c002" } }
+    ],
+    "bindingsValid": [
+      { "name": "an empty list", "result": { "apGroups": [] }, "expected": { "apGroupIds": [] } },
+      { "name": "duplicates are deduplicated", "result": { "apGroups": [{ "id": "6512a0e1f3b2c41d2e3f4a5b" }, { "id": "6512a0e1f3b2c41d2e3f4a5b" }] }, "expected": { "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5b"] } },
+      { "name": "apGroups absent: not reported", "result": { "maxSsids2G": 8 }, "expected": {} },
+      { "name": "apGroups null: not reported", "result": { "apGroups": null }, "expected": {} }
+    ],
+    "bindingsInvalid": [
+      { "name": "null", "result": null },
+      { "name": "an array", "result": [{ "id": "6512a0e1f3b2c41d2e3f4a5b" }] },
+      { "name": "apGroups a string", "result": { "apGroups": "6512a0e1f3b2c41d2e3f4a5b" } },
+      { "name": "apGroups an object", "result": { "apGroups": { "id": "6512a0e1f3b2c41d2e3f4a5b" } } },
+      { "name": "a null entry", "result": { "apGroups": [null] } },
+      { "name": "a mixed list", "result": { "apGroups": [{ "id": "6512a0e1f3b2c41d2e3f4a5b" }, null] } },
+      { "name": "an entry without id", "result": { "apGroups": [{ "id": "6512a0e1f3b2c41d2e3f4a5b" }, { "name": "Default" }] } },
+      { "name": "a numeric id", "result": { "apGroups": [{ "id": 42 }] } },
+      { "name": "bare id strings instead of objects", "result": { "apGroups": ["6512a0e1f3b2c41d2e3f4a5b"] } }
+    ],
+    "garbagePages": [
+      null,
+      "page",
+      { "totalRows": 1 },
+      { "data": "Casa" },
+      { "data": { "id": "5f00c0ffee0000000000c001", "name": "Casa" } }
+    ]
+  },
+  "secrets": {
+    "entry": {
+      "id": "5f00c0ffee0000000000c0ff",
+      "ssidId": "5f00c0ffee0000000000c0ff",
+      "name": "Secreta",
+      "description": "SENTINEL-catalog-description",
+      "ssidEnable": true,
+      "chooseDevices": 1,
+      "band": 2,
+      "security": 3,
+      "broadcast": true,
+      "securityKey": "SENTINEL-catalog-securityKey",
+      "pskSetting": { "securityKey": "SENTINEL-catalog-psk" },
+      "vlanPoolIds": "SENTINEL-catalog-vlan-pool",
+      "unknownCatalogKey": { "nested": ["SENTINEL-catalog-unknown-nested"] },
+      "unknownCatalogList": ["SENTINEL-catalog-unknown-list", { "secret": "SENTINEL-catalog-unknown-secret" }]
+    },
+    "detail": {
+      "id": "5f00c0ffee0000000000c0ff",
+      "ssidId": "5f00c0ffee0000000000c0ff",
+      "name": "SENTINEL-detail-name",
+      "band": 2,
+      "security": 3,
+      "ssidEnable": true,
+      "chooseDevices": 1,
+      "hidePwd": true,
+      "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5b"],
+      "pskSetting": {
+        "securityKey": "SENTINEL-detail-securityKey",
+        "versionPsk": 4,
+        "encryptionPsk": 3,
+        "gikRekeyPskEnable": true,
+        "rekeyPskInterval": 3600,
+        "passphrase": "SENTINEL-detail-psk-passphrase",
+        "history": [{ "securityKey": "SENTINEL-detail-old-key" }, "SENTINEL-detail-old-key-text"]
+      },
+      "entSetting": {
+        "radiusProfileId": "SENTINEL-detail-radius-profile",
+        "radiusSecret": "SENTINEL-detail-radius-secret",
+        "nasIdMode": 2,
+        "nasId": "SENTINEL-detail-nas-id"
+      },
+      "ppskSetting": {
+        "ppskProfileId": "SENTINEL-detail-ppsk-profile",
+        "radiusProfileId": "SENTINEL-detail-ppsk-radius",
+        "nasId": "SENTINEL-detail-ppsk-nas",
+        "keys": [{ "name": "laptop", "key": "SENTINEL-detail-ppsk-key" }, { "psk": "SENTINEL-detail-ppsk-psk" }]
+      },
+      "password": "SENTINEL-detail-password",
+      "passphrase": "SENTINEL-detail-passphrase",
+      "psk": "SENTINEL-detail-psk",
+      "clientSecret": "SENTINEL-detail-client-secret",
+      "accessToken": "SENTINEL-detail-access-token",
+      "wifiCallingId": "SENTINEL-detail-wifi-calling",
+      "macFilter": { "macFilterEnable": true, "macFilterId": "SENTINEL-detail-mac-filter", "ouiProfileIdList": ["SENTINEL-detail-oui"] },
+      "hotspotV2Setting": {
+        "hotspotV2Enable": true,
+        "operatorDomain": "SENTINEL-detail-operator",
+        "realmList": [{ "name": "SENTINEL-detail-realm", "encoding": 1, "eap": [{ "method": 1, "secret": "SENTINEL-detail-eap-secret" }] }]
+      },
+      "vlanSetting": { "mode": 1, "customConfig": { "customMode": 1, "vlanPoolIds": "SENTINEL-detail-vlan-pool", "lanNetworkVlanIds": { "SENTINEL-detail-lan-key": [1] } } },
+      "unknownDetailKey": { "deeper": { "deepest": ["SENTINEL-detail-unknown-deep", { "token": "SENTINEL-detail-unknown-token" }] } }
+    },
+    "bindings": {
+      "apGroups": [
+        { "id": "6512a0e1f3b2c41d2e3f4a5b", "name": "SENTINEL-bindings-group-name", "apNum": 3, "remainingBinding": { "SENTINEL-bindings-band": 1 }, "secret": "SENTINEL-bindings-secret", "psk": ["SENTINEL-bindings-psk"] }
+      ],
+      "maxSsids2G": 8,
+      "unknownBindingsKey": "SENTINEL-bindings-unknown"
+    },
+    "expected": {
+      "id": "5f00c0ffee0000000000c0ff",
+      "name": "Secreta",
+      "security": "wpaPersonal",
+      "bands": ["band5g"],
+      "enabled": true,
+      "hasPassphrase": true,
+      "scope": "apGroups",
+      "apGroupIds": ["6512a0e1f3b2c41d2e3f4a5b"]
+    }
+  }
+}

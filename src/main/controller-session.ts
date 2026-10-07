@@ -56,6 +56,16 @@
 // decided here on FRESH Open API data read right before the write, never on
 // what the renderer believed; the writes of one session run one at a time,
 // so two of them cannot both pass the same check.
+//
+// Wi-Fi network read model (todo.md 4.10; spec §2.3, §3, §4.5, §5):
+// listManagedNetworks() is the only caller of the Open API client's SSID
+// reads, under the same binding: 'managementUnavailable' unless the
+// capabilities say Wi-Fi network management is on, the Open API client of
+// the latest successful check run, and 'superseded' — nothing more sent, a
+// late answer discarded — after any await once the session is closed or
+// replaced or its client dropped. Its requests are bounded and deterministic
+// (sequential: the catalog pages, then two per network). The reply is the
+// allowlisted DTO of wifi-network-model.ts: no passphrase or other secret.
 
 import type {
   AccessPoint,
@@ -68,8 +78,12 @@ import type {
   GroupListing,
   GroupModel,
   ManagedApGroupsResult,
+  ManagedNetwork,
+  ManagedNetworksError,
+  ManagedNetworksResult,
   ManagementCapabilities,
   ManagementCapabilitiesResult,
+  ManagementCheckError,
   ManagementReason,
   SiteInfo
 } from '../shared/types';
@@ -84,8 +98,9 @@ import {
 import { ConnectionManager, createNonce, InstalledDetails, ManagedController } from './connection-manager';
 import { ConnectOutcome, OmadaController } from './omada-api';
 import type { OmadaTransport } from './omada-transport';
-import { OpenApiApGroupList, OpenApiClient, OpenApiClientOptions, OpenApiError } from './openapi-client';
+import { OpenApiApGroupList, OpenApiClient, OpenApiClientOptions, OpenApiError, PagedList } from './openapi-client';
 import { redactText } from './redact';
+import { MAX_MANAGED_NETWORKS, OpenApiSsid, OpenApiSsidBindings, OpenApiSsidDetail, toManagedNetwork } from './wifi-network-model';
 
 /** The Open API credentials (main process only — never over IPC or in a log). */
 export interface ManagementCredentials {
@@ -305,14 +320,68 @@ export function describeApGroupFailure(operation: ApGroupWriteOperation | 'list'
   return apGroupFailure('requestFailed', operation === 'list' ? `ap-groups: ${diagnostic}` : diagnostic);
 } // End of function describeApGroupFailure()
 
+/** The Open API calls of the Wi-Fi network read (the prefix of its diagnostics). */
+export type NetworkReadCall = 'ssids' | 'ssid detail' | 'ssid ap-groups';
+
+/** A failed Wi-Fi network read reply. */
+export interface NetworkReadFailure {
+  success: false;
+  error: ManagedNetworksError;
+  diagnostic?: string;
+}
+
 /**
- * One AP-group operation's view of management access: the verified Open API
- * client, the site, and whether the operation may still act.
+ * Builds a failed Wi-Fi network read reply.
+ * @param {ManagedNetworksError} error - The stable error code.
+ * @param {string} [diagnostic] - Codes-only technical detail.
+ * @returns {NetworkReadFailure} The reply.
+ */
+export function networkReadFailure(error: ManagedNetworksError, diagnostic?: string): NetworkReadFailure {
+  return diagnostic ? { success: false, error, diagnostic } : { success: false, error };
+}
+
+/**
+ * Maps a failed Open API call of the Wi-Fi network read to its reply: a
+ * closed client is 'superseded' (the session moved on), anything else
+ * 'requestFailed' with "<call>: <codes>" (e.g. "ssid detail:
+ * malformedResponse", "ssids: httpError, HTTP 503") — never controller text.
+ * @param {NetworkReadCall} call - The failed call.
+ * @param {unknown} error - The thrown value.
+ * @returns {NetworkReadFailure} The failed reply.
+ */
+export function describeNetworkReadFailure(call: NetworkReadCall, error: unknown): NetworkReadFailure {
+  if (error instanceof OpenApiError && error.code === 'clientClosed') {
+    return networkReadFailure('superseded');
+  }
+  return networkReadFailure('requestFailed', `${call}: ${describeOpenApiFailure(error)}`);
+}
+
+/**
+ * One management operation's view of management access: the verified Open
+ * API client, the site, and whether the operation may still act.
  */
 interface ManagementContext {
   client: OpenApiClient;
   siteId: string;
   isCurrent(): boolean;
+}
+
+/** Why a management operation got no context (assignable to every management reply). */
+interface ContextFailure {
+  success: false;
+  error: 'superseded' | 'managementUnavailable';
+}
+
+/** The capability flag a management operation needs. */
+type ManagementCapability = 'manageApGroups' | 'manageWifiNetworks';
+
+/**
+ * Tells whether #managementContext() answered with a failure.
+ * @param {ManagementContext | ContextFailure} value - Its answer.
+ * @returns {value is ContextFailure} True for a failure.
+ */
+function isContextFailure(value: ManagementContext | ContextFailure): value is ContextFailure {
+  return (value as ContextFailure).success === false;
 }
 
 /**
@@ -536,8 +605,8 @@ export class ControllerSession implements ManagedController {
    */
   async listManagedApGroups(isInstalled: () => boolean): Promise<ManagedApGroupsResult> {
     return this.#guarded('list', async () => {
-      const context = await this.#managementContext(isInstalled);
-      if (isApGroupFailure(context)) {
+      const context = await this.#managementContext(isInstalled, 'manageApGroups');
+      if (isContextFailure(context)) {
         return context;
       }
       const list = await this.#readApGroups(context);
@@ -552,6 +621,38 @@ export class ControllerSession implements ManagedController {
       return reply;
     }); // End of the guarded list operation
   } // End of function listManagedApGroups()
+
+  /**
+   * The site's Wi-Fi networks for the management views (Open API, Wi-Fi
+   * network management on only), as the allowlisted ManagedNetwork DTO
+   * (wifi-network-model.ts: id, name, security, bands, enable state,
+   * hasPassphrase, scope, bound AP-group ids — never a passphrase).
+   * Requests — all GET, one at a time, in this order, so their number is
+   * bounded and deterministic: the v2 catalog pages (⌈N / 100⌉, or more when
+   * the controller caps the page size below 100; at least 1, at most
+   * MAX_PAGES), then for each of the N networks, in catalog order, exactly 2:
+   * its v1 detail, then its v1 AP-group bindings. So N networks cost
+   * ⌈N / 100⌉ + 2N requests (1 + 2N while N ≤ 100). Completeness is an
+   * explicit ERROR, never a shorter list: a catalog the client could not
+   * prove complete (listAll()'s `truncated`: the page cap, an empty or
+   * repeating page before `totalRows` is reached, a changed `totalRows`) and
+   * a complete one with more than MAX_MANAGED_NETWORKS networks are both
+   * refused as 'networkListIncomplete' before any per-network request. The first
+   * failure ends the read — nothing more is sent — as 'requestFailed' with a
+   * codes-only diagnostic naming the call (a malformed answer is
+   * "<call>: malformedResponse"), or as 'superseded' once the session is
+   * closed or replaced or its Open API client dropped.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<ManagedNetworksResult>} The reply.
+   */
+  async listManagedNetworks(isInstalled: () => boolean): Promise<ManagedNetworksResult> {
+    try {
+      return await this.#readNetworks(isInstalled);
+    } catch (error) {
+      console.warn(redactText(`Wi-Fi network read failed unexpectedly: ${error instanceof Error ? error.name : 'unknown error'}`));
+      return networkReadFailure('requestFailed', 'unexpected');
+    }
+  } // End of function listManagedNetworks()
 
   /**
    * Creates an empty AP group (name only). The name is trimmed and validated
@@ -842,32 +943,33 @@ export class ControllerSession implements ManagedController {
   }
 
   /**
-   * The management context of one AP-group operation: waits for the
+   * The management context of one management operation: waits for the
    * capabilities (a run in flight, or one started when none is known), then
-   * requires AP-group management on and takes the Open API client of that
-   * run. `isCurrent()` is false once the session is closed or no longer
-   * installed, or that client was dropped or closed (any newer check run,
-   * a management-credentials save, close()).
+   * requires the operation's capability flag on and takes the Open API
+   * client of that run. `isCurrent()` is false once the session is closed or
+   * no longer installed, or that client was dropped or closed (any newer
+   * check run, a management-credentials save, close()).
    * @param {() => boolean} isInstalled - Whether this session is still the installed one.
-   * @returns {Promise<ManagementContext | ApGroupFailure>} The context, or
+   * @param {ManagementCapability} capability - The flag the operation needs.
+   * @returns {Promise<ManagementContext | ContextFailure>} The context, or
    *   'superseded' / 'managementUnavailable'.
    */
-  async #managementContext(isInstalled: () => boolean): Promise<ManagementContext | ApGroupFailure> {
+  async #managementContext(isInstalled: () => boolean, capability: ManagementCapability): Promise<ManagementContext | ContextFailure> {
     if (this.#closed || !isInstalled()) {
-      return apGroupFailure('superseded');
+      return { success: false, error: 'superseded' };
     }
     const capabilities = await this.waitForCapabilities();
     if (capabilities === null || this.#closed || !isInstalled()) {
-      return apGroupFailure('superseded');
+      return { success: false, error: 'superseded' };
     }
-    if (!capabilities.manageApGroups) {
-      return apGroupFailure('managementUnavailable');
+    if (capabilities[capability] !== true) {
+      return { success: false, error: 'managementUnavailable' };
     }
     const client = this.#openApi;
     const site = this.site;
     if (client === null || client.isClosed || site === null) {
       // The capabilities were replaced meanwhile (a newer check run)
-      return apGroupFailure('superseded');
+      return { success: false, error: 'superseded' };
     }
     return {
       client,
@@ -881,8 +983,9 @@ export class ControllerSession implements ManagedController {
   } // End of function #managementContext()
 
   /**
-   * Reads the site's AP groups fresh from the Open API. A truncated list is
-   * refused: the name and delete rules need the complete list.
+   * Reads the site's AP groups fresh from the Open API. A truncated list
+   * (possibly incomplete, see OpenApiClient.listAll()) is refused as
+   * 'groupListIncomplete': the name and delete rules need the complete list.
    * @param {ManagementContext} context - The operation's context.
    * @returns {Promise<OpenApiApGroupList | ApGroupFailure>} The list, or the failure.
    */
@@ -922,6 +1025,88 @@ export class ControllerSession implements ManagedController {
   }
 
   /**
+   * The Wi-Fi network read (see listManagedNetworks()): the catalog, then
+   * for each network its detail and its bindings, one request at a time,
+   * stopping after every await once the operation is no longer current.
+   * @param {() => boolean} isInstalled - Whether this session is still the installed one.
+   * @returns {Promise<ManagedNetworksResult>} The reply.
+   */
+  async #readNetworks(isInstalled: () => boolean): Promise<ManagedNetworksResult> {
+    const context = await this.#managementContext(isInstalled, 'manageWifiNetworks');
+    if (isContextFailure(context)) {
+      return context;
+    }
+    let catalog: PagedList<OpenApiSsid>;
+    try {
+      catalog = await context.client.listSsids(context.siteId);
+    } catch (error) {
+      return this.#networkCallFailed(context, 'ssids', error);
+    }
+    if (!context.isCurrent()) {
+      return networkReadFailure('superseded');
+    }
+    if (catalog.truncated) {
+      return this.#logNetworkFailure(networkReadFailure('networkListIncomplete', 'ssids truncated'));
+    }
+    if (catalog.items.length > MAX_MANAGED_NETWORKS) {
+      return this.#logNetworkFailure(networkReadFailure('networkListIncomplete', `ssids ${catalog.items.length}, over ${MAX_MANAGED_NETWORKS}`));
+    }
+
+    const networks: ManagedNetwork[] = [];
+    for (const entry of catalog.items) {
+      let detail: OpenApiSsidDetail;
+      try {
+        detail = await context.client.getSsidDetail(context.siteId, entry.id);
+      } catch (error) {
+        return this.#networkCallFailed(context, 'ssid detail', error);
+      }
+      if (!context.isCurrent()) {
+        return networkReadFailure('superseded');
+      }
+      let bindings: OpenApiSsidBindings;
+      try {
+        bindings = await context.client.getSsidApGroups(context.siteId, entry.id);
+      } catch (error) {
+        return this.#networkCallFailed(context, 'ssid ap-groups', error);
+      }
+      if (!context.isCurrent()) {
+        return networkReadFailure('superseded');
+      }
+      networks.push(toManagedNetwork(entry, detail, bindings));
+    } // End of the loop that reads each network's detail and bindings
+    return { success: true, networks };
+  } // End of function #readNetworks()
+
+  /**
+   * Turns the failure of one Wi-Fi network read call into its reply:
+   * 'superseded' when the operation is no longer current (a late answer is
+   * discarded), otherwise the mapped, logged failure.
+   * @param {ManagementContext} context - The operation's context.
+   * @param {NetworkReadCall} call - The failed call.
+   * @param {unknown} error - The thrown value.
+   * @returns {NetworkReadFailure} The failure.
+   */
+  #networkCallFailed(context: ManagementContext, call: NetworkReadCall, error: unknown): NetworkReadFailure {
+    if (!context.isCurrent()) {
+      return networkReadFailure('superseded');
+    }
+    return this.#logNetworkFailure(describeNetworkReadFailure(call, error));
+  }
+
+  /**
+   * Logs a failed Wi-Fi network read (stable code + codes-only diagnostic,
+   * through the redactor) and returns the failure.
+   * @param {NetworkReadFailure} failure - The failure.
+   * @returns {NetworkReadFailure} The same failure.
+   */
+  #logNetworkFailure(failure: NetworkReadFailure): NetworkReadFailure {
+    if (failure.error !== 'superseded') {
+      console.warn(redactText(`Wi-Fi network read failed: ${failure.error}${failure.diagnostic ? ` (${failure.diagnostic})` : ''}`));
+    }
+    return failure;
+  }
+
+  /**
    * The create operation (see createApGroup()).
    * @param {string} rawName - The name as typed.
    * @param {() => boolean} isInstalled - Whether this session is still the installed one.
@@ -932,8 +1117,8 @@ export class ControllerSession implements ManagedController {
     if (!checked.ok) {
       return apGroupFailure(checked.error);
     }
-    const context = await this.#managementContext(isInstalled);
-    if (isApGroupFailure(context)) {
+    const context = await this.#managementContext(isInstalled, 'manageApGroups');
+    if (isContextFailure(context)) {
       return context;
     }
     const before = await this.#readApGroups(context);
@@ -985,8 +1170,8 @@ export class ControllerSession implements ManagedController {
     if (!checked.ok) {
       return apGroupFailure(checked.error);
     }
-    const context = await this.#managementContext(isInstalled);
-    if (isApGroupFailure(context)) {
+    const context = await this.#managementContext(isInstalled, 'manageApGroups');
+    if (isContextFailure(context)) {
       return context;
     }
     const list = await this.#readApGroups(context);
@@ -1022,8 +1207,8 @@ export class ControllerSession implements ManagedController {
    * @returns {Promise<ApGroupActionResult>} The reply.
    */
   async #delete(apGroupId: string, isInstalled: () => boolean): Promise<ApGroupActionResult> {
-    const context = await this.#managementContext(isInstalled);
-    if (isApGroupFailure(context)) {
+    const context = await this.#managementContext(isInstalled, 'manageApGroups');
+    if (isContextFailure(context)) {
       return context;
     }
     // Fresh data right before the DELETE: the policy never trusts the
@@ -1112,29 +1297,36 @@ export function testManagementAccess(manager: ConnectionManager<ControllerSessio
   return capabilitiesReply(manager, sessionNonce, (session) => session.refreshCapabilities());
 }
 
+/** The ownership failure of a session-owned management call (assignable to every management reply). */
+interface SessionFailure {
+  success: false;
+  error: ManagementCheckError;
+}
+
 /**
- * Runs an AP-group call for the installed session the renderer names by its
- * session nonce, with the ownership rules of capabilitiesReply():
- * notConnected without an installed session or when it is closed already (a
- * newer connect attempt is in flight), superseded for another session's nonce
- * — and superseded when the session is no longer the installed one (or
- * closed) once `run` settles, so a late result is never reported.
+ * Runs a session-owned management call (AP groups, Wi-Fi networks) for the
+ * installed session the renderer names by its session nonce, with the
+ * ownership rules of capabilitiesReply(): notConnected without an installed
+ * session or when it is closed already (a newer connect attempt is in
+ * flight), superseded for another session's nonce — and superseded when the
+ * session is no longer the installed one (or closed) once `run` settles, so
+ * a late result is never reported.
  * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
  * @param {string} sessionNonce - The nonce the renderer echoed (format-checked by the IPC guard).
  * @param {(session: ControllerSession, isInstalled: () => boolean) => Promise<T>} run - The operation.
- * @returns {Promise<T | ApGroupFailure>} Its reply, or the ownership failure.
+ * @returns {Promise<T | SessionFailure>} Its reply, or the ownership failure.
  */
-async function apGroupReply<T extends ManagedApGroupsResult | ApGroupActionResult>(
+async function sessionOwnedReply<T>(
   manager: ConnectionManager<ControllerSession>,
   sessionNonce: string,
   run: (session: ControllerSession, isInstalled: () => boolean) => Promise<T>
-): Promise<T | ApGroupFailure> {
+): Promise<T | SessionFailure> {
   const session = manager.controller;
   if (session === null || session.isClosed) {
-    return apGroupFailure('notConnected');
+    return { success: false, error: 'notConnected' };
   }
   if (session.sessionNonce !== sessionNonce) {
-    return apGroupFailure('superseded');
+    return { success: false, error: 'superseded' };
   }
   /**
    * Whether the session is still the installed, open one.
@@ -1143,10 +1335,10 @@ async function apGroupReply<T extends ManagedApGroupsResult | ApGroupActionResul
   const isInstalled = (): boolean => manager.controller === session && !session.isClosed;
   const reply = await run(session, isInstalled);
   if (!isInstalled()) {
-    return apGroupFailure('superseded');
+    return { success: false, error: 'superseded' };
   }
   return reply;
-} // End of function apGroupReply()
+} // End of function sessionOwnedReply()
 
 /**
  * MANAGEMENT_AP_GROUPS: the installed session's AP groups with their capacity
@@ -1156,7 +1348,18 @@ async function apGroupReply<T extends ManagedApGroupsResult | ApGroupActionResul
  * @returns {Promise<ManagedApGroupsResult>} The reply.
  */
 export function managedApGroupsReply(manager: ConnectionManager<ControllerSession>, sessionNonce: string): Promise<ManagedApGroupsResult> {
-  return apGroupReply(manager, sessionNonce, (session, isInstalled) => session.listManagedApGroups(isInstalled));
+  return sessionOwnedReply(manager, sessionNonce, (session, isInstalled) => session.listManagedApGroups(isInstalled));
+}
+
+/**
+ * MANAGEMENT_NETWORKS: the installed session's Wi-Fi networks
+ * (ControllerSession.listManagedNetworks()).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {string} sessionNonce - The session nonce from the connect result.
+ * @returns {Promise<ManagedNetworksResult>} The reply.
+ */
+export function managedNetworksReply(manager: ConnectionManager<ControllerSession>, sessionNonce: string): Promise<ManagedNetworksResult> {
+  return sessionOwnedReply(manager, sessionNonce, (session, isInstalled) => session.listManagedNetworks(isInstalled));
 }
 
 /**
@@ -1166,7 +1369,7 @@ export function managedApGroupsReply(manager: ConnectionManager<ControllerSessio
  * @returns {Promise<ApGroupActionResult>} The reply.
  */
 export function createApGroupReply(manager: ConnectionManager<ControllerSession>, request: ApGroupCreateRequest): Promise<ApGroupActionResult> {
-  return apGroupReply(manager, request.sessionNonce, (session, isInstalled) => session.createApGroup(request.name, isInstalled));
+  return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) => session.createApGroup(request.name, isInstalled));
 }
 
 /**
@@ -1176,7 +1379,7 @@ export function createApGroupReply(manager: ConnectionManager<ControllerSession>
  * @returns {Promise<ApGroupActionResult>} The reply.
  */
 export function renameApGroupReply(manager: ConnectionManager<ControllerSession>, request: ApGroupRenameRequest): Promise<ApGroupActionResult> {
-  return apGroupReply(manager, request.sessionNonce, (session, isInstalled) => session.renameApGroup(request.apGroupId, request.name, isInstalled));
+  return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) => session.renameApGroup(request.apGroupId, request.name, isInstalled));
 }
 
 /**
@@ -1186,5 +1389,5 @@ export function renameApGroupReply(manager: ConnectionManager<ControllerSession>
  * @returns {Promise<ApGroupActionResult>} The reply.
  */
 export function deleteApGroupReply(manager: ConnectionManager<ControllerSession>, request: ApGroupDeleteRequest): Promise<ApGroupActionResult> {
-  return apGroupReply(manager, request.sessionNonce, (session, isInstalled) => session.deleteApGroup(request.apGroupId, isInstalled));
+  return sessionOwnedReply(manager, request.sessionNonce, (session, isInstalled) => session.deleteApGroup(request.apGroupId, isInstalled));
 }

@@ -12,6 +12,7 @@ import type {
   GroupListing,
   IPC_CHANNELS as SHARED_IPC_CHANNELS,
   ManagedApGroupsResult,
+  ManagedNetworksResult,
   ManagementCapabilitiesResult,
   OmadaAPI,
   RendererConfig
@@ -41,6 +42,7 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
   MANAGEMENT_AP_GROUP_CREATE: 'management:ap-group-create',
   MANAGEMENT_AP_GROUP_RENAME: 'management:ap-group-rename',
   MANAGEMENT_AP_GROUP_DELETE: 'management:ap-group-delete',
+  MANAGEMENT_NETWORKS: 'management:networks',
 };
 
 // Expose a safe API to the renderer process. `satisfies OmadaAPI` (type-only,
@@ -143,5 +145,13 @@ contextBridge.exposeInMainWorld('omadaAPI', {
 
   deleteApGroup: (request: ApGroupDeleteRequest): Promise<ApGroupActionResult> => {
     return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_AP_GROUP_DELETE, request);
+  },
+
+  // Wi-Fi network read model (management on only): the site's networks with
+  // their scope and bound AP-group ids. Sends only the session nonce of the
+  // connect result (echoed back verbatim); the reply never carries a
+  // passphrase (only `hasPassphrase`)
+  getManagedNetworks: (sessionNonce: string): Promise<ManagedNetworksResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.MANAGEMENT_NETWORKS, sessionNonce);
   }
 } satisfies OmadaAPI);
