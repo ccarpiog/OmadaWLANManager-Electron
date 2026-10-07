@@ -162,11 +162,12 @@ function isGone(flow: FlowContext): boolean {
 }
 
 /**
- * The network with an id on the managed list held now, or null.
+ * The network with an id on the managed list held now, or null (also used
+ * by the "Broadcast on" flow, binding-flow.ts).
  * @param {string} networkId - The network's id.
  * @returns {ManagedNetwork | null} The network, or null.
  */
-function heldNetwork(networkId: string): ManagedNetwork | null {
+export function heldNetwork(networkId: string): ManagedNetwork | null {
   return state.managedNetworks?.find(candidate => candidate.id === networkId) ?? null;
 }
 
@@ -295,11 +296,12 @@ async function guardedWrite(flow: FlowContext, progressKey: keyof Translations, 
  * reported and the data marked stale, like after a move), then the
  * management capabilities (kept on screen while asked again) and, through
  * them, the fresh AP-group view and the managed network list (awaited).
- * Stops when the session changes.
+ * Stops when the session changes. Also the reload after a "Broadcast on"
+ * write (binding-flow.ts).
  * @param {number} generation - The session generation of the flow.
  * @returns {Promise<void>}
  */
-async function reloadAfterWrite(generation: number): Promise<void> {
+export async function reloadAfterWrite(generation: number): Promise<void> {
   try {
     await loadData();
   } catch (error) {

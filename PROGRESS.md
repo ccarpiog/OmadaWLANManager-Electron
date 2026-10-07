@@ -31,7 +31,7 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 18a | 4.11 (first half) Open API network writes (create, `basic-config`, change password, `enable`, delete), pure builders + validators, read-merge-write on fresh data, security / band dependents, guarded IPC, smoke stub — risk: high; worker: opus | **done** — `docs/progress-archive/phase-18a.md` |
 | 18b | 4.11 (second half) Wi-Fi networks view editing UI: create, staged edit, Change password, enable / disable, delete with impact summary, Enterprise / PPSK explained, freshness gate, smoke es + en — risk: high; worker: opus | **done** — `docs/progress-archive/phase-18b.md` |
 | 19a | 4.12 (first half) Open API SSID ↔ AP-group binding write (`PATCH …/ssids/{ssidId}/ap-groups`), pure binding plan + per-band capacity validation on fresh data, never for "All access points", guarded IPC, smoke stub — risk: high; worker: opus | **done** — `docs/progress-archive/phase-19a.md` |
-| 19b | 4.12 (second half) "Broadcast on" editor UI: searchable group checkboxes, before / after reach diff, capacity problems per group + band, confirmation, smoke es + en — risk: high | pending |
+| 19b | 4.12 (second half) "Broadcast on" editor UI: searchable group checkboxes, before / after reach diff, capacity problems per group + band, confirmation, smoke es + en — risk: high; worker: opus | **done** — `docs/progress-archive/phase-19b.md` |
 | 20 | 4.13 Integration, hardening, docs, `docs/live-test-checklist.md` — risk: routine | pending |
 | I-1a | Inbox I-1 (spec `autoclaude/processed/10-tplink-cloud-controllers.md`, part A): cloud config fields, `CloudAccountClient`, `OpenApiClient` cloud route, redactor additions, guarded IPC `cloud:test` / `cloud:controllers`, smoke-stub channels, `docs/omada-cloud-openapi.md` — risk: high; position: after phase 20 | pending |
 | I-1b | Inbox I-1 part B: Open-API-only `ControllerSession` + `ConnectionManager` local / cloud targets, Open API moves verified by re-read, race tests — risk: high; position: after I-1a | pending |
@@ -143,11 +143,18 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 - Acceptance met: build exit 0; `npm test` 956/956; smoke 220/220; `npm run tls-probe` 25/25; preload `electron`-only; no conflicted copies; no PATCH for All-access-points, unknown scope, catalog / detail disagreement or an incomplete catalog (tests fail on revert).
 - Review: Codex, `docs/reviews/phase19a.md`, ship-with-fixes. Blocker (scope judged without the catalog, so a catalog / detail disagreement could be bound) → catalog re-read inside the serialized operation, scope from `toManagedNetwork()`; should-fix (MLO ignored by the capacity check) → `mloEnable` carried and checked fail-closed. Fixed by an opus worker, each with tests that fail on revert; orchestrator re-ran build, tests, smoke and probe, all green.
 
+### Phase 19b — "Broadcast on" editor UI (2026-10-07)
+
+- Risk: high. Workers: opus (phase); the review fix was done by the orchestrator (no worker). Full narrative: `docs/progress-archive/phase-19b.md`; the detailed "how" and the phase 20 live checks are `todo.md` 4.12 "Done (19b)" (4.12 now ✅).
+- New: pure `network-bindings.ts` (availability per network — "All access points" / unknown scope read-only with the reason, never converted; `bindingWriteBlock()` on the 18b gate + a failed AP-group read; diff, before / after reach with "at least" bounds; `clientCapacityProblems()` on added groups, unreported = unknown; `checkBindingDraft()` the only request builder, the complete set; strict reply parser; exhaustive typed code → es / en table), `binding-dialog.ts` (`#bindingModal`, searchable checkboxes, live preview, review step, 18b guard), `binding-flow.ts` (one exclusive operation, re-read before confirming, management re-checked before the write, main's refusal + `capacityProblems` shown in the editor, reload + toast + focus). "Broadcast on" section in the managed network detail. `network-dialog.ts` / `network-flow.ts` export their guard, `heldNetwork()`, `reloadAfterWrite()`. 56 i18n keys (es/en). No main-side change.
+- Acceptance met: build exit 0; `npm test` 1001/1001; smoke 250/250 (9th launch `[bind]`, 30 checks, es + en); `npm run tls-probe` 25/25; no `innerHTML`; preload `electron`-only; no conflicted copies.
+- Review: Codex, `docs/reviews/phase19b.md`, ship-with-fixes, 0 blockers. Should-fix (the reply parser accepted contradictory replies, e.g. `success: true` beside an error) → discriminated schema, fixed by the orchestrator with new boundary tests; build, tests, smoke and probe re-run green.
+
 ## Inbox
 
 - 2026-10-07 10:09: triaged `10-tplink-cloud-controllers.md` → **queued** as I-1 (split I-1a / I-1b / I-1c per the item's own suggestion), after phase 20. The user's decisions D5–D7 in it match the session memory of 2026-10-07; the TP-Link portal's Open API page is not yet enabled for the account, so I-1 builds against the documented contract and fixtures only.
 
-## Plan status: ACTIVE — phases 8–19a done, phases 19b–20 pending, then inbox phases I-1a–I-1c
+## Plan status: ACTIVE — phases 8–19b done, phase 20 pending, then inbox phases I-1a–I-1c
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -237,13 +244,21 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 19a leftovers (none blocking): no MLO `remainingBinding` key is documented (`MLO_REMAINING_BINDING_KEY = null`), so an MLO-enabled network
   can gain no AP group until phase 20 verifies a key (removals still work); an absent / malformed `mloEnable` refuses additions; whether the PATCH
   replaces or merges, the full-group error code and catalog / detail scope agreement are live checks listed in `todo.md` 4.12 "Done (19a)".
+- Phase 19b leftovers (none blocking): the editor is a dialog, so the 14b edit-mode stub stays unused; for an MLO network adding groups is
+  refused only at Save, by main (the renderer DTO has no MLO state); a bound group missing from the AP-group list can only be removed; the
+  editor's AP counts come from internal data, not the controller's `apNum`; the live checks are at the end of `todo.md` 4.12 "Done (19b)".
+- **User's uncommitted files (never commit, revert or reconcile them):** `tests/smoke/window-placement.cjs` (untracked) and the edits to
+  `tests/smoke/stub-main.cjs` and `tests/tls-probe/app-main.cjs` that load it appeared at 11:01 on 2026-10-07, during the 19b iteration, made
+  by neither the worker nor the orchestrator — the user's concurrent change (smoke / probe windows on a secondary display, shown without focus).
+  Commit phase work by explicit path so they stay out; verification runs fine with them in the tree.
 
 ## Next action
 
-**Phase 19b — todo 4.12 second half: the "Broadcast on" editor UI (risk: high).** Renderer only; the main side is done (19a). Call preload `updateNetworkBindings({sessionNonce, networkId, apGroupIds})` → `NetworkBindingsResult` `{success, error?, diagnostic?, capacityProblems?}` (`NetworkBindingsError` codes and `NetworkCapacityProblem` `{apGroupId, band: NetworkBand | 'mlo', reason: 'full' | 'unknown'}` in `src/shared/types.ts`). In the managed Wi-Fi networks view (`managed-networks-view.ts`, `network-editing.ts`, `network-dialog.ts`, `network-flow.ts`): a "Broadcast on" editor with searchable AP-group checkboxes, the before / after reach diff in groups and APs, capacity problems named per group and band (a client-side pre-check from the managed AP-group capacity; main's `capacityProblems` is authoritative), a confirmation, then reload data + capabilities + managed list and show the refreshed state; "All access points" and unknown-scope networks read-only with the reason; adding groups to an MLO network shows main's refusal (no MLO key known, see the 19a leftovers); the 18b freshness gate (`networkWriteBlock()` / `sameManagedNetwork()`, fresh re-read before confirming) and the multi-click / held-Enter guard; every code mapped to es + en text (`i18n-strings.ts`); hidden while management is off or re-checking. Smoke in es + en against the stub (`networkResults` key `management:network-bindings`, `networkWrites` `op: 'bindings'`): edit + confirm, cancel with nothing written, refused with main's reason, capacity problems shown, All-access-points / unknown scope read-only, no write on stale data.
+**Phase 20 — todo 4.13: integration, hardening, docs and the live-test checklist (risk: routine per the plan; reclassify at selection if the audits find real work).** Consider splitting before starting (e.g. 20a = IPC + redaction audit, async-race review across views, accessibility / keyboard smoke at the three widths; 20b = README + short user guide with es / en UI terms + `docs/live-test-checklist.md` per spec §6), and record the split in `todo.md` 4.13.
 
-- Read first: `todo.md` 4.12 (split + "Done (19a)") and 4.11 "Done (18b)"; `docs/management-design.md` §4.5 and §4.6 only; `docs/progress-archive/phase-18b.md` (freshness gate, dialog guard) and `phase-19a.md`.
-- Acceptance (19b): `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) all exit 0; no `innerHTML`; preload `electron`-only; every new string in both languages. No live controller (D4).
+- Read first: `todo.md` 4.13; `docs/management-design.md` §5 (the unknowns the checklist must cover) and §6 (checklist spec) only; the "Unverified live (phase 20)" lists in `todo.md` 4.8–4.12 "Done" entries and in `docs/progress-archive/phase-15a.md` … `phase-19b.md`, plus the phase 12–19b leftovers under Open risks above — every one becomes a checklist item for the user's manual run on "EAP Carpio" with disposable resources.
+- Acceptance (20): `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) all exit 0; no secret strings in renderer / IPC / log fixtures; every destructive path confirmed; the checklist covers every unknown in spec §5; no `innerHTML`; preload `electron`-only; new strings in both languages. No live controller and no `tplinkcloud.com` request (D4).
+- After phase 20: inbox phases I-1a → I-1b → I-1c (spec `autoclaude/processed/10-tplink-cloud-controllers.md`).
 
 ## Key paths
 

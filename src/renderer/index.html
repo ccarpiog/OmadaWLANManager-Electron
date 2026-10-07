@@ -452,6 +452,33 @@
     </div>
   </div>
 
+  <!-- "Broadcast on" dialog, one per binding edit (binding-dialog.ts fills it
+       per open): the editor (the search, the AP-group checkboxes, the
+       selection line, the live before / after preview and the capacity
+       problems, built per open with DOM APIs), then the confirmation of the
+       change (opens on Cancel: spec §4.7); the error line (the client-side
+       check or main's answer, with the capacity problems named per group and
+       band) and the progress of the re-read, the write and the reload -->
+  <div class="modal-overlay" id="bindingModal" role="dialog" aria-modal="true" aria-labelledby="bindingModalHeading" aria-describedby="bindingModalMessage">
+    <div class="modal modal-binding">
+      <div class="modal-header">
+        <h2 id="bindingModalHeading"></h2>
+      </div>
+      <div class="modal-body">
+        <p class="network-modal-message" id="bindingModalMessage"></p>
+        <div class="binding-editor" id="bindingModalEditor"></div>
+        <div class="network-summary" id="bindingModalSummary" hidden></div>
+        <div class="network-modal-error binding-modal-error" id="bindingModalError" role="alert" hidden></div>
+        <p class="network-modal-status" id="bindingModalStatus" role="status" tabindex="-1"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="cancelBindingBtn"></button>
+        <button type="button" class="btn btn-secondary" id="backBindingBtn" hidden></button>
+        <button type="button" class="btn btn-primary" id="confirmBindingBtn"></button>
+      </div>
+    </div>
+  </div>
+
   <!-- Site Selection Modal (multi-site controllers: the user picks which
        site to manage; site-modal.ts fills the list with one button per site) -->
   <div class="modal-overlay" id="siteModal" role="dialog" aria-modal="true" aria-labelledby="siteModalHeading">

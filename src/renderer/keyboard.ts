@@ -6,16 +6,16 @@
 //     list first; the destination picker has its own search);
 //   - Escape, in priority order (escapeAction() in view-state.ts): clears
 //     the current search, then exits edit mode (no view has one: the AP
-//     group actions and the Wi-Fi network edit — staged in its dialog, where
-//     Escape discards it — use dialogs; phase 19 may plug a view's edit mode
-//     into isEditModeActive() / exitEditMode() below), then closes the top
-//     dialog.
+//     group actions, the Wi-Fi network edit — staged in its dialog, where
+//     Escape discards it — and the "Broadcast on" editor use dialogs; a
+//     view's edit mode would plug into isEditModeActive() / exitEditMode()
+//     below), then closes the top dialog.
 // The search fields that clear themselves on Escape (AP groups, Wi-Fi
 // networks, destination) mark the event handled (preventDefault), so this
-// handler skips it. The move, AP group, Wi-Fi network, site-selection and
-// certificate dialogs close themselves on Escape through their own
-// listeners (their pending promises must settle through their cancel
-// paths); the settings modal is closed here.
+// handler skips it. The move, AP group, Wi-Fi network, "Broadcast on" (whose
+// own search clears first), site-selection and certificate dialogs close
+// themselves on Escape through their own listeners (their pending promises
+// must settle through their cancel paths); the settings modal is closed here.
 // ============================================================================
 
 import { closeApDetails } from './ap-details';
@@ -97,9 +97,8 @@ function focusViewSearch(): void {
 
 /**
  * Tells whether the top context is in edit mode. No view has an edit mode
- * (the AP group actions and the Wi-Fi network edit use dialogs, which
- * handle their own Escape); the binding editor (phase 19) may report one
- * here.
+ * (the AP group actions, the Wi-Fi network edit and the "Broadcast on"
+ * editor use dialogs, which handle their own Escape).
  * @returns {boolean} False while no view has an edit mode.
  */
 function isEditModeActive(): boolean {
@@ -116,8 +115,8 @@ function exitEditMode(): void {
 
 /**
  * Closes the top dialog on Escape. Only the settings modal is closed here:
- * the move, AP group, Wi-Fi network, site-selection and certificate dialogs
- * close themselves through their own Escape listeners.
+ * the move, AP group, Wi-Fi network, "Broadcast on", site-selection and
+ * certificate dialogs close themselves through their own Escape listeners.
  */
 function closeTopDialog(): void {
   closeSettings();
@@ -126,8 +125,8 @@ function closeTopDialog(): void {
 /**
  * Escape, in the §4.7 priority order: clear the current search, else exit
  * edit mode, else close the top dialog. With a dialog open, the background
- * view's search is not the top context's (no dialog has a search of its own
- * yet), so the dialog closes and the search stays.
+ * view's search is not the top context's (the "Broadcast on" dialog clears
+ * its own search itself), so the dialog closes and the search stays.
  * @param {KeyboardEvent} e - The keydown event.
  */
 function handleEscape(e: KeyboardEvent): void {

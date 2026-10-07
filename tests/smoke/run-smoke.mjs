@@ -180,7 +180,7 @@ const EXPECTED_BRIDGE = [
 // The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
 const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
 // One launch per run*() function in main()
-const EXPECTED_LAUNCHES = 8;
+const EXPECTED_LAUNCHES = 9;
 // Fingerprints of the fake controller's self-signed certificates (launch 3)
 const FINGERPRINT_A = Array.from({ length: 32 }, (_, index) => (index * 7 + 16).toString(16).toUpperCase().padStart(2, '0')).join(':');
 const FINGERPRINT_B = Array.from({ length: 32 }, (_, index) => (255 - index).toString(16).toUpperCase().padStart(2, '0')).join(':');
@@ -6830,7 +6830,8 @@ async function runManagedNetworks(electronInfo) {
         isDeepStrictEqual(casa.sections.aps.rows, defaultAps.map((name) => ({ link: name, status: statusOf(name), meta: null }))) &&
         casa.notes.length === 0 &&
         invitados.summary === nets.all && isDeepStrictEqual(invitados.facts, expectedFacts('es', nets.disabled, nets.open, nets.bandsAll, nets.passphraseNone)) &&
-        Object.keys(invitados.sections).length === 0 && isDeepStrictEqual(invitados.notes, [{ kind: 'allAccessPoints', text: nets.allNote }]) &&
+        isDeepStrictEqual(Object.keys(invitados.sections), ['bindings']) && isDeepStrictEqual(invitados.sections.bindings.notes, [BIND_TEXT.es.readOnlyAll]) &&
+        invitados.sections.bindings.links.length === 0 && isDeepStrictEqual(invitados.notes, [{ kind: 'allAccessPoints', text: nets.allNote }]) &&
         iot.summary === `${fmt(es.groupMany, { count: 2 })} · ${es.apOne}` &&
         isDeepStrictEqual(iot.facts, expectedFacts('es', nets.enabled, nets.wpaEnterprise, nets.band2g, nets.valueUnknown)) &&
         iot.sections.groups?.title === groupsTitle(2) &&
@@ -6838,7 +6839,7 @@ async function runManagedNetworks(electronInfo) {
         isDeepStrictEqual(iot.sections.aps?.rows, [{ link: 'Jardín', status: statusOf('Jardín'), meta: null }]) &&
         rara.summary === nets.unknownScope &&
         isDeepStrictEqual(rara.facts, expectedFacts('es', nets.valueUnknown, nets.valueUnknown, nets.valueUnknown, nets.valueUnknown)) &&
-        Object.keys(rara.sections).length === 0 &&
+        isDeepStrictEqual(Object.keys(rara.sections), ['bindings']) && isDeepStrictEqual(rara.sections.bindings.notes, [BIND_TEXT.es.readOnlyUnknown]) &&
         isDeepStrictEqual(rara.notes, [
           { kind: 'notEditable', text: NETEDIT_TEXT.es.notEditableUnknown },
           { kind: 'toggleUnavailable', text: NETEDIT_TEXT.es.toggleUnavailable },
@@ -8563,6 +8564,799 @@ async function runNetworkEditing(electronInfo) {
 } // End of function runNetworkEditing()
 
 // ============================================================================
+// Launch 9: "Broadcast on" (phase 19b) — the detail's section (Change AP
+// groups for a network bound to AP groups, Enterprise included; read-only
+// with the reason for "All access points" and an unknown scope, a forged
+// action opening nothing), hidden while management is off or being
+// re-checked; the editor (searchable AP-group checkboxes, the live before /
+// after reach, Escape clearing the search first, Cancel sending nothing),
+// the fresh re-read before the confirmation, Back, the write of the
+// COMPLETE new set with the refreshed scope shown, a removal, the client
+// refusals (no group, no confirmed room per group and band), main's
+// refusals (its capacityProblems, its reason, an MLO network), a
+// double-click or a held Enter never saving, no write on stale data (a
+// stale network list, a failed AP-group read) and a network changed on the
+// controller while the editor is open rebuilt on fresh data (Spanish, then
+// English)
+// ============================================================================
+
+// The [bind] network ids
+const BIND_IDS = { casa: '5f00c0ffee00000000000bd1', invitados: '5f00c0ffee00000000000bd2', clave: '5f00c0ffee00000000000bd3', empresa: '5f00c0ffee00000000000bd4', malla: '5f00c0ffee00000000000bd5' };
+// The AP-group ids of the fixture (24 hex digits)
+const BIND_DEFAULT = GROUP.Default.wlanId;
+const BIND_ZGRUPO = GROUP['zGrupo B'].wlanId;
+const BIND_ZNINGUNA = GROUP.zNinguna.wlanId;
+const BIND_EXTERIOR = GROUP.Exterior.wlanId;
+
+// The fake controller's Wi-Fi networks of the [bind] launch: Casa
+// (WPA-Personal, 2.4 + 5 GHz, bound to Default), Invitados (open, "All
+// access points"), Clave (PPSK, an unknown scope), Empresa (WPA-Enterprise,
+// bound to zGrupo B and Default) and Malla (WPA-Personal with MLO on, bound
+// to Default)
+const BIND_NETWORKS = [
+  neteditNetwork(BIND_IDS.casa, 'Casa', { security: 3, band: 3, enabled: true, chooseDevices: 1, groupIds: [BIND_DEFAULT] }),
+  neteditNetwork(BIND_IDS.invitados, 'Invitados', { security: 0, band: 1, enabled: true, chooseDevices: 0, groupIds: [] }),
+  neteditNetwork(BIND_IDS.clave, 'Clave', { security: 4, band: 2, enabled: true, chooseDevices: 7, groupIds: null }),
+  neteditNetwork(BIND_IDS.empresa, 'Empresa', { security: 2, band: 3, enabled: true, chooseDevices: 1, groupIds: [BIND_ZGRUPO, BIND_DEFAULT] }),
+  neteditNetwork(BIND_IDS.malla, 'Malla', { security: 3, band: 3, enabled: true, chooseDevices: 1, groupIds: [BIND_DEFAULT], extra: { mloEnable: true } }),
+];
+// The fake controller's AP groups, their internal network lists following
+// BIND_NETWORKS (so each group's derived remaining capacity has room)
+const BIND_GROUPS = [
+  { ...GROUP['zGrupo B'], ssidList: [{ ssidName: 'Invitados' }, { ssidName: 'Empresa' }] },
+  { ...GROUP.Default, ssidList: [{ ssidName: 'Casa' }, { ssidName: 'Invitados' }, { ssidName: 'Empresa' }, { ssidName: 'Malla' }] },
+  { ...GROUP.zNinguna, ssidList: [{ ssidName: 'Invitados' }] },
+  { ...GROUP.Exterior, ssidList: [{ ssidName: 'Invitados' }] },
+];
+
+// Strings of the "Broadcast on" editor (src/renderer/i18n-strings.ts)
+const BIND_TEXT = {
+  es: {
+    title: 'Se emite en',
+    edit: 'Cambiar grupos de AP',
+    readOnlyAll: 'La aplicación no cambia dónde se emite una red que llega a todos los puntos de acceso (nunca la convierte en una lista de grupos de AP): para limitarla a algunos grupos, hazlo en el controlador.',
+    readOnlyUnknown: 'Como no se sabe con claridad dónde se emite, aquí no se pueden cambiar sus grupos de AP.',
+    message: 'Elige los grupos de AP que emiten "{name}". No se envía nada hasta que revises el cambio y lo confirmes.',
+    searchLabel: 'Buscar grupos de AP',
+    searchPlaceholder: 'Buscar grupos de AP…',
+    noResults: 'Ningún grupo de AP coincide con "{query}".',
+    selectionNone: 'Ningún grupo elegido',
+    selectionOne: '1 grupo elegido',
+    selectionMany: '{count} grupos elegidos',
+    hiddenOne: '1 oculto por la búsqueda',
+    unchanged: 'Todavía no hay ningún cambio: marca o desmarca grupos para cambiar dónde se emite.',
+    reviewAction: 'Revisar el cambio',
+    reviewTitle: 'Revisar el cambio',
+    reviewMessage: 'Al guardar, "{name}" se emitirá así:',
+    saveAction: 'Guardar grupos de AP',
+    before: 'Ahora',
+    after: 'Después',
+    added: 'Se añaden',
+    removed: 'Se quitan',
+    kept: 'Se mantienen',
+    none: 'Ninguno',
+    noteRemoved: 'Los puntos de acceso de los grupos que se quitan dejarán de emitir esta red, y sus clientes conectados a ellos se desconectarán.',
+    overrides: 'No se pueden mostrar las redes personalizadas de cada AP: la API interna del controlador no informa de ellas.',
+    capacityTitle: 'Sin hueco confirmado para esta red:',
+    full: '{band}: sin hueco',
+    unknown: '{band}: no informado',
+    mloNote: 'Esta red usa MLO y el controlador no informa del hueco MLO de los grupos, así que la aplicación aún no le puede añadir grupos (sí quitarlos).',
+    saved: 'La red "{name}" se emite ahora en {scope}.',
+    errGroupsRequired: 'Elige al menos un grupo de AP. Para que la red deje de emitirse, desactívala.',
+    errCapacity: 'No todos los grupos de AP que añades tienen hueco para esta red: los grupos y bandas de abajo están llenos o no informan de su capacidad (la aplicación nunca supone que hay hueco). No se envió nada.',
+    errRequestFailed: 'El controlador no pudo completar la solicitud.',
+    groupsStale: 'La lista de grupos de AP no está al día (falló su última lectura), así que no se conoce su capacidad: no se puede cambiar dónde se emite una red hasta que se vuelva a leer (Actualizar).',
+    band2g: '2,4 GHz',
+  },
+  en: {
+    title: 'Broadcast on',
+    edit: 'Change AP groups',
+    readOnlyAll: 'The app does not change where a network on all access points is broadcast (it never turns it into a list of AP groups): to limit it to some groups, use the controller.',
+    readOnlyUnknown: 'As where it is broadcast is not clear, its AP groups can\'t be changed here.',
+    message: 'Choose the AP groups that broadcast "{name}". Nothing is sent until you review the change and confirm it.',
+    searchLabel: 'Search AP groups',
+    searchPlaceholder: 'Search AP groups…',
+    noResults: 'No AP group matches "{query}".',
+    selectionNone: 'No group selected',
+    selectionOne: '1 group selected',
+    selectionMany: '{count} groups selected',
+    hiddenOne: '1 hidden by the search',
+    unchanged: 'No change yet: tick or untick groups to change where it is broadcast.',
+    reviewAction: 'Review the change',
+    reviewTitle: 'Review the change',
+    reviewMessage: 'Saving changes where "{name}" is broadcast as follows:',
+    saveAction: 'Save AP groups',
+    before: 'Now',
+    after: 'After',
+    added: 'Added',
+    removed: 'Removed',
+    kept: 'Kept',
+    none: 'None',
+    noteRemoved: 'The access points of the removed groups will stop broadcasting this network, and its clients connected to them will be disconnected.',
+    overrides: 'Per-AP Wi-Fi network overrides cannot be shown: the controller\'s internal API does not report them.',
+    capacityTitle: 'No confirmed room for this network:',
+    full: '{band}: full',
+    unknown: '{band}: not reported',
+    mloNote: 'This network uses MLO and the controller does not report the groups\' MLO room, so the app can\'t add groups to it yet (removing them still works).',
+    saved: 'Network "{name}" is now broadcast on {scope}.',
+    errGroupsRequired: 'Pick at least one AP group. To stop broadcasting the network, disable it.',
+    errCapacity: 'Not every AP group you add has room for this network: the groups and bands below are full or do not report their capacity (the app never assumes there is room). Nothing was sent.',
+    errRequestFailed: 'The controller could not complete the request.',
+    groupsStale: 'The AP group list is not up to date (its last read failed), so its capacity is unknown: where a network is broadcast can\'t be changed until it is read again (Refresh).',
+    band2g: '2.4 GHz',
+  },
+};
+
+/**
+ * Reads the detail's "Broadcast on" section: its title, its action (id,
+ * data-binding-action, text, disabled, aria-describedby) and its notes;
+ * null when the detail has none.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object | null>} The section.
+ */
+function readBindingSection(page) {
+  return page.evaluate(() => {
+    const section = document.querySelector('#networkDetail .detail-section[data-section="bindings"]');
+    if (!section) return null;
+    const button = section.querySelector('button');
+    return {
+      title: section.querySelector('.detail-section-title')?.textContent ?? '',
+      button: button ? { id: button.id, action: button.dataset.bindingAction ?? null, text: button.textContent, disabled: button.disabled, describedBy: button.getAttribute('aria-describedby') } : null,
+      notes: Array.from(section.querySelectorAll('.detail-note')).map((note) => ({ kind: note.dataset.note, reason: note.dataset.reason ?? null, text: note.textContent })),
+    };
+  }); // End of the in-page section probe
+} // End of function readBindingSection()
+
+/**
+ * Reads the "Broadcast on" dialog: dialog semantics, its step, title and
+ * message, the search field, the group checkboxes (id, name, AP count,
+ * ticked, shown), the "no match" line, the selection line, the live preview
+ * (rows, capacity problems, notes), the confirmation (rows, notes), the
+ * error line (text, problem lines, notes), the progress line, the buttons,
+ * the focused element and the background's inertness.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The dialog's state.
+ */
+function readBindingModal(page) {
+  return page.evaluate(() => {
+    const modal = document.getElementById('bindingModal');
+    const editor = document.getElementById('bindingModalEditor');
+    const search = document.getElementById('bindingSearchInput');
+    const error = document.getElementById('bindingModalError');
+    const confirm = document.getElementById('confirmBindingBtn');
+    const back = document.getElementById('backBindingBtn');
+    const cancel = document.getElementById('cancelBindingBtn');
+    const capacity = editor.querySelector('.binding-capacity');
+    const empty = editor.querySelector('.binding-no-results');
+    /**
+     * Reads the summary rows below a selector.
+     * @param {string} selector - The rows' container.
+     * @returns {object[]} Each row's kind, label and value.
+     */
+    const rowsOf = (selector) => Array.from(document.querySelectorAll(`${selector} .network-summary-row`)).map((row) => ({ row: row.dataset.row, label: row.querySelector('dt')?.textContent ?? '', value: row.querySelector('dd')?.textContent ?? '' }));
+    return {
+      open: modal.classList.contains('visible'),
+      role: modal.getAttribute('role'),
+      ariaModal: modal.getAttribute('aria-modal'),
+      busy: modal.getAttribute('aria-busy'),
+      step: modal.dataset.step ?? null,
+      title: document.getElementById('bindingModalHeading')?.textContent ?? '',
+      message: document.getElementById('bindingModalMessage')?.textContent ?? '',
+      editorShown: !editor.hidden,
+      editorChildren: editor.children.length,
+      inputs: modal.querySelectorAll('input').length,
+      search: search ? { value: search.value, placeholder: search.placeholder, label: search.getAttribute('aria-label'), readOnly: search.readOnly } : null,
+      groups: Array.from(editor.querySelectorAll('label[data-group-id]')).map((label) => ({
+        id: label.dataset.groupId, name: label.querySelector('.network-choice-text')?.textContent ?? '', meta: label.querySelector('.detail-meta')?.textContent ?? null,
+        checked: label.querySelector('input')?.checked ?? false, shown: !label.hidden,
+      })),
+      empty: empty && !empty.hidden ? empty.textContent : null,
+      selection: document.getElementById('bindingSelection')?.textContent ?? null,
+      preview: rowsOf('#bindingModalEditor .binding-preview'),
+      capacity: capacity && !capacity.hidden ? { title: capacity.querySelector('.binding-capacity-title')?.textContent ?? '', lines: Array.from(capacity.querySelectorAll('li')).map((item) => item.textContent) } : null,
+      notes: Array.from(editor.querySelectorAll('.binding-note')).map((note) => note.textContent),
+      summaryShown: !document.getElementById('bindingModalSummary').hidden,
+      rows: rowsOf('#bindingModalSummary'),
+      summaryNotes: Array.from(document.querySelectorAll('#bindingModalSummary .network-summary-note')).map((note) => note.textContent),
+      errorShown: !error.hidden,
+      errorRole: error.getAttribute('role'),
+      error: error.querySelector('.binding-error-text')?.textContent ?? '',
+      errorLines: Array.from(error.querySelectorAll('li')).map((item) => item.textContent),
+      errorNotes: Array.from(error.querySelectorAll('.binding-error-note')).map((note) => note.textContent),
+      status: document.getElementById('bindingModalStatus')?.textContent ?? '',
+      cancel: cancel.textContent,
+      back: back.hidden ? null : back.textContent,
+      confirm: confirm.textContent,
+      confirmDisabled: confirm.disabled,
+      activeId: document.activeElement?.id || '',
+      inert: document.querySelector('.app-container')?.hasAttribute('inert'),
+    };
+  }); // End of the in-page binding dialog probe
+} // End of function readBindingModal()
+
+/**
+ * Waits until the "Broadcast on" dialog is open.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function waitForBindingModal(page) {
+  await page.waitForSelector('#bindingModal.visible', { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the "Broadcast on" dialog is closed.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function waitForBindingModalClosed(page) {
+  await page.waitForFunction(() => !document.getElementById('bindingModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the "Broadcast on" dialog shows the given step, idle (no
+ * re-read or write running).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} step - 'edit' or 'review'.
+ * @returns {Promise<void>}
+ */
+async function waitForBindingStep(page, step) {
+  await page.waitForFunction((expected) => {
+    const modal = document.getElementById('bindingModal');
+    return modal?.dataset.step === expected && !modal.hasAttribute('aria-busy');
+  }, step, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the "Broadcast on" dialog's error line shows the given text.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} text - Expected text.
+ * @returns {Promise<void>}
+ */
+async function waitForBindingError(page, text) {
+  await page.waitForFunction((expected) => {
+    const error = document.getElementById('bindingModalError');
+    return Boolean(error) && !error.hidden && error.querySelector('.binding-error-text')?.textContent === expected;
+  }, text, { timeout: WAIT_MS });
+}
+
+/**
+ * The stub's binding-write calls and its applied binding writes.
+ * @param {object} session - The launch.
+ * @returns {Promise<{ snapshot: object; calls: object[]; writes: object[] }>} The state.
+ */
+async function bindingWriteState(session) {
+  const snapshot = await stubState(session);
+  return {
+    snapshot,
+    calls: callsTo(snapshot, 'management:network-bindings'),
+    writes: snapshot.networkWrites.filter((write) => write.op === 'bindings'),
+    all: snapshot.networkWrites.length,
+  };
+}
+
+/**
+ * The counts of a binding write state: calls, applied binding writes, all
+ * applied writes.
+ * @param {{ calls: object[]; writes: object[]; all: number }} state - bindingWriteState().
+ * @returns {number[]} The counts.
+ */
+function bindingCounts(state) {
+  return [state.calls.length, state.writes.length, state.all];
+}
+
+/**
+ * Opens the "Broadcast on" dialog of a network from its detail.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} name - The network name.
+ * @returns {Promise<void>}
+ */
+async function openBindingEditor(page, name) {
+  await openNetworkDetail(page, name);
+  await page.click('#networkBindingsBtn');
+  await waitForBindingModal(page);
+  await waitForBindingStep(page, 'edit');
+}
+
+/**
+ * Ticks or unticks one AP group in the open editor.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} id - The group's id.
+ * @param {boolean} checked - Ticked or not.
+ * @returns {Promise<void>}
+ */
+async function tickBindingGroup(page, id, checked) {
+  await page.setChecked(`#bindingGroupList input[value="${id}"]`, checked);
+}
+
+/**
+ * Restores the fake controller's networks and groups and refreshes until
+ * the managed lists were read again.
+ * @param {object} session - The launch.
+ * @returns {Promise<void>}
+ */
+async function resetBindingController(session) {
+  await configureStub(session, { networks: BIND_NETWORKS, wlanGroups: BIND_GROUPS, networkResults: {}, apGroupOverrides: {}, failChannels: [], networksResult: null, delays: {} });
+  await refreshNetworksFully(session);
+}
+
+/**
+ * The [bind] checks of one language, over BIND_NETWORKS freshly loaded (see
+ * the launch's banner).
+ * @param {object} session - The launch.
+ * @param {'es' | 'en'} language - UI language.
+ * @returns {Promise<void>}
+ */
+async function runBindingChecks(session, language) {
+  const { page } = session;
+  const L = `[bind] ${language}`;
+  const text = TEXT[language];
+  const nets = NETS_TEXT[language];
+  const ed = NETEDIT_TEXT[language];
+  const b = BIND_TEXT[language];
+  const cancel = language === 'es' ? 'Cancelar' : 'Cancel';
+  const groups = (count) => (count === 1 ? text.groupOne : fmt(text.groupMany, { count }));
+  const aps = (count) => apCountLabel(language, count);
+  const reach = (groupCount, apCount) => `${groups(groupCount)} · ${aps(apCount)}`;
+  const firstState = await bindingWriteState(session);
+
+  await check(`${L}: the detail's "${b.title}" section — Casa (bound to Default) and Empresa (WPA-Enterprise: D3) offer "${b.edit}"; Invitados ("All access points") and Clave (unknown scope) have no control, only the note why their binding is read-only; a forged "${b.edit}" on Invitados opens nothing and sends nothing`, async () => {
+    await page.click('#navNetworks');
+    await waitForNetworksMode(page, 'managedReady');
+    await openNetworkDetail(page, 'Casa');
+    const casa = await readBindingSection(page);
+    await openNetworkDetail(page, 'Empresa');
+    const empresa = await readBindingSection(page);
+    await openNetworkDetail(page, 'Invitados');
+    const invitados = await readBindingSection(page);
+    const before = bindingCounts(await bindingWriteState(session));
+    await page.evaluate(() => {
+      const forged = document.createElement('button');
+      forged.type = 'button';
+      forged.textContent = 'forged';
+      forged.dataset.bindingAction = 'edit';
+      document.getElementById('networkDetail').appendChild(forged);
+      forged.click();
+      forged.remove();
+    });
+    await page.waitForTimeout(300);
+    const forgedModal = await readBindingModal(page);
+    const after = bindingCounts(await bindingWriteState(session));
+    await openNetworkDetail(page, 'Clave');
+    const clave = await readBindingSection(page);
+    return verdict(
+      casa?.title === b.title && isDeepStrictEqual(casa.button, { id: 'networkBindingsBtn', action: 'edit', text: b.edit, disabled: false, describedBy: null }) && casa.notes.length === 0 &&
+      empresa?.button?.text === b.edit && !empresa.button.disabled &&
+      invitados?.title === b.title && invitados.button === null && isDeepStrictEqual(invitados.notes, [{ kind: 'bindingsReadOnly', reason: 'allAccessPoints', text: b.readOnlyAll }]) &&
+      clave?.button === null && isDeepStrictEqual(clave.notes, [{ kind: 'bindingsReadOnly', reason: 'unknown', text: b.readOnlyUnknown }]) &&
+      !forgedModal.open && isDeepStrictEqual(after, before),
+      { casa, empresa, invitados, clave, forged: forgedModal.open, before, after }
+    );
+  }); // End of check "the detail's Broadcast on section"
+
+  await check(`${L}: the "${b.title}" section is hidden — not just disabled — while "Test management access" re-checks (fail closed) and while management is off ("siteNotFound"); it comes back once the check passes`, async () => {
+    let checking;
+    let off;
+    try {
+      await openNetworkDetail(page, 'Casa');
+      await configureStub(session, { delays: { 'management:test': 1000 } });
+      await openSettingsWhenIdle(page);
+      await page.click('#testManagementBtn');
+      await page.waitForFunction(() => document.getElementById('readOnlyBanner')?.dataset.reason === 'managementChecking', null, { timeout: WAIT_MS });
+      checking = await readBindingSection(page);
+      await waitForTestResult(page, CAPS_TEXT[language].result.ok);
+      await configureStub(session, { delays: {}, managementReason: 'siteNotFound', managementDiagnostic: 'sites 2' });
+      await page.click('#testManagementBtn');
+      await waitForTestResult(page, `${CAPS_TEXT[language].result.siteNotFound} (sites 2)`);
+      await page.click('#cancelSettingsBtn');
+      await waitForSettingsClosed(page);
+      await waitForNetworksMode(page, 'internal');
+      off = await readBindingSection(page);
+    } finally {
+      await configureStub(session, { delays: {}, managementReason: null, managementDiagnostic: null });
+      if (await page.isVisible('#settingsModal.visible')) {
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+      }
+      await recheckManagement(page, CAPS_TEXT[language].result.ok);
+    }
+    await waitForNetworksMode(page, 'managedReady');
+    await openNetworkDetail(page, 'Casa');
+    await page.waitForFunction(() => document.getElementById('networkBindingsBtn')?.disabled === false, null, { timeout: WAIT_MS });
+    const on = await readBindingSection(page);
+    return verdict(checking === null && off === null && on?.button?.disabled === false, { checking, off, on });
+  }); // End of check "the section is hidden..."
+
+  await check(`${L}: "${b.edit}" opens the editor (role dialog, aria-modal, background inert) in the search field: "${b.title}", "${fmt(b.message, { name: 'Casa' })}"; the four AP groups by name with their AP counts, Default ticked; "${b.selectionOne}", the preview "${reach(1, 4)}" → "${reach(1, 4)}" and "${b.unchanged}", "${b.reviewAction}" disabled; searching "grupo" shows only zGrupo B; ticking it: "${fmt(b.selectionMany, { count: 2 })} · ${b.hiddenOne}", after "${reach(2, 5)}", added zGrupo B; no match says so; Escape clears the search first (the dialog stays), a second Escape cancels — nothing sent, focus back on "${b.edit}"`, async () => {
+    const before = bindingCounts(await bindingWriteState(session));
+    await openBindingEditor(page, 'Casa');
+    const opened = await readBindingModal(page);
+    await page.fill('#bindingSearchInput', 'grupo');
+    await tickBindingGroup(page, BIND_ZGRUPO, true);
+    const searched = await readBindingModal(page);
+    await page.fill('#bindingSearchInput', 'nada');
+    const nothing = await readBindingModal(page);
+    await page.focus('#bindingSearchInput');
+    await page.keyboard.press('Escape');
+    const cleared = await readBindingModal(page);
+    await page.keyboard.press('Escape');
+    await waitForBindingModalClosed(page);
+    const after = bindingCounts(await bindingWriteState(session));
+    const focus = await page.evaluate(() => document.activeElement?.id ?? '');
+    const unchangedRows = [
+      { row: 'before', label: b.before, value: reach(1, 4) },
+      { row: 'after', label: b.after, value: reach(1, 4) },
+      { row: 'added', label: b.added, value: b.none },
+      { row: 'removed', label: b.removed, value: b.none },
+      { row: 'kept', label: b.kept, value: 'Default' },
+    ];
+    return verdict(
+      opened.open && opened.role === 'dialog' && opened.ariaModal === 'true' && opened.inert && opened.step === 'edit' &&
+      opened.title === b.title && opened.message === fmt(b.message, { name: 'Casa' }) &&
+      isDeepStrictEqual(opened.search, { value: '', placeholder: b.searchPlaceholder, label: b.searchLabel, readOnly: false }) && opened.activeId === 'bindingSearchInput' &&
+      isDeepStrictEqual(opened.groups, [
+        { id: BIND_DEFAULT, name: 'Default', meta: aps(4), checked: true, shown: true },
+        { id: BIND_EXTERIOR, name: 'Exterior', meta: aps(0), checked: false, shown: true },
+        { id: BIND_ZGRUPO, name: 'zGrupo B', meta: aps(1), checked: false, shown: true },
+        { id: BIND_ZNINGUNA, name: 'zNinguna', meta: aps(1), checked: false, shown: true },
+      ]) &&
+      opened.selection === b.selectionOne && isDeepStrictEqual(opened.preview, unchangedRows) && isDeepStrictEqual(opened.notes, [b.unchanged]) &&
+      opened.capacity === null && opened.confirm === b.reviewAction && opened.confirmDisabled && opened.cancel === cancel && opened.back === null && !opened.errorShown &&
+      isDeepStrictEqual(searched.groups.filter((item) => item.shown).map((item) => item.id), [BIND_ZGRUPO]) &&
+      searched.selection === `${fmt(b.selectionMany, { count: 2 })} · ${b.hiddenOne}` && !searched.confirmDisabled && searched.notes.length === 0 &&
+      isDeepStrictEqual(searched.preview.map((row) => row.value), [reach(1, 4), reach(2, 5), 'zGrupo B', b.none, 'Default']) &&
+      nothing.empty === fmt(b.noResults, { query: 'nada' }) && nothing.groups.every((item) => !item.shown) &&
+      cleared.open && cleared.search.value === '' && cleared.groups.every((item) => item.shown) && cleared.empty === null &&
+      isDeepStrictEqual(after, before) && focus === 'networkBindingsBtn',
+      { opened, searched, nothing: nothing.empty, cleared, before, after, focus }
+    );
+  }); // End of check "Change AP groups opens the editor..."
+
+  await check(`${L}: "${b.reviewAction}" reads the data again (APs, groups, the managed networks and AP groups) and asks: "${b.reviewTitle}", "${fmt(b.reviewMessage, { name: 'Casa' })}" — ${b.before} "${reach(1, 4)}", ${b.after} "${reach(2, 5)}", ${b.added} zGrupo B, ${b.removed} ${b.none}, ${b.kept} Default, the overrides note; focus on ${cancel}; Back keeps the selection; ${cancel} at the confirmation sends nothing`, async () => {
+    const before = bindingCounts(await bindingWriteState(session));
+    await openBindingEditor(page, 'Casa');
+    await tickBindingGroup(page, BIND_ZGRUPO, true);
+    const reads = await stubState(session);
+    await page.click('#confirmBindingBtn');
+    await waitForBindingStep(page, 'review');
+    const review = await readBindingModal(page);
+    const readsAfter = await stubState(session);
+    const counts = ['omada:get-aps', 'omada:get-wlans', 'management:networks', 'management:ap-groups'].map((channel) => callsTo(readsAfter, channel).length - callsTo(reads, channel).length);
+    await page.click('#backBindingBtn');
+    await waitForBindingStep(page, 'edit');
+    const back = await readBindingModal(page);
+    await page.click('#confirmBindingBtn');
+    await waitForBindingStep(page, 'review');
+    await page.click('#cancelBindingBtn');
+    await waitForBindingModalClosed(page);
+    const after = bindingCounts(await bindingWriteState(session));
+    return verdict(
+      review.step === 'review' && !review.editorShown && review.summaryShown && review.title === b.reviewTitle && review.message === fmt(b.reviewMessage, { name: 'Casa' }) &&
+      isDeepStrictEqual(review.rows, [
+        { row: 'before', label: b.before, value: reach(1, 4) },
+        { row: 'after', label: b.after, value: reach(2, 5) },
+        { row: 'added', label: b.added, value: 'zGrupo B' },
+        { row: 'removed', label: b.removed, value: b.none },
+        { row: 'kept', label: b.kept, value: 'Default' },
+      ]) && isDeepStrictEqual(review.summaryNotes, [b.overrides]) &&
+      review.confirm === b.saveAction && !review.confirmDisabled && review.back === ed.backAction && review.activeId === 'cancelBindingBtn' &&
+      isDeepStrictEqual(counts, [1, 1, 1, 1]) &&
+      back.step === 'edit' && back.editorShown && isDeepStrictEqual(back.groups.filter((item) => item.checked).map((item) => item.id), [BIND_DEFAULT, BIND_ZGRUPO]) && back.back === null &&
+      isDeepStrictEqual(after, before),
+      { review, counts, back: back.groups, before, after }
+    );
+  }); // End of check "Review the change reads the data again..."
+
+  await check(`${L}: confirmed — ONE updateNetworkBindings {sessionNonce, networkId, apGroupIds} with the COMPLETE new set [Default, zGrupo B] (applied as one bindings write); the toast "${fmt(b.saved, { name: 'Casa', scope: reach(2, 5) })}"; the detail and the list show the refreshed scope "${reach(2, 5)}" with both groups; focus back on "${b.edit}"`, async () => {
+    const before = await bindingWriteState(session);
+    await openBindingEditor(page, 'Casa');
+    await tickBindingGroup(page, BIND_ZGRUPO, true);
+    await page.click('#confirmBindingBtn');
+    await waitForBindingStep(page, 'review');
+    await page.click('#confirmBindingBtn');
+    await waitForBindingModalClosed(page);
+    await waitForToast(page, 'success', fmt(b.saved, { name: 'Casa', scope: reach(2, 5) }));
+    const after = await bindingWriteState(session);
+    const detail = await readDetailPane(page, '#networkDetail');
+    const list = await readManagedList(page);
+    const focus = await page.evaluate(() => document.activeElement?.id ?? '');
+    const calls = after.calls.slice(before.calls.length);
+    const writes = after.writes.slice(before.writes.length);
+    return verdict(
+      calls.length === 1 && isDeepStrictEqual(calls[0].args, [{ sessionNonce: after.snapshot.sessionNonce, networkId: BIND_IDS.casa, apGroupIds: [BIND_DEFAULT, BIND_ZGRUPO] }]) &&
+      isDeepStrictEqual(writes, [{ op: 'bindings', networkId: BIND_IDS.casa, body: { apGroupIds: [BIND_DEFAULT, BIND_ZGRUPO] } }]) && after.all === before.all + 1 &&
+      detail.summary === reach(2, 5) && isDeepStrictEqual(detail.sections.groups?.rows.map((row) => row.link), ['Default', 'zGrupo B']) &&
+      list.items.find((item) => item.name === 'Casa')?.scope === reach(2, 5) && focus === 'networkBindingsBtn',
+      { calls: calls.map((call) => call.args), writes, summary: detail.summary, groups: detail.sections.groups?.rows, focus }
+    );
+  }); // End of check "confirmed..."
+
+  await check(`${L}: a removal — Default unticked: ${b.removed} Default, ${b.after} "${reach(1, 1)}", the note "${b.noteRemoved}"; saved as ONE write of [zGrupo B]; the refreshed scope "${reach(1, 1)}"`, async () => {
+    const before = await bindingWriteState(session);
+    await openBindingEditor(page, 'Casa');
+    await tickBindingGroup(page, BIND_DEFAULT, false);
+    await page.click('#confirmBindingBtn');
+    await waitForBindingStep(page, 'review');
+    const review = await readBindingModal(page);
+    await page.click('#confirmBindingBtn');
+    await waitForBindingModalClosed(page);
+    await waitForToast(page, 'success', fmt(b.saved, { name: 'Casa', scope: reach(1, 1) }));
+    const after = await bindingWriteState(session);
+    const detail = await readDetailPane(page, '#networkDetail');
+    return verdict(
+      isDeepStrictEqual(review.rows.map((row) => row.value), [reach(2, 5), reach(1, 1), b.none, 'Default', 'zGrupo B']) && isDeepStrictEqual(review.summaryNotes, [b.noteRemoved, b.overrides]) &&
+      isDeepStrictEqual(after.writes.slice(before.writes.length), [{ op: 'bindings', networkId: BIND_IDS.casa, body: { apGroupIds: [BIND_ZGRUPO] } }]) &&
+      after.calls.length === before.calls.length + 1 && detail.summary === reach(1, 1),
+      { review: review.rows, notes: review.summaryNotes, writes: after.writes.slice(before.writes.length), summary: detail.summary }
+    );
+  }); // End of check "a removal..."
+
+  await check(`${L}: nothing ticked is refused client-side ("${b.errGroupsRequired}") without reading or sending anything; a real double-click on "${b.reviewAction}" shows the confirmation and does NOT also save it; Enter held down on "${b.reviewAction}" (key repeats) shows the confirmation once and stays there; ${cancel} sends nothing`, async () => {
+    await resetBindingController(session);
+    const before = bindingCounts(await bindingWriteState(session));
+    await openBindingEditor(page, 'Casa');
+    await tickBindingGroup(page, BIND_DEFAULT, false);
+    const reads = callsTo(await stubState(session), 'management:networks').length;
+    await page.click('#confirmBindingBtn');
+    await waitForBindingError(page, b.errGroupsRequired);
+    const refused = await readBindingModal(page);
+    const readsAfter = callsTo(await stubState(session), 'management:networks').length;
+    await tickBindingGroup(page, BIND_DEFAULT, true);
+    await tickBindingGroup(page, BIND_EXTERIOR, true);
+    await page.dblclick('#confirmBindingBtn');
+    await waitForBindingStep(page, 'review');
+    // Room for a second click that wrongly confirmed the review to show
+    await page.waitForTimeout(400);
+    const doubled = await readBindingModal(page);
+    const afterDouble = bindingCounts(await bindingWriteState(session));
+    await page.click('#backBindingBtn');
+    await waitForBindingStep(page, 'edit');
+    await page.focus('#confirmBindingBtn');
+    await page.keyboard.down('Enter');
+    await waitForBindingStep(page, 'review');
+    // The held key's repeats land on the confirmation (focus on Cancel)
+    await page.keyboard.down('Enter');
+    await page.keyboard.down('Enter');
+    await page.keyboard.up('Enter');
+    await page.waitForTimeout(400);
+    const held = await readBindingModal(page);
+    const afterHeld = bindingCounts(await bindingWriteState(session));
+    await page.click('#cancelBindingBtn');
+    await waitForBindingModalClosed(page);
+    const after = bindingCounts(await bindingWriteState(session));
+    return verdict(
+      refused.open && refused.step === 'edit' && refused.errorShown && refused.errorRole === 'alert' && refused.selection === b.selectionNone && readsAfter === reads &&
+      doubled.open && doubled.step === 'review' && doubled.confirm === b.saveAction && !doubled.errorShown && isDeepStrictEqual(afterDouble, before) &&
+      held.open && held.step === 'review' && held.activeId === 'cancelBindingBtn' && isDeepStrictEqual(afterHeld, before) && isDeepStrictEqual(after, before),
+      { refused: refused.error, reads, readsAfter, doubled: doubled.step, held: [held.step, held.activeId], before, afterDouble, afterHeld, after }
+    );
+  }); // End of check "nothing ticked is refused client-side..."
+
+  await check(`${L}: the capacity pre-check, fail closed — zNinguna reporting 5 GHz full and Exterior not reporting 5 GHz: "${b.reviewAction}" reads the AP groups again and refuses ("${b.errCapacity}") naming "zNinguna — ${fmt(b.full, { band: '5 GHz' })}" and "Exterior — ${fmt(b.unknown, { band: '5 GHz' })}", the live preview naming them too under "${b.capacityTitle}"; nothing sent`, async () => {
+    const before = bindingCounts(await bindingWriteState(session));
+    let refused;
+    try {
+      await configureStub(session, { apGroupOverrides: { [BIND_ZNINGUNA]: { remainingBinding: { 0: 3, 1: 0 } }, [BIND_EXTERIOR]: { remainingBinding: { 0: 2 } } } });
+      await openBindingEditor(page, 'Casa');
+      await tickBindingGroup(page, BIND_ZNINGUNA, true);
+      await tickBindingGroup(page, BIND_EXTERIOR, true);
+      await page.click('#confirmBindingBtn');
+      await waitForBindingError(page, b.errCapacity);
+      refused = await readBindingModal(page);
+      await page.click('#cancelBindingBtn');
+      await waitForBindingModalClosed(page);
+    } finally {
+      await resetBindingController(session);
+    }
+    const after = bindingCounts(await bindingWriteState(session));
+    const lines = [`Exterior — ${fmt(b.unknown, { band: '5 GHz' })}`, `zNinguna — ${fmt(b.full, { band: '5 GHz' })}`];
+    return verdict(
+      refused.step === 'edit' && isDeepStrictEqual(refused.errorLines, lines) && refused.errorNotes.length === 0 &&
+      isDeepStrictEqual(refused.capacity, { title: b.capacityTitle, lines }) && isDeepStrictEqual(after, before),
+      { refused, before, after }
+    );
+  }); // End of check "the capacity pre-check..."
+
+  await check(`${L}: main is authoritative — a capacityInsufficient answer for zGrupo B (room on screen) is shown with main's diagnostic and its problem "zGrupo B — ${fmt(b.full, { band: '5 GHz' })}", back on the editor; a requestFailed answer reads "${b.errRequestFailed} (ssid bindings: apiError, errorCode -33000)"; nothing applied`, async () => {
+    const before = await bindingWriteState(session);
+    let capacity;
+    let failed;
+    try {
+      await configureStub(session, {
+        networkResults: { 'management:network-bindings': { success: false, error: 'capacityInsufficient', diagnostic: 'capacity: 1 full, 0 unknown', capacityProblems: [{ apGroupId: BIND_ZGRUPO, band: 'band5g', reason: 'full' }] } },
+      });
+      await openBindingEditor(page, 'Casa');
+      await tickBindingGroup(page, BIND_ZGRUPO, true);
+      await page.click('#confirmBindingBtn');
+      await waitForBindingStep(page, 'review');
+      await page.click('#confirmBindingBtn');
+      await waitForBindingError(page, `${b.errCapacity} (capacity: 1 full, 0 unknown)`);
+      capacity = await readBindingModal(page);
+      await configureStub(session, { networkResults: { 'management:network-bindings': { success: false, error: 'requestFailed', diagnostic: 'ssid bindings: apiError, errorCode -33000' } } });
+      await waitForManagedRead(page, 'ready');
+      await page.click('#confirmBindingBtn');
+      await waitForBindingStep(page, 'review');
+      await page.click('#confirmBindingBtn');
+      await waitForBindingError(page, `${b.errRequestFailed} (ssid bindings: apiError, errorCode -33000)`);
+      failed = await readBindingModal(page);
+      await page.click('#cancelBindingBtn');
+      await waitForBindingModalClosed(page);
+    } finally {
+      await resetBindingController(session);
+    }
+    const after = await bindingWriteState(session);
+    return verdict(
+      capacity.step === 'edit' && capacity.editorShown && isDeepStrictEqual(capacity.errorLines, [`zGrupo B — ${fmt(b.full, { band: '5 GHz' })}`]) &&
+      failed.step === 'edit' && failed.errorLines.length === 0 &&
+      after.calls.length === before.calls.length + 2 && after.writes.length === before.writes.length && after.all === before.all,
+      { capacity: [capacity.error, capacity.errorLines], failed: failed.error, calls: after.calls.length - before.calls.length, writes: after.writes.length - before.writes.length }
+    );
+  }); // End of check "main is authoritative..."
+
+  await check(`${L}: adding a group to Malla (MLO on) — main refuses (no MLO room is reported): "${b.errCapacity} (capacity: 0 full, 1 unknown)", "zGrupo B — ${fmt(b.unknown, { band: 'MLO' })}" and the note "${b.mloNote}"; nothing applied`, async () => {
+    const before = await bindingWriteState(session);
+    await openBindingEditor(page, 'Malla');
+    await tickBindingGroup(page, BIND_ZGRUPO, true);
+    await page.click('#confirmBindingBtn');
+    await waitForBindingStep(page, 'review');
+    await page.click('#confirmBindingBtn');
+    await waitForBindingError(page, `${b.errCapacity} (capacity: 0 full, 1 unknown)`);
+    const refused = await readBindingModal(page);
+    await page.click('#cancelBindingBtn');
+    await waitForBindingModalClosed(page);
+    const after = await bindingWriteState(session);
+    return verdict(
+      isDeepStrictEqual(refused.errorLines, [`zGrupo B — ${fmt(b.unknown, { band: 'MLO' })}`]) && isDeepStrictEqual(refused.errorNotes, [b.mloNote]) &&
+      after.calls.length === before.calls.length + 1 && after.writes.length === before.writes.length,
+      { refused: [refused.error, refused.errorLines, refused.errorNotes], calls: after.calls.length - before.calls.length }
+    );
+  }); // End of check "adding a group to Malla..."
+
+  await check(`${L}: no write on stale data — a stale managed network list disables "${b.edit}" (the detail's note "${ed.blockedListStale}") and a forced click opens nothing; a failed AP-group read disables it with its own note "${b.groupsStale}" (aria-describedby) while the other actions stay, and a forced click opens nothing (the same text as a toast); nothing sent`, async () => {
+    const before = bindingCounts(await bindingWriteState(session));
+    let listStale;
+    let listForced;
+    let groupsStale;
+    let groupsForced;
+    let otherActions;
+    try {
+      await openNetworkDetail(page, 'Casa');
+      await configureStub(session, { networksResult: NETS_FAILURE });
+      await refreshNetworks(session);
+      await waitForNetworksStale(page, 'requestFailed');
+      listStale = await readBindingSection(page);
+      await forceNetworkAction(page, 'networkBindingsBtn');
+      await waitForToast(page, 'error', ed.blockedListStale);
+      listForced = await readBindingModal(page);
+      await configureStub(session, { networksResult: null });
+      const retries = callsTo(await stubState(session), 'management:networks').length;
+      await page.click('#networksStaleRetryBtn');
+      await waitForStubCall(session, 'management:networks', retries);
+      await waitForManagedRead(page, 'ready');
+      await configureStub(session, { failChannels: ['management:ap-groups'] });
+      await waitForLoadIdle(page);
+      await page.click('#refreshBtn');
+      await page.waitForFunction(() => document.querySelector('#networkDetail [data-note="bindingsBlocked"]')?.dataset.reason === 'groupsStale', null, { timeout: WAIT_MS });
+      groupsStale = await readBindingSection(page);
+      otherActions = await readNetworkControls(page);
+      await forceNetworkAction(page, 'networkBindingsBtn');
+      await waitForToast(page, 'error', b.groupsStale);
+      groupsForced = await readBindingModal(page);
+    } finally {
+      await resetBindingController(session);
+    }
+    await page.waitForFunction(() => document.getElementById('networkBindingsBtn')?.disabled === false, null, { timeout: WAIT_MS });
+    const restored = await readBindingSection(page);
+    const after = bindingCounts(await bindingWriteState(session));
+    return verdict(
+      listStale?.button?.disabled === true && listStale.notes.length === 0 && !listForced.open &&
+      groupsStale?.button?.disabled === true && groupsStale.button.describedBy === 'networkBindingsBlocked' &&
+      isDeepStrictEqual(groupsStale.notes, [{ kind: 'bindingsBlocked', reason: 'groupsStale', text: b.groupsStale }]) &&
+      otherActions.detail.length === 4 && otherActions.detail.every((button) => !button.disabled) && !groupsForced.open &&
+      restored?.button?.disabled === false && restored.notes.length === 0 && isDeepStrictEqual(after, before),
+      { listStale, listForced: listForced?.open, groupsStale, otherActions: otherActions?.detail, groupsForced: groupsForced?.open, restored, before, after }
+    );
+  }); // End of check "no write on stale data..."
+
+  await check(`${L}: judged on fresh data only — Casa re-bound to Default + Exterior on the controller while the editor is open: "${b.reviewAction}" refuses ("${ed.networkChanged}") and rebuilds the editor on the fresh network (the selection kept: ${b.removed} Exterior, ${b.added} zGrupo B, ${b.before} "${reach(2, 4)}"); reviewing again states that change; ${cancel} sends nothing`, async () => {
+    const before = bindingCounts(await bindingWriteState(session));
+    const rebound = BIND_NETWORKS.map((item) => (item.entry.id === BIND_IDS.casa
+      ? { ...item, detail: { ...item.detail, apGroupIds: [BIND_DEFAULT, BIND_EXTERIOR] }, bindings: { apGroups: [{ id: BIND_DEFAULT }, { id: BIND_EXTERIOR }] } }
+      : item));
+    let changed;
+    let again;
+    try {
+      await openBindingEditor(page, 'Casa');
+      await tickBindingGroup(page, BIND_ZGRUPO, true);
+      await configureStub(session, { networks: rebound });
+      await page.click('#confirmBindingBtn');
+      await waitForBindingError(page, ed.networkChanged);
+      changed = await readBindingModal(page);
+      await page.click('#confirmBindingBtn');
+      await waitForBindingStep(page, 'review');
+      again = await readBindingModal(page);
+      await page.click('#cancelBindingBtn');
+      await waitForBindingModalClosed(page);
+    } finally {
+      await resetBindingController(session);
+    }
+    const after = bindingCounts(await bindingWriteState(session));
+    return verdict(
+      changed.step === 'edit' && isDeepStrictEqual(changed.groups.filter((item) => item.checked).map((item) => item.id), [BIND_DEFAULT, BIND_ZGRUPO]) &&
+      isDeepStrictEqual(changed.preview.map((row) => row.value), [reach(2, 4), reach(2, 5), 'zGrupo B', 'Exterior', 'Default']) &&
+      isDeepStrictEqual(again.rows.map((row) => row.value), [reach(2, 4), reach(2, 5), 'zGrupo B', 'Exterior', 'Default']) && isDeepStrictEqual(again.summaryNotes, [b.noteRemoved, b.overrides]) &&
+      isDeepStrictEqual(after, before),
+      { changed: changed?.preview, again: again?.rows, before, after }
+    );
+  }); // End of check "judged on fresh data only..."
+
+  await check(`${L}: the dialog keeps no editor once closed, and the only binding writes of this run are the two confirmed ones (Casa: [Default, zGrupo B], then [zGrupo B])`, async () => {
+    const modal = await readBindingModal(page);
+    const final = await bindingWriteState(session);
+    const writes = final.writes.slice(firstState.writes.length);
+    return verdict(
+      !modal.open && modal.editorChildren === 0 && modal.inputs === 0 && modal.step === null &&
+      isDeepStrictEqual(writes.map((write) => write.body.apGroupIds), [[BIND_DEFAULT, BIND_ZGRUPO], [BIND_ZGRUPO]]) && writes.every((write) => write.networkId === BIND_IDS.casa),
+      { open: modal.open, editorChildren: modal.editorChildren, writes }
+    );
+  }); // End of check "the dialog keeps no editor once closed..."
+} // End of function runBindingChecks()
+
+/**
+ * "Broadcast on" launch (phase 19b): an Omada 6.3 controller with
+ * management access whose every check passes, BIND_NETWORKS and
+ * BIND_GROUPS; the checks of runBindingChecks() in Spanish, then — the fake
+ * controller reset and the language switched (saved, reconnected) — in
+ * English. The rules and texts are unit-tested
+ * (renderer-network-bindings.test.ts), the main-side write too
+ * (network-binding-plan.test.ts, network-bindings-session.test.ts).
+ * @param {{ binary: string }} electronInfo - Resolved Electron binary.
+ * @returns {Promise<void>}
+ */
+async function runBindingEditing(electronInfo) {
+  const session = await launch(electronInfo, 'bind', {
+    config: { url: CONTROLLER_URL, username: 'admin', language: 'es', hasPassword: true, clientId: 'owm-client-1', hasClientSecret: true },
+    connect: { success: true },
+    siteName: 'Casa',
+    controllerVersion: data.controllerVersion,
+    accessPoints: NETS_APS,
+    wlanGroups: BIND_GROUPS,
+    networks: BIND_NETWORKS,
+  });
+  const { page } = session;
+  try {
+    await checkTranslations(session, 'es');
+    await check('[bind] es: connected with management on — the Wi-Fi networks view lists the five networks (Casa, Clave, Empresa, Invitados, Malla)', async () => {
+      await waitForConnected(page);
+      await waitForApCount(page, NETS_APS.filter((ap) => MAC_REGEX.test(ap.mac)).length);
+      await page.click('#navNetworks');
+      await waitForNetworksMode(page, 'managedReady');
+      const list = await readManagedList(page);
+      return verdict(isDeepStrictEqual(list.items.map((item) => item.name), ['Casa', 'Clave', 'Empresa', 'Invitados', 'Malla']), list.items);
+    });
+    await runBindingChecks(session, 'es');
+
+    await check('[bind] en: after switching to English (saved, reconnected) with the fake controller reset, the networks are listed again', async () => {
+      await configureStub(session, { networks: BIND_NETWORKS, wlanGroups: BIND_GROUPS, networkResults: {}, apGroupOverrides: {}, failChannels: [], delays: {} });
+      await openSettingsWhenIdle(page);
+      await page.selectOption('#languageSelect', 'en');
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      await waitForConnected(page);
+      await page.waitForFunction(() => document.documentElement.lang === 'en', null, { timeout: WAIT_MS });
+      await page.click('#navNetworks');
+      await waitForNetworksMode(page, 'managedReady');
+      await page.waitForFunction(() => document.querySelectorAll('#networkList .master-item').length === 5, null, { timeout: WAIT_MS });
+      const list = await readManagedList(page);
+      return verdict(isDeepStrictEqual(list.items.map((item) => item.name), ['Casa', 'Clave', 'Empresa', 'Invitados', 'Malla']), list.items);
+    });
+    await runBindingChecks(session, 'en');
+  } finally {
+    session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
+    await session.app.close().catch(() => {});
+  }
+} // End of function runBindingEditing()
+
+// ============================================================================
 // Whole-run checks
 // ============================================================================
 
@@ -8653,6 +9447,7 @@ async function main() {
       ['groups', runApGroupManagement],
       ['nets', runManagedNetworks],
       ['netedit', runNetworkEditing],
+      ['bind', runBindingEditing],
     ]) {
       try {
         await runLaunch(electronInfo);

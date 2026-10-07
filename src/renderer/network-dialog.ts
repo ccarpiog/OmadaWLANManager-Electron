@@ -138,6 +138,30 @@ export interface NetworkDialog {
 // The bands of the form, in display order
 const FORM_BANDS: readonly NetworkBand[] = ['band2g', 'band5g', 'band6g'];
 
+/**
+ * The multi-click guard of a dialog's confirming button (shared with the
+ * "Broadcast on" dialog, binding-dialog.ts): only a single click (or a
+ * keyboard activation, detail 0) counts. The second click of a double-click
+ * arrives after the first one moved the dialog to its next step (whose
+ * confirming button is the same one): it must never confirm that step too.
+ * @param {MouseEvent} e - The click event.
+ * @returns {boolean} True for the second (or a later) click of a multi-click.
+ */
+export function isRepeatedClick(e: MouseEvent): boolean {
+  return e.detail > 1;
+}
+
+/**
+ * The held-Enter guard of a dialog (shared with binding-dialog.ts): the
+ * repeats of a held Enter key are swallowed while the dialog is open, so one
+ * key press never steps through two steps.
+ * @param {KeyboardEvent} e - The keydown event.
+ * @returns {boolean} True for a repeat of a held Enter.
+ */
+export function isHeldEnterRepeat(e: KeyboardEvent): boolean {
+  return e.key === 'Enter' && e.repeat;
+}
+
 // Ids of the per-open fields (unique while the dialog is open)
 const NAME_INPUT_ID = 'networkNameInput';
 const NAME_HINT_ID = 'networkNameHint';
@@ -342,11 +366,12 @@ function buildForm(form: NetworkFormSpec): { blocks: HTMLElement[]; controls: Fo
 
 /**
  * Builds the summary block (review rows and notes, or a confirmation's
- * impact summary): a definition list and the notes.
+ * impact summary): a definition list and the notes. Shared with the
+ * "Broadcast on" dialog (binding-dialog.ts).
  * @param {NetworkSummary} summary - The rows and notes.
  * @returns {HTMLElement[]} The list and the notes.
  */
-function buildSummary(summary: NetworkSummary): HTMLElement[] {
+export function buildSummary(summary: NetworkSummary): HTMLElement[] {
   const list = document.createElement('dl');
   list.className = 'network-summary-rows';
   for (const row of summary.rows) {
@@ -464,7 +489,7 @@ export function openNetworkDialog(content: NetworkDialogContent): NetworkDialog 
    * @param {MouseEvent} e - The click event.
    */
   const handleConfirmClick = (e: MouseEvent): void => {
-    if (e.detail > 1) return;
+    if (isRepeatedClick(e)) return;
     handleConfirm();
   };
 
@@ -489,7 +514,7 @@ export function openNetworkDialog(content: NetworkDialogContent): NetworkDialog 
    */
   const handleKeydown = (e: KeyboardEvent): void => {
     if (e.isComposing) return;
-    if (e.key === 'Enter' && e.repeat) {
+    if (isHeldEnterRepeat(e)) {
       e.preventDefault();
       return;
     }

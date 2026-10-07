@@ -24,10 +24,12 @@
 //   there. While Wi-Fi network management is on (and only then: not while
 //   a capability check runs, on a legacy controller or with a read-only
 //   reason), "New network" sits above the list and the detail carries the
-//   write actions (managed-networks-view.ts; run by network-flow.ts) —
-//   disabled, the detail saying why, while the data on screen is not known
-//   to be fresh (currentNetworkWriteBlock(): the internal data stale after a
-//   failed refresh, the managed list stale or being read).
+//   write actions (managed-networks-view.ts; run by network-flow.ts) and its
+//   "Broadcast on" section (run by binding-flow.ts) — disabled, the detail
+//   saying why, while the data on screen is not known to be fresh
+//   (currentNetworkWriteBlock(): the internal data stale after a failed
+//   refresh, the managed list stale or being read; for "Broadcast on" also
+//   the managed AP-group list: currentBindingWriteBlock()).
 // The 14a view has no write action. Until data is loaded the list
 // shows the §4.6 state (content-state.ts). In the single-pane layout
 // (700–799 px) picking a network drills into its detail, whose Back returns
@@ -81,6 +83,7 @@ import {
   NEW_NETWORK_BUTTON_ID,
   renderManagedNetworksStaleNotice,
 } from './managed-networks-view';
+import { bindingWriteBlock, type BindingWriteBlock } from './network-bindings';
 import { networkWriteBlock, type NetworkWriteBlock } from './network-editing';
 import {
   buildManagedNetworkRows,
@@ -169,6 +172,24 @@ export function isNetworkManagementOn(): boolean {
  */
 export function currentNetworkWriteBlock(): NetworkWriteBlock | null {
   return networkWriteBlock({ refreshError: state.refreshError, listStatus: state.managedNetworksStatus, hasList: state.managedNetworks !== null });
+}
+
+/**
+ * Why the "Broadcast on" write is held back now (bindingWriteBlock(): every
+ * reason of currentNetworkWriteBlock(), plus the managed AP-group list — the
+ * editor's options and capacity — failed or not read yet), or null. The
+ * "Change AP groups" action renders disabled with the reason, and the
+ * binding flow checks it again at its start and right before the write.
+ * @returns {BindingWriteBlock | null} The reason, or null.
+ */
+export function currentBindingWriteBlock(): BindingWriteBlock | null {
+  return bindingWriteBlock({
+    refreshError: state.refreshError,
+    listStatus: state.managedNetworksStatus,
+    hasList: state.managedNetworks !== null,
+    groupsStatus: state.managedGroupsStatus,
+    hasGroups: state.managedApGroups !== null,
+  });
 }
 
 /**
@@ -442,7 +463,10 @@ function renderManagedNetworkDetail(mode: NetworksViewMode, focusLink: LinkTarge
     return;
   }
   const row = { network, scope: managedNetworkScope(network, state.wlanGroups, state.accessPoints) };
-  networkDetail.replaceChildren(createDetailHeading(HEADING_ID, network.name), ...buildManagedNetworkDetail(row, isNetworkManagementOn(), currentNetworkWriteBlock()));
+  networkDetail.replaceChildren(
+    createDetailHeading(HEADING_ID, network.name),
+    ...buildManagedNetworkDetail(row, isNetworkManagementOn(), currentNetworkWriteBlock(), currentBindingWriteBlock()),
+  );
   if (focusedAction !== null && focusedAction !== HEADING_ID) {
     if (!focusById(focusedAction)) focusById(HEADING_ID);
     return;

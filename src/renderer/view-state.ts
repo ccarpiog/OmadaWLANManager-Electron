@@ -121,15 +121,16 @@ export type EscapeAction = 'clearSearch' | 'exitEditMode' | 'closeDialog' | 'non
 /**
  * The context of an Escape press. `searchActive` and `editMode` describe the
  * TOP context: the open dialog's own search and edit mode when a dialog is
- * open (none of today's dialogs has either), else the current view's.
+ * open (the "Broadcast on" dialog has a search; no dialog has an edit
+ * mode), else the current view's.
  */
 export interface EscapeContext {
   // A dialog is open
   dialogOpen: boolean;
   // The top context's search has text
   searchActive: boolean;
-  // The top context is in edit mode (no view has one: the AP-group writes and
-  // the Wi-Fi network edit use dialogs; phase 19 may add one)
+  // The top context is in edit mode (no view has one: the AP-group writes,
+  // the Wi-Fi network edit and the "Broadcast on" editor use dialogs)
   editMode: boolean;
 }
 

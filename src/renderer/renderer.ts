@@ -67,6 +67,14 @@
 //                         Enable / Disable / Delete dialog
 //   network-flow.ts       the Wi-Fi network write flows (dialog, write(s),
 //                         reload, toast, focus)
+//   network-bindings.ts   pure "Broadcast on" rules (availability,
+//                         freshness, options, diff, reach, capacity
+//                         pre-check, request check, reply validation,
+//                         error and preview texts)
+//   binding-dialog.ts     "Broadcast on" dialog (searchable AP-group
+//                         checkboxes, live preview, confirmation)
+//   binding-flow.ts       the "Broadcast on" flow (editor, fresh re-read,
+//                         confirmation, write, reload, toast, focus)
 //   nav-history.ts        pure Back-history helpers
 //   navigation.ts         cross-links, "Back to …", re-rendering the views
 //   move-plan.ts          pure move planning (gains/losses, mixed
@@ -173,6 +181,7 @@ import { runManagementTest } from './management';
 import { startMove } from './move-flow';
 import { goBack, handleCrossLinkClick, navigateToView } from './navigation';
 import { handleNetworkActionClick } from './network-flow';
+import { handleBindingActionClick } from './binding-flow';
 import {
   closeNetworkDetailPane,
   handleNetworkListClick,
@@ -281,6 +290,11 @@ viewGroups.addEventListener('click', handleGroupActionClick);
 // management on only): New network, and the detail's Edit, Change password,
 // Enable / Disable and Delete (each opens the Wi-Fi network dialog)
 viewNetworks.addEventListener('click', handleNetworkActionClick);
+
+// The detail's "Change AP groups" (delegated, data-binding-action; Wi-Fi
+// network management on only, for a network bound to AP groups): opens the
+// "Broadcast on" dialog
+viewNetworks.addEventListener('click', handleBindingActionClick);
 
 // Access points list: filters, checkbox selection (delegated click and
 // keyboard handlers), "Select all N filtered APs" and "Clear selection"

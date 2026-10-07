@@ -1,8 +1,8 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T09:58:28Z",
+ "updated": "2026-10-07T10:42:31Z",
  "plan": "todo.md",
- "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
+ "goal": "Add AP-group and Wi-Fi network management for Omada 6.3 to the Electron app, then remote controllers through the TP-Link cloud.",
  "phases": [
   {
    "id": "1",
@@ -246,9 +246,9 @@
   {
    "id": "19",
    "title": "Broadcast on binding editor",
-   "status": "in_progress",
+   "status": "done",
    "risk": "high",
-   "summary": "Split into 19a (main-side Open API binding write, capacity checks, guarded IPC; done) and 19b (editor UI, smoke; queued)."
+   "summary": "Split into 19a (main-side Open API binding write, capacity checks, guarded IPC) and 19b (Broadcast on editor UI, smoke); both done."
   },
   {
    "id": "19a",
@@ -263,9 +263,11 @@
   {
    "id": "19b",
    "title": "Broadcast on editor UI",
-   "status": "queued",
+   "status": "done",
    "risk": "high",
-   "summary": "Adds the editor that chooses which AP groups broadcast a Wi-Fi network, with a reach diff, capacity problems and a confirmation."
+   "summary": "Adds the Broadcast on editor that picks which AP groups carry a Wi-Fi network, with a reach diff, capacity problems and a confirmation.",
+   "review": "docs/reviews/phase19b.md",
+   "narrative": "docs/progress-archive/phase-19b.md"
   },
   {
    "id": "20",

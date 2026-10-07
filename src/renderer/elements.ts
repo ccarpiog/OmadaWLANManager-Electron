@@ -195,6 +195,19 @@ export const cancelNetworkBtn = document.getElementById('cancelNetworkBtn') as H
 export const backNetworkBtn = document.getElementById('backNetworkBtn') as HTMLButtonElement;
 export const confirmNetworkBtn = document.getElementById('confirmNetworkBtn') as HTMLButtonElement;
 
+// "Broadcast on" dialog (the binding editor and its confirmation); its
+// editor and summary are built per open (binding-dialog.ts)
+export const bindingModal = document.getElementById('bindingModal') as HTMLElement;
+export const bindingModalTitle = document.getElementById('bindingModalHeading') as HTMLElement;
+export const bindingModalMessage = document.getElementById('bindingModalMessage') as HTMLElement;
+export const bindingModalEditor = document.getElementById('bindingModalEditor') as HTMLElement;
+export const bindingModalSummary = document.getElementById('bindingModalSummary') as HTMLElement;
+export const bindingModalError = document.getElementById('bindingModalError') as HTMLElement;
+export const bindingModalStatus = document.getElementById('bindingModalStatus') as HTMLElement;
+export const cancelBindingBtn = document.getElementById('cancelBindingBtn') as HTMLButtonElement;
+export const backBindingBtn = document.getElementById('backBindingBtn') as HTMLButtonElement;
+export const confirmBindingBtn = document.getElementById('confirmBindingBtn') as HTMLButtonElement;
+
 // Site Selection Modal (multi-site controllers)
 export const siteModal = document.getElementById('siteModal') as HTMLElement;
 export const siteModalTitle = document.getElementById('siteModalHeading') as HTMLElement;

@@ -1,10 +1,10 @@
 // ============================================================================
 // Modal Focus Containment (Tab focus trap + inert background), shared by the
-// settings, move, AP-group, Wi-Fi network, site-selection and certificate
-// modals
+// settings, move, AP-group, Wi-Fi network, "Broadcast on", site-selection and
+// certificate modals
 // ============================================================================
 
-import { appContainer, certModal, groupModal, moveModal, networkModal, settingsModal, siteModal } from './elements';
+import { appContainer, bindingModal, certModal, groupModal, moveModal, networkModal, settingsModal, siteModal } from './elements';
 
 /**
  * Collects the keyboard-focusable elements currently inside a modal, in DOM
@@ -58,8 +58,8 @@ export function createFocusTrap(modal: HTMLElement): (e: KeyboardEvent) => void 
 } // End of function createFocusTrap()
 
 /**
- * Tells whether any modal (settings, move, AP group, Wi-Fi network, site
- * selection, certificate) is open. Modals never stack: each opens only while the
+ * Tells whether any modal (settings, move, AP group, Wi-Fi network,
+ * "Broadcast on", site selection, certificate) is open. Modals never stack: each opens only while the
  * others are closed.
  * @returns {boolean} True while a modal is open.
  */
@@ -69,6 +69,7 @@ export function isAnyModalOpen(): boolean {
     moveModal.classList.contains('visible') ||
     groupModal.classList.contains('visible') ||
     networkModal.classList.contains('visible') ||
+    bindingModal.classList.contains('visible') ||
     siteModal.classList.contains('visible') ||
     certModal.classList.contains('visible')
   );

@@ -518,6 +518,69 @@ export interface Translations {
   networkErrorListStale: string;
   networkErrorDataReading: string;
   networkErrorNetworkChanged: string;
+  // "Broadcast on" binding editor (managed-networks-view.ts, binding-dialog.ts,
+  // binding-flow.ts, network-bindings.ts; todo.md 4.12): the detail's section
+  // (its action, or why it is read-only), the editor (search, group list,
+  // selection line, live preview, capacity problems named per group and
+  // band — {group} / {bands} / {band} —, notes), the confirmation, the
+  // progress and result, and one message per NetworkBindingsError (plus the
+  // renderer's own freshness refusals and 'failed')
+  bindingTitle: string;
+  bindingEditAction: string;
+  bindingReadOnlyAllAccessPoints: string;
+  bindingReadOnlyUnknown: string;
+  bindingMessage: string;
+  bindingSearchLabel: string;
+  bindingSearchPlaceholder: string;
+  bindingGroupsLegend: string;
+  bindingNoGroups: string;
+  bindingNoResults: string;
+  bindingSelectionNone: string;
+  bindingSelectionOne: string;
+  bindingSelectionMany: string;
+  bindingHiddenOne: string;
+  bindingHiddenMany: string;
+  bindingUnchanged: string;
+  bindingBandsUnknownNote: string;
+  bindingReviewAction: string;
+  bindingReviewTitle: string;
+  bindingReviewMessage: string;
+  bindingSaveAction: string;
+  bindingRowBefore: string;
+  bindingRowAfter: string;
+  bindingRowAdded: string;
+  bindingRowRemoved: string;
+  bindingRowKept: string;
+  bindingRowNone: string;
+  bindingNoteRemoved: string;
+  bindingCapacityTitle: string;
+  bindingCapacityGroup: string;
+  bindingCapacityFull: string;
+  bindingCapacityUnknown: string;
+  bindingBandMlo: string;
+  bindingMloNote: string;
+  bindingReading: string;
+  bindingSaving: string;
+  bindingSaved: string;
+  bindingSavedPlain: string;
+  bindingErrorNotConnected: string;
+  bindingErrorSuperseded: string;
+  bindingErrorManagementUnavailable: string;
+  bindingErrorGroupsRequired: string;
+  bindingErrorNothingToChange: string;
+  bindingErrorNetworkListIncomplete: string;
+  bindingErrorNetworkNotFound: string;
+  bindingErrorScopeAllAccessPoints: string;
+  bindingErrorScopeUnknown: string;
+  bindingErrorGroupNotFound: string;
+  bindingErrorGroupListIncomplete: string;
+  bindingErrorNetworkStateUnknown: string;
+  bindingErrorCapacityInsufficient: string;
+  bindingErrorRequestFailed: string;
+  bindingErrorGroupsStale: string;
+  bindingErrorGroupsReading: string;
+  bindingErrorGroupsChanged: string;
+  bindingErrorFailed: string;
   // AP status categories (see AP_STATUS in ap-list.ts). Shown as text next to
   // the coloured dot of each AP row and as the status filter's options, so
   // the state is not conveyed by colour alone.
@@ -974,6 +1037,62 @@ export const translations: Record<Language, Translations> = {
     networkErrorListStale: 'La lista de redes Wi-Fi no está al día (falló su última lectura): no se puede cambiar ninguna red hasta que se vuelva a leer (Reintentar).',
     networkErrorDataReading: 'Se están leyendo de nuevo las redes Wi-Fi: espera a que termine para cambiar una red.',
     networkErrorNetworkChanged: 'La red ha cambiado en el controlador (o ya no está) desde que se mostró: revisa sus datos actualizados y vuelve a intentarlo. No se envió nada.',
+    bindingTitle: 'Se emite en',
+    bindingEditAction: 'Cambiar grupos de AP',
+    bindingReadOnlyAllAccessPoints: 'La aplicación no cambia dónde se emite una red que llega a todos los puntos de acceso (nunca la convierte en una lista de grupos de AP): para limitarla a algunos grupos, hazlo en el controlador.',
+    bindingReadOnlyUnknown: 'Como no se sabe con claridad dónde se emite, aquí no se pueden cambiar sus grupos de AP.',
+    bindingMessage: 'Elige los grupos de AP que emiten "{name}". No se envía nada hasta que revises el cambio y lo confirmes.',
+    bindingSearchLabel: 'Buscar grupos de AP',
+    bindingSearchPlaceholder: 'Buscar grupos de AP…',
+    bindingGroupsLegend: 'Grupos de AP',
+    bindingNoGroups: 'No hay ningún grupo de AP al que vincularla.',
+    bindingNoResults: 'Ningún grupo de AP coincide con "{query}".',
+    bindingSelectionNone: 'Ningún grupo elegido',
+    bindingSelectionOne: '1 grupo elegido',
+    bindingSelectionMany: '{count} grupos elegidos',
+    bindingHiddenOne: '1 oculto por la búsqueda',
+    bindingHiddenMany: '{count} ocultos por la búsqueda',
+    bindingUnchanged: 'Todavía no hay ningún cambio: marca o desmarca grupos para cambiar dónde se emite.',
+    bindingBandsUnknownNote: 'El controlador no indica las bandas de esta red, así que no se puede comprobar si los grupos que añades tienen hueco: solo se pueden quitar grupos.',
+    bindingReviewAction: 'Revisar el cambio',
+    bindingReviewTitle: 'Revisar el cambio',
+    bindingReviewMessage: 'Al guardar, "{name}" se emitirá así:',
+    bindingSaveAction: 'Guardar grupos de AP',
+    bindingRowBefore: 'Ahora',
+    bindingRowAfter: 'Después',
+    bindingRowAdded: 'Se añaden',
+    bindingRowRemoved: 'Se quitan',
+    bindingRowKept: 'Se mantienen',
+    bindingRowNone: 'Ninguno',
+    bindingNoteRemoved: 'Los puntos de acceso de los grupos que se quitan dejarán de emitir esta red, y sus clientes conectados a ellos se desconectarán.',
+    bindingCapacityTitle: 'Sin hueco confirmado para esta red:',
+    bindingCapacityGroup: '{group} — {bands}',
+    bindingCapacityFull: '{band}: sin hueco',
+    bindingCapacityUnknown: '{band}: no informado',
+    bindingBandMlo: 'MLO',
+    bindingMloNote: 'Esta red usa MLO y el controlador no informa del hueco MLO de los grupos, así que la aplicación aún no le puede añadir grupos (sí quitarlos).',
+    bindingReading: 'Leyendo de nuevo los datos actuales…',
+    bindingSaving: 'Guardando los grupos de AP…',
+    bindingSaved: 'La red "{name}" se emite ahora en {scope}.',
+    bindingSavedPlain: 'Se guardaron los grupos de AP de "{name}".',
+    bindingErrorNotConnected: 'No hay conexión con el controlador. Conecta y vuelve a intentarlo.',
+    bindingErrorSuperseded: 'La conexión cambió antes de que respondiera el controlador. Actualiza los datos para ver si se aplicó el cambio.',
+    bindingErrorManagementUnavailable: 'El acceso de gestión no está activo en esta conexión, así que no se puede cambiar dónde se emiten las redes Wi-Fi. Revisa Ajustes → Acceso de gestión.',
+    bindingErrorGroupsRequired: 'Elige al menos un grupo de AP. Para que la red deje de emitirse, desactívala.',
+    bindingErrorNothingToChange: 'No hay nada que guardar: la red ya se emite exactamente en estos grupos de AP.',
+    bindingErrorNetworkListIncomplete: 'No se pudo leer completa la lista de redes Wi-Fi del controlador (o tiene más de las que la aplicación lee de una vez), así que no se puede comprobar esta red: no se envió nada.',
+    bindingErrorNetworkNotFound: 'El controlador ya no tiene esta red. Actualiza los datos.',
+    bindingErrorScopeAllAccessPoints: 'El controlador indica que esta red se emite en todos los puntos de acceso: la aplicación no cambia ese ajuste (nunca lo convierte en una lista de grupos). No se envió nada.',
+    bindingErrorScopeUnknown: 'El controlador no indica con claridad dónde se emite esta red, así que no se puede cambiar sin riesgo: no se envió nada.',
+    bindingErrorGroupNotFound: 'Uno de los grupos de AP elegidos ya no está en el controlador. Actualiza los datos.',
+    bindingErrorGroupListIncomplete: 'No se pudo leer completa la lista de grupos de AP del controlador, así que no se hizo ningún cambio.',
+    bindingErrorNetworkStateUnknown: 'El controlador no indica con claridad las bandas de esta red o si usa MLO, así que no se puede comprobar si los grupos que añades tienen hueco: no se envió nada. Quitar grupos sí es posible.',
+    bindingErrorCapacityInsufficient: 'No todos los grupos de AP que añades tienen hueco para esta red: los grupos y bandas de abajo están llenos o no informan de su capacidad (la aplicación nunca supone que hay hueco). No se envió nada.',
+    bindingErrorRequestFailed: 'El controlador no pudo completar la solicitud.',
+    bindingErrorGroupsStale: 'La lista de grupos de AP no está al día (falló su última lectura), así que no se conoce su capacidad: no se puede cambiar dónde se emite una red hasta que se vuelva a leer (Actualizar).',
+    bindingErrorGroupsReading: 'Se está leyendo la lista de grupos de AP: espera a que termine para cambiar dónde se emite una red.',
+    bindingErrorGroupsChanged: 'Los grupos de AP han cambiado en el controlador desde que se mostraron: revisa la lista actualizada y vuelve a intentarlo. No se envió nada.',
+    bindingErrorFailed: 'No se pudo completar la solicitud.',
     statusApConnected: 'Conectado',
     statusApPending: 'Adoptando',
     statusApHeartbeatMissed: 'Sin respuesta',
@@ -1425,6 +1544,62 @@ export const translations: Record<Language, Translations> = {
     networkErrorListStale: 'The Wi-Fi network list is not up to date (its last read failed): no network can be changed until it is read again (Retry).',
     networkErrorDataReading: 'The Wi-Fi networks are being read again: wait for it to finish to change a network.',
     networkErrorNetworkChanged: 'The network changed on the controller (or is gone) since it was shown: check its updated details and try again. Nothing was sent.',
+    bindingTitle: 'Broadcast on',
+    bindingEditAction: 'Change AP groups',
+    bindingReadOnlyAllAccessPoints: 'The app does not change where a network on all access points is broadcast (it never turns it into a list of AP groups): to limit it to some groups, use the controller.',
+    bindingReadOnlyUnknown: 'As where it is broadcast is not clear, its AP groups can\'t be changed here.',
+    bindingMessage: 'Choose the AP groups that broadcast "{name}". Nothing is sent until you review the change and confirm it.',
+    bindingSearchLabel: 'Search AP groups',
+    bindingSearchPlaceholder: 'Search AP groups…',
+    bindingGroupsLegend: 'AP groups',
+    bindingNoGroups: 'There is no AP group to bind it to.',
+    bindingNoResults: 'No AP group matches "{query}".',
+    bindingSelectionNone: 'No group selected',
+    bindingSelectionOne: '1 group selected',
+    bindingSelectionMany: '{count} groups selected',
+    bindingHiddenOne: '1 hidden by the search',
+    bindingHiddenMany: '{count} hidden by the search',
+    bindingUnchanged: 'No change yet: tick or untick groups to change where it is broadcast.',
+    bindingBandsUnknownNote: 'The controller does not report this network\'s bands, so whether the groups you add have room can\'t be checked: groups can only be removed.',
+    bindingReviewAction: 'Review the change',
+    bindingReviewTitle: 'Review the change',
+    bindingReviewMessage: 'Saving changes where "{name}" is broadcast as follows:',
+    bindingSaveAction: 'Save AP groups',
+    bindingRowBefore: 'Now',
+    bindingRowAfter: 'After',
+    bindingRowAdded: 'Added',
+    bindingRowRemoved: 'Removed',
+    bindingRowKept: 'Kept',
+    bindingRowNone: 'None',
+    bindingNoteRemoved: 'The access points of the removed groups will stop broadcasting this network, and its clients connected to them will be disconnected.',
+    bindingCapacityTitle: 'No confirmed room for this network:',
+    bindingCapacityGroup: '{group} — {bands}',
+    bindingCapacityFull: '{band}: full',
+    bindingCapacityUnknown: '{band}: not reported',
+    bindingBandMlo: 'MLO',
+    bindingMloNote: 'This network uses MLO and the controller does not report the groups\' MLO room, so the app can\'t add groups to it yet (removing them still works).',
+    bindingReading: 'Reading the current data again…',
+    bindingSaving: 'Saving the AP groups…',
+    bindingSaved: 'Network "{name}" is now broadcast on {scope}.',
+    bindingSavedPlain: 'The AP groups of "{name}" were saved.',
+    bindingErrorNotConnected: 'Not connected to the controller. Connect and try again.',
+    bindingErrorSuperseded: 'The connection changed before the controller answered. Refresh to see whether the change was applied.',
+    bindingErrorManagementUnavailable: 'Management access is not active on this connection, so where Wi-Fi networks are broadcast can\'t be changed. Check Settings → Management access.',
+    bindingErrorGroupsRequired: 'Pick at least one AP group. To stop broadcasting the network, disable it.',
+    bindingErrorNothingToChange: 'Nothing to save: the network is already broadcast on exactly these AP groups.',
+    bindingErrorNetworkListIncomplete: 'The controller\'s Wi-Fi network list could not be read completely (or it has more networks than the app reads at once), so this network can\'t be checked: nothing was sent.',
+    bindingErrorNetworkNotFound: 'The controller no longer has this network. Refresh the data.',
+    bindingErrorScopeAllAccessPoints: 'The controller reports that this network is broadcast on all access points: the app does not change that setting (it never turns it into a list of groups). Nothing was sent.',
+    bindingErrorScopeUnknown: 'The controller does not report clearly where this network is broadcast, so it can\'t be changed safely: nothing was sent.',
+    bindingErrorGroupNotFound: 'One of the chosen AP groups is no longer on the controller. Refresh the data.',
+    bindingErrorGroupListIncomplete: 'The controller\'s AP group list could not be read completely, so nothing was changed.',
+    bindingErrorNetworkStateUnknown: 'The controller does not report this network\'s bands or its MLO state clearly, so whether the groups you add have room can\'t be checked: nothing was sent. Removing groups still works.',
+    bindingErrorCapacityInsufficient: 'Not every AP group you add has room for this network: the groups and bands below are full or do not report their capacity (the app never assumes there is room). Nothing was sent.',
+    bindingErrorRequestFailed: 'The controller could not complete the request.',
+    bindingErrorGroupsStale: 'The AP group list is not up to date (its last read failed), so its capacity is unknown: where a network is broadcast can\'t be changed until it is read again (Refresh).',
+    bindingErrorGroupsReading: 'The AP group list is being read: wait for it to finish to change where a network is broadcast.',
+    bindingErrorGroupsChanged: 'The AP groups changed on the controller since they were shown: check the updated list and try again. Nothing was sent.',
+    bindingErrorFailed: 'The request could not be completed.',
     statusApConnected: 'Connected',
     statusApPending: 'Adopting',
     statusApHeartbeatMissed: 'Heartbeat missed',

@@ -8,11 +8,15 @@
 // after a refresh or the reload after a move, and after every AP-group
 // write. Every reply is checked against the session generation, the nonce
 // it was asked with and the read's number: a late reply from an old session,
-// nonce or read changes nothing. Values main did not report stay absent.
+// nonce or read changes nothing. Values main did not report stay absent. It
+// also feeds the "Broadcast on" editor's options and capacity pre-check
+// (binding-flow.ts), so the Wi-Fi network's detail is re-rendered once a
+// read settles (its "Change AP groups" action follows the list's freshness).
 // ============================================================================
 
 import { isGroupManagementOn, renderGroupsView } from './groups-view';
 import { parseManagedGroupsResult, type ParsedManagedGroups } from './group-management';
+import { renderNetworkDetail } from './networks-view';
 import { state } from './state';
 
 /**
@@ -29,7 +33,7 @@ export function resetManagedGroups(): void {
 
 /**
  * Reads the fresh view of the AP groups for the session on screen and
- * re-renders the AP groups view with it. While management is off (or no
+ * re-renders the AP groups view (and the Wi-Fi network detail) with it. While management is off (or no
  * session is on screen) the view is forgotten instead. The previous view
  * stays on screen while a new read runs; a failed read drops it (the delete
  * reasons then fail closed and the capacity section states the failure).
@@ -77,4 +81,5 @@ export async function loadManagedGroups(generation: number): Promise<void> {
     state.managedGroupsFailure = { error: parsed.error, diagnostic: parsed.diagnostic };
   }
   renderGroupsView();
+  renderNetworkDetail();
 } // End of function loadManagedGroups()

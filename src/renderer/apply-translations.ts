@@ -7,7 +7,10 @@ import {
   apFilterInput,
   apList,
   apPanelTitle,
+  backBindingBtn,
   backNetworkBtn,
+  bindingModalTitle,
+  cancelBindingBtn,
   cancelCertBtn,
   cancelCertResetBtn,
   cancelMoveBtn,
@@ -20,6 +23,7 @@ import {
   closeMoveBtn,
   closeSettingsBtn,
   confirmCertBtn,
+  confirmBindingBtn,
   confirmCertResetBtn,
   confirmGroupBtn,
   confirmManagementRemoveBtn,
@@ -163,6 +167,13 @@ export function applyTranslations() {
   cancelNetworkBtn.textContent = t('cancel');
   backNetworkBtn.textContent = t('networkBackAction');
   confirmNetworkBtn.textContent = t('networkCreateAction');
+
+  // "Broadcast on" dialog: the editor's defaults (binding-dialog.ts rewrites
+  // every text, and builds the editor, for the network it opens for)
+  bindingModalTitle.textContent = t('bindingTitle');
+  cancelBindingBtn.textContent = t('cancel');
+  backBindingBtn.textContent = t('networkBackAction');
+  confirmBindingBtn.textContent = t('bindingReviewAction');
 
   // Site selection modal (its option buttons are built per-open from the
   // controller's site names, see showSiteSelection())
