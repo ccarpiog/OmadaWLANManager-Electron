@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T02:06:04Z",
+ "updated": "2026-10-07T02:06:17Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -149,7 +149,8 @@
    "risk": "high",
    "summary": "Adds optional Client ID and Secret in Settings with secure-storage-only persistence, an Open API client and a central redactor.",
    "review": "docs/reviews/phase15a.md",
-   "narrative": "docs/progress-archive/phase-15a.md"
+   "narrative": "docs/progress-archive/phase-15a.md",
+   "commit": "a14415d"
   },
   {
    "id": "15b",
