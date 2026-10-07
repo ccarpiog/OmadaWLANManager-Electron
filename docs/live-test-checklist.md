@@ -1332,6 +1332,7 @@ controller run settles them; they are listed so that nothing is silently dropped
   unused.
 - **19b:** the editor is a dialog; a bound group missing from the group list can only be removed (5.9
   checks whether one exists).
-- **20a:** the accepted risks in `docs/security-audit.md` §7 (move channels without a session nonce,
-  `refreshData()` generation, a late test result, URL change without confirmation (Feedback above),
-  polite error toasts, detail actions at short heights, inline confirmations during a reset).
+- **20a:** the accepted risks in `docs/security-audit.md` §7 (a late test result, URL change without
+  confirmation (Feedback above), polite error toasts, detail actions at short heights, inline
+  confirmations during a reset; the move channels' session nonce and the `refreshData()` generation
+  were closed by inbox phase I-1b2b2).

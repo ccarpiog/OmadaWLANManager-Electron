@@ -174,11 +174,46 @@ describe('index.ts registers every channel through the trusted registrar (struct
       const body = text.slice(signature.length);
       assert.match(
         body,
-        /requireNoExtraArguments\(extra\)|requireSessionNonce\(\w+, extra\)|parse\w+Request\(payload, extra\)|if \(extra\.length > 0\)/,
+        /requireNoExtraArguments\(extra\)|requireSessionNonce\(\w+, extra\)|parse\w+Request\(payload, extra\)|parseApMoveRequest\(sessionNonce, mac, wlanId, extra\)|if \(extra\.length > 0\)/,
         `${key} refuses extra arguments`
       );
     } // End of the loop over the registrations
   }); // End of test "every handler captures its extra arguments..."
+
+  test('the controller data channels (inbox I-1b2b2) take the session nonce first, guard it, and answer through the session-bound replies only', () => {
+    const expected: Array<[string, RegExp]> = [
+      ['OMADA_GET_APS', /async \(_event, sessionNonce: unknown, \.\.\.extra: unknown\[\]\): Promise<AccessPoint\[\]> =>\s*\{\s*return accessPointsReply\(connectionManager, requireSessionNonce\(sessionNonce, extra\)\);\s*\}/],
+      ['OMADA_GET_WLANS', /async \(_event, sessionNonce: unknown, \.\.\.extra: unknown\[\]\): Promise<GroupListing> =>\s*\{\s*return wlanGroupsReply\(connectionManager, requireSessionNonce\(sessionNonce, extra\)\);\s*\}/],
+      [
+        'OMADA_SET_WLAN',
+        /async \(_event, sessionNonce: unknown, mac: unknown, wlanId: unknown, \.\.\.extra: unknown\[\]\): Promise<boolean> =>\s*\{\s*return apMoveReply\(connectionManager, parseApMoveRequest\(sessionNonce, mac, wlanId, extra\)\);\s*\}/
+      ]
+    ];
+    for (const [key, pattern] of expected) {
+      const entry = registrations().find((registration) => registration.key === key);
+      assert.ok(entry, key);
+      assert.match(entry.text, pattern, key);
+    }
+    assert.equal(/requireController\(|connectionManager\.controller/.test(INDEX_SOURCE), false, 'no handler reaches the installed session without its nonce');
+    assert.match(PRELOAD_SOURCE, /ipcRenderer\.invoke\(IPC_CHANNELS\.OMADA_GET_APS, sessionNonce\)/);
+    assert.match(PRELOAD_SOURCE, /ipcRenderer\.invoke\(IPC_CHANNELS\.OMADA_GET_WLANS, sessionNonce\)/);
+    assert.match(PRELOAD_SOURCE, /ipcRenderer\.invoke\(IPC_CHANNELS\.OMADA_SET_WLAN, sessionNonce, mac, wlanId\)/);
+  }); // End of test "the controller data channels (inbox I-1b2b2)..."
+
+  test('the controller switch (inbox I-1b2b2) guards the target before switchTarget() runs, and the startup target is set before the window exists', () => {
+    const entry = registrations().find((registration) => registration.key === 'OMADA_SWITCH_CONTROLLER');
+    assert.ok(entry);
+    assert.match(
+      entry.text,
+      /async \(_event, payload: unknown, \.\.\.extra: unknown\[\]\): Promise<ConnectionResult> =>\s*\{\s*return connectionManager\.switchTarget\(parseControllerTargetRequest\(payload, extra\)\);\s*\}/
+    );
+    assert.match(PRELOAD_SOURCE, /ipcRenderer\.invoke\(IPC_CHANNELS\.OMADA_SWITCH_CONTROLLER, target\)/);
+    const ready = INDEX_SOURCE.slice(INDEX_SOURCE.indexOf('app.whenReady().then('));
+    const startOn = ready.indexOf('connectionManager.startOn(getStartupTarget())');
+    assert.ok(startOn > 0, 'startOn(getStartupTarget()) in the ready handler');
+    assert.ok(startOn < ready.indexOf('createWindow();'), 'before the window (and its first connect) exists');
+    assert.equal((INDEX_SOURCE.match(/\.startOn\(/g) ?? []).length, 1);
+  }); // End of test "the controller switch (inbox I-1b2b2)..."
 
   test('the cloud channels (inbox I-1a) take no argument at all — no host, deviceId, serverHost or URL from the renderer — and answer from CloudAccessService', () => {
     for (const [key, method] of [['CLOUD_TEST', 'test'], ['CLOUD_CONTROLLERS', 'controllers']] as const) {
@@ -212,6 +247,7 @@ const EXPECTED_BRIDGE: Record<string, keyof typeof IPC_CHANNELS> = {
   getAccessPoints: 'OMADA_GET_APS',
   getWlanGroups: 'OMADA_GET_WLANS',
   setApWlanGroup: 'OMADA_SET_WLAN',
+  switchController: 'OMADA_SWITCH_CONTROLLER',
   selectSite: 'OMADA_SELECT_SITE',
   disconnect: 'OMADA_DISCONNECT',
   trustCertificate: 'CERT_TRUST',

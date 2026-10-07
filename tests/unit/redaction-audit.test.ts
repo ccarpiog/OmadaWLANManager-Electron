@@ -32,6 +32,8 @@ import { after, describe, mock, test } from 'node:test';
 import { parseStoredConfigText } from '../../src/main/config-model';
 import { ConnectionManager } from '../../src/main/connection-manager';
 import {
+  accessPointsReply,
+  apMoveReply,
   changeNetworkPasswordReply,
   ControllerSession,
   createApGroupReply,
@@ -39,9 +41,10 @@ import {
   managedApGroupsReply,
   managedNetworksReply,
   updateNetworkReply,
+  wlanGroupsReply,
   type ManagementCredentials
 } from '../../src/main/controller-session';
-import { parseNetworkPasswordRequest } from '../../src/main/ipc-guards';
+import { parseApMoveRequest, parseNetworkPasswordRequest, requireSessionNonce } from '../../src/main/ipc-guards';
 import { createTrustedIpcRegistrar, type IpcHandleRegistry } from '../../src/main/ipc-trust';
 import { OpenApiClient, TOKEN_PATH } from '../../src/main/openapi-client';
 import { IPC_CHANNELS } from '../../src/shared/types';
@@ -286,20 +289,12 @@ function registerDataChannels(harness: Harness): (channel: string, ...args: unkn
   const listeners = new Map<string, (event: { trusted: boolean }, ...args: unknown[]) => unknown>();
   const ipc: IpcHandleRegistry<{ trusted: boolean }> = { handle: (channel, listener) => void listeners.set(channel, listener) };
   const registrar = createTrustedIpcRegistrar(ipc, (event) => event.trusted, () => [SENTINELS.password, SENTINELS.clientSecret]);
-  /**
-   * The installed controller session (as index.ts requireController()).
-   * @returns {ControllerSession} The session.
-   */
-  const requireController = (): ControllerSession => {
-    const controller = harness.manager.controller;
-    if (!controller) {
-      throw new Error('Not connected to the controller');
-    }
-    return controller;
-  };
-  registrar.handle(IPC_CHANNELS.OMADA_GET_APS, async () => requireController().getAccessPoints());
-  registrar.handle(IPC_CHANNELS.OMADA_GET_WLANS, async () => requireController().getWlanGroups());
-  registrar.handle(IPC_CHANNELS.OMADA_SET_WLAN, async (_event, mac, wlanId) => requireController().setApWlanGroup(mac as string, wlanId as string));
+  // The session-bound data channels (inbox I-1b2b2), with index.ts's handler bodies
+  registrar.handle(IPC_CHANNELS.OMADA_GET_APS, async (_event, sessionNonce, ...extra) => accessPointsReply(harness.manager, requireSessionNonce(sessionNonce, extra)));
+  registrar.handle(IPC_CHANNELS.OMADA_GET_WLANS, async (_event, sessionNonce, ...extra) => wlanGroupsReply(harness.manager, requireSessionNonce(sessionNonce, extra)));
+  registrar.handle(IPC_CHANNELS.OMADA_SET_WLAN, async (_event, sessionNonce, mac, wlanId, ...extra) =>
+    apMoveReply(harness.manager, parseApMoveRequest(sessionNonce, mac, wlanId, extra))
+  );
   registrar.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_PASSWORD, async (_event, payload, ...extra) =>
     changeNetworkPasswordReply(harness.manager, parseNetworkPasswordRequest(payload, extra))
   );
@@ -347,7 +342,7 @@ describe('redaction audit: internal API failures (connect detail, data and AP-mo
 
   test('the AP list, group list and AP move failing with every secret: the rejection the renderer gets is redacted', async () => {
     const harness = new Harness();
-    await harness.connect();
+    const nonce = await harness.connect();
     const invoke = registerDataChannels(harness);
     harness.transport.on('GET', DEVICES_PATH, refusedWithSecrets(-1, INTERNAL_ECHO));
     harness.transport.on('GET', WLANS_PATH, http500WithSecrets(INTERNAL_ECHO));
@@ -355,9 +350,9 @@ describe('redaction audit: internal API failures (connect detail, data and AP-mo
       throw new Error(`write failed: ${echoedSecrets(INTERNAL_ECHO)}`);
     });
     const messages = [
-      await invoke(IPC_CHANNELS.OMADA_GET_APS),
-      await invoke(IPC_CHANNELS.OMADA_GET_WLANS),
-      await invoke(IPC_CHANNELS.OMADA_SET_WLAN, AP_MAC, GROUP_IDS[1])
+      await invoke(IPC_CHANNELS.OMADA_GET_APS, nonce),
+      await invoke(IPC_CHANNELS.OMADA_GET_WLANS, nonce),
+      await invoke(IPC_CHANNELS.OMADA_SET_WLAN, nonce, AP_MAC, GROUP_IDS[1])
     ];
     for (const message of messages) {
       assert.ok(message !== null, 'each call failed');
@@ -408,7 +403,7 @@ describe('redaction audit: live session credentials echoed bare (CSRF token, ses
 
   test('the AP list, group list and AP move failing with the bare CSRF token and session cookie: the rejections and the log lines are redacted', async () => {
     const harness = new Harness();
-    await harness.connect();
+    const nonce = await harness.connect();
     const invoke = registerDataChannels(harness);
     harness.transport.on('GET', DEVICES_PATH, refusedWithSecrets(-1, SESSION_ECHO));
     harness.transport.on('GET', WLANS_PATH, http500WithSecrets(SESSION_ECHO));
@@ -417,9 +412,9 @@ describe('redaction audit: live session credentials echoed bare (CSRF token, ses
     });
     const mark = logLines.length;
     const messages = [
-      await invoke(IPC_CHANNELS.OMADA_GET_APS),
-      await invoke(IPC_CHANNELS.OMADA_GET_WLANS),
-      await invoke(IPC_CHANNELS.OMADA_SET_WLAN, AP_MAC, GROUP_IDS[1])
+      await invoke(IPC_CHANNELS.OMADA_GET_APS, nonce),
+      await invoke(IPC_CHANNELS.OMADA_GET_WLANS, nonce),
+      await invoke(IPC_CHANNELS.OMADA_SET_WLAN, nonce, AP_MAC, GROUP_IDS[1])
     ];
     for (const message of messages) {
       assert.ok(message !== null, 'each call failed');
@@ -431,13 +426,13 @@ describe('redaction audit: live session credentials echoed bare (CSRF token, ses
 
   test('a re-login failing after the session expired, echoing the CSRF token and cookie it has just cleared: the rejection is still redacted', async () => {
     const harness = new Harness();
-    await harness.connect();
+    const nonce = await harness.connect();
     const invoke = registerDataChannels(harness);
     harness.transport.on('GET', DEVICES_PATH, { body: { errorCode: -1200, msg: 'Login required.' } });
     harness.transport.on('POST', LOGIN_PATH, () => {
       throw new Error(`socket hang up: ${echoedSecrets(SESSION_ECHO)}`);
     });
-    const message = await invoke(IPC_CHANNELS.OMADA_GET_APS);
+    const message = await invoke(IPC_CHANNELS.OMADA_GET_APS, nonce);
     assert.ok(message !== null, 'the call failed');
     assert.deepEqual(leakedSentinels(message), [], message);
     assert.match(message, /^Session expired; re-login failed: socket hang up: \[REDACTED\] \[REDACTED\] \[REDACTED\] /);

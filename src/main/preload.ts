@@ -9,6 +9,7 @@ import type {
   ConfigSavePayload,
   ConfigSaveResult,
   ConnectionResult,
+  ControllerTarget,
   AccessPoint,
   GroupListing,
   IPC_CHANNELS as SHARED_IPC_CHANNELS,
@@ -41,6 +42,7 @@ const IPC_CHANNELS: typeof SHARED_IPC_CHANNELS = {
   OMADA_GET_APS: 'omada:get-aps',
   OMADA_GET_WLANS: 'omada:get-wlans',
   OMADA_SET_WLAN: 'omada:set-wlan',
+  OMADA_SWITCH_CONTROLLER: 'omada:switch-controller',
   OMADA_SELECT_SITE: 'omada:select-site',
   OMADA_DISCONNECT: 'omada:disconnect',
   CERT_TRUST: 'cert:trust',
@@ -90,17 +92,28 @@ contextBridge.exposeInMainWorld('omadaAPI', {
     return ipcRenderer.invoke(IPC_CHANNELS.OMADA_CONNECT);
   },
 
-  getAccessPoints: (): Promise<AccessPoint[]> => {
-    return ipcRenderer.invoke(IPC_CHANNELS.OMADA_GET_APS);
+  // The controller data: each call sends the session nonce of the connect
+  // result first (echoed back verbatim), so main serves only the session the
+  // renderer is showing and refuses any other ('notConnected' / 'superseded')
+  getAccessPoints: (sessionNonce: string): Promise<AccessPoint[]> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.OMADA_GET_APS, sessionNonce);
   },
 
   // The group list plus the controller version and group model it belongs to
-  getWlanGroups: (): Promise<GroupListing> => {
-    return ipcRenderer.invoke(IPC_CHANNELS.OMADA_GET_WLANS);
+  getWlanGroups: (sessionNonce: string): Promise<GroupListing> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.OMADA_GET_WLANS, sessionNonce);
   },
 
-  setApWlanGroup: (mac: string, wlanId: string): Promise<boolean> => {
-    return ipcRenderer.invoke(IPC_CHANNELS.OMADA_SET_WLAN, mac, wlanId);
+  setApWlanGroup: (sessionNonce: string, mac: string, wlanId: string): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.OMADA_SET_WLAN, sessionNonce, mac, wlanId);
+  },
+
+  // Switch the controller the app connects to — the local one, {kind:
+  // 'local'}, or a TP-Link cloud controller, {kind: 'cloud', omadacId} — and
+  // connect to it; the reply is that connect's result. Main checks the shape
+  // and supersedes every session, read and write of the previous target
+  switchController: (target: ControllerTarget): Promise<ConnectionResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.OMADA_SWITCH_CONTROLLER, target);
   },
 
   // Complete a connection to a multi-site controller: the renderer sends the

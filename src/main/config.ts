@@ -24,6 +24,7 @@ import {
   withCloudSite,
   withLocalOmadacId
 } from './config-model';
+import { ConnectionTarget, startupTargetOf } from './connection-target';
 import { redactErrorMessage } from './redact';
 
 // Config file path. The format (encrypted password, URL-scoped credentials,
@@ -349,6 +350,20 @@ export function saveActiveController(activeController: string): boolean {
 }
 
 /**
+ * The target the app starts with (inbox I-1b2b2; index.ts hands it to
+ * ConnectionManager.startOn() once the app is ready, before the window
+ * exists): resolveStartupTarget(config, getCloudCredentials() !== null)
+ * through startupTargetOf() (connection-target.ts) — the stored cloud
+ * controller while the cloud credential is usable, else the local
+ * controller; the stored `activeController` is never rewritten here. Call it
+ * only once the app is ready (the cloud secret may need safeStorage).
+ * @returns {ConnectionTarget} The startup target.
+ */
+export function getStartupTarget(): ConnectionTarget {
+  return startupTargetOf(getCachedConfig(), () => getCloudCredentials() !== null);
+}
+
+/**
  * Returns the site remembered for a cloud controller (`cloudSites`).
  * @param {string} omadacId - The cloud controller's omadacId.
  * @returns {string} Its site id, or '' when none is stored.
@@ -390,9 +405,11 @@ export function saveCloudSiteId(omadacId: string, siteId: string): void {
  * @returns {ConfigSaveResult & { urlChanged?: boolean; cloudCredentialsChanged?: boolean }}
  *   Success flag plus an error code on failure; on success, the
  *   management-access and cloud-access status (flags only), whether the
- *   controller URL changed (main-process only — the IPC handler turns it into
- *   `connectionReset`) and whether the cloud credential changed (main-process
- *   only — the handler then drops the cloud client and its tokens).
+ *   controller URL changed and whether the cloud credential changed
+ *   (main-process only: the handler then drops the cloud client and its
+ *   tokens, and ConnectionManager.applyConfigSave() turns either into the
+ *   controller transition the reply reports as `connectionReset` — the
+ *   cloud credential only while the target is a cloud controller).
  */
 export function saveConfig(payload: ConfigSavePayload): ConfigSaveResult & { urlChanged?: boolean; cloudCredentialsChanged?: boolean } {
   const outcome = applyConfigSave(getCachedConfig(), payload, safeStorageBox, sessionClientSecret, sessionCloudClientSecret);

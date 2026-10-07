@@ -24,6 +24,8 @@ const MAX_CERTIFICATE_HOST_LENGTH = 300;
 const MAX_CONTROLLER_VERSION_LENGTH = 64;
 // Length cap for the site name of a connect result (display only)
 const MAX_SITE_NAME_LENGTH = 256;
+// Length cap for a cloud controller's name in a connect result (display only)
+const MAX_CONTROLLER_NAME_LENGTH = 256;
 // Length cap for the opaque session nonce of a connect result (main sends 32
 // hex characters; the renderer only checks presence, type and size)
 const MAX_SESSION_NONCE_LENGTH = 64;
@@ -142,6 +144,41 @@ export function parseGroupListing(raw: unknown): GroupListing {
 export function parseSiteName(raw: unknown): string | null {
   return typeof raw === 'string' && raw.length > 0 && raw.length <= MAX_SITE_NAME_LENGTH ? raw : null;
 }
+
+/**
+ * Validates the controller name of a connect / site-selection result (a
+ * TP-Link cloud controller's organization name; display only): a non-empty
+ * string within the length cap, else null.
+ * @param {unknown} raw - The `controllerName` field received over IPC.
+ * @returns {string | null} The controller name, or null.
+ */
+export function parseControllerName(raw: unknown): string | null {
+  return typeof raw === 'string' && raw.trim().length > 0 && raw.length <= MAX_CONTROLLER_NAME_LENGTH ? raw : null;
+}
+
+/**
+ * The label the header shows for the connected controller: a TP-Link cloud
+ * controller's name when the session has one (such a session has no URL —
+ * its `url` is '' — and the configured local URL must never label it);
+ * otherwise the host (with port) of the controller URL, the raw string when
+ * it is not a parseable URL, and nothing for an empty URL.
+ * @param {string} url - The controller URL ('' for none).
+ * @param {string | null} controllerName - The cloud controller's name, or null.
+ * @returns {string | null} The label, or null for none.
+ */
+export function controllerHostLabel(url: string, controllerName: string | null): string | null {
+  if (controllerName !== null && controllerName.trim() !== '') {
+    return controllerName;
+  }
+  if (typeof url !== 'string' || url === '') {
+    return null;
+  }
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+} // End of function controllerHostLabel()
 
 /**
  * Validates the opaque session nonce of a connect / site-selection result:

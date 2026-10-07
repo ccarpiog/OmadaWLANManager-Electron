@@ -10,9 +10,12 @@
 // never silently dropped. APs already in the destination are skipped,
 // never PATCHed. The run is sequential and NOT atomic: each AP succeeds or
 // fails on its own. The whole flow is one exclusive operation
-// (state.isApplyingChange) bound to the session it started in: when the
-// session generation moves on (disconnect, URL change, reconnect), it stops at
-// the next await and nothing it learned reaches the UI.
+// (state.isApplyingChange) bound to the session it started in: it captures
+// the session (generation and session nonce, session-ticket.ts) at its start,
+// every OMADA_SET_WLAN and the reload after the run carry that nonce (main
+// refuses another session's: inbox I-1b2b2), and when the session generation
+// moves on (disconnect, URL change, reconnect, a controller switch), it stops
+// at the next await and nothing it learned reaches the UI.
 // ============================================================================
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
@@ -37,6 +40,7 @@ import {
   type MoveOutcome,
   type MovePlan,
 } from './move-plan';
+import { captureSessionTicket, isTicketCurrent, reloadWithTicket, type SessionTicket } from './session-ticket';
 import { isOperationInProgress, state } from './state';
 import { showToast } from './toast';
 import { isValidMac, isValidWlanId } from './validation';
@@ -46,29 +50,30 @@ import { isValidMac, isValidWlanId } from './validation';
  * the progress in the dialog. A move that resolves anything but true, or
  * throws, is a failure with the controller's message (when there is one);
  * failures are expected outcomes, reported in the results (console.warn,
- * not console.error). Stops as soon as the session generation changes.
+ * not console.error). Every move carries the session nonce the flow captured
+ * at its start. Stops as soon as the session changes.
  * @param {readonly AccessPoint[]} aps - The APs to move.
  * @param {WlanGroup} destination - The destination group.
- * @param {number} generation - The session generation the flow started in.
+ * @param {SessionTicket} ticket - The session the flow started in.
  * @param {MoveDialog} dialog - The open move dialog.
  * @returns {Promise<MoveOutcome[] | null>} One outcome per AP, or null when
  *   the session changed meanwhile (the outcomes are then discarded).
  */
-async function runMoves(aps: readonly AccessPoint[], destination: WlanGroup, generation: number, dialog: MoveDialog): Promise<MoveOutcome[] | null> {
+async function runMoves(aps: readonly AccessPoint[], destination: WlanGroup, ticket: SessionTicket, dialog: MoveDialog): Promise<MoveOutcome[] | null> {
   const outcomes: MoveOutcome[] = [];
   for (const [index, ap] of aps.entries()) {
     dialog.showProgress(index + 1, aps.length);
     let ok = false;
     let error: string | null = null;
     try {
-      ok = (await window.omadaAPI.setApWlanGroup(ap.mac, destination.wlanId)) === true;
+      ok = (await window.omadaAPI.setApWlanGroup(ticket.nonce, ap.mac, destination.wlanId)) === true;
     } catch (thrown) {
       console.warn(`Moving access point ${ap.mac} failed:`, thrown);
       error = describeMoveError(thrown);
     }
     // Stale (the session changed while awaiting): skip the remaining moves
     // and leave the UI alone
-    if (generation !== state.sessionGeneration) return null;
+    if (!isTicketCurrent(ticket, state)) return null;
     outcomes.push({ mac: ap.mac, name: ap.name, ok, error: ok ? null : error });
   } // End of the loop that moves the APs one by one
   return outcomes;
@@ -106,17 +111,18 @@ function commitOutcomes(outcomes: readonly MoveOutcome[], destination: WlanGroup
  * updated lists stay. A stale failure is ignored. A successful reload also
  * re-reads the fresh Open API view of the AP groups (their AP counts
  * changed) and the managed list of the Wi-Fi networks in the background
- * (management on only).
- * @param {number} generation - The session generation the flow started in.
+ * (management on only) — for the flow's session only (reloadWithTicket()).
+ * @param {SessionTicket} ticket - The session the flow started in.
  * @returns {Promise<void>}
  */
-async function reloadAfterMove(generation: number): Promise<void> {
+async function reloadAfterMove(ticket: SessionTicket): Promise<void> {
   try {
-    await loadData();
-    void loadManagedGroups(generation);
-    void loadManagedNetworks(generation);
+    await reloadWithTicket(ticket, state, loadData, (generation) => {
+      void loadManagedGroups(generation);
+      void loadManagedNetworks(generation);
+    });
   } catch (error) {
-    if (generation !== state.sessionGeneration) return;
+    if (!isTicketCurrent(ticket, state)) return;
     console.warn('Error reloading data after a move:', error);
     showToast(t('loadError'), 'error');
     renderApList();
@@ -189,11 +195,14 @@ function restoreFocus(opener: HTMLElement | null): void {
  */
 export async function startMove(): Promise<void> {
   if (isOperationInProgress() || !state.isConnected) return;
+  // The session the whole flow belongs to (its moves carry this nonce)
+  const ticket = captureSessionTicket(state);
+  if (ticket === null) return;
   let plan: MovePlan | null = currentMovePlan();
   if (plan === null || plan.moving.length === 0) return;
 
   state.isApplyingChange = true;
-  const generation = state.sessionGeneration;
+  const generation = ticket.generation;
   const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   // Disables the move button while the flow runs
   renderMovePreview();
@@ -213,14 +222,14 @@ export async function startMove(): Promise<void> {
       const confirmed = await dialog.review(plan, countHiddenAps(plan.moving, visibleApMacs()));
       if (generation !== state.sessionGeneration || !confirmed) return;
 
-      const outcomes = await runMoves(plan.moving, destination, generation, dialog);
+      const outcomes = await runMoves(plan.moving, destination, ticket, dialog);
       if (outcomes === null) return;
       // The retry contract, fixed before the reload can change the lists
       const { failedMacs } = summarizeMoveOutcomes(outcomes);
       commitOutcomes(outcomes, destination);
       if (outcomes.some(outcome => outcome.ok)) {
         dialog.showRefreshing();
-        await reloadAfterMove(generation);
+        await reloadAfterMove(ticket);
         if (generation !== state.sessionGeneration) return;
       }
 

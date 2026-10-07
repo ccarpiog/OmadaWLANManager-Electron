@@ -5,7 +5,10 @@
 // reached directly, or a controller of the TP-Link cloud account, named by
 // its omadacId —, how a target is persisted (`activeController` in the config:
 // 'local' or the omadacId, config-model.ts) and the startup resolution with
-// its local fallback. Unit-tested in tests/unit/connection-targets.test.ts.
+// its local fallback (wired by index.ts since inbox I-1b2b2). Unit-tested in
+// tests/unit/connection-targets.test.ts. The renderer's form of a target is
+// ControllerTarget (src/shared/types.ts), checked by
+// parseControllerTargetRequest() (ipc-guards.ts) with the same omadacId rule.
 
 import { isOmadacId } from './cloud-account-model';
 import { activeControllerOf, LOCAL_CONTROLLER, StoredConfig } from './config-model';
@@ -83,8 +86,8 @@ export function activeControllerValue(target: ConnectionTarget): string {
  * fallback included (config-model.ts cloudCredentialsOf() not null) —, else
  * the local controller. `activeController` survives a dropped or undecryptable
  * credential (config-model.ts), so the fallback is decided here, never by
- * deleting the stored choice. Pure; the startup path does not call it yet
- * (phase I-1b2b2 wires it).
+ * deleting the stored choice. Pure; the startup path calls it through
+ * startupTargetOf().
  * @param {StoredConfig} config - The stored config.
  * @param {boolean} cloudCredentialUsable - Whether the cloud credential is usable now.
  * @returns {ConnectionTarget} The target to start with.
@@ -95,4 +98,22 @@ export function resolveStartupTarget(config: StoredConfig, cloudCredentialUsable
     return localTarget();
   }
   return { kind: 'cloud', omadacId: active };
+}
+
+/**
+ * The startup wiring (inbox I-1b2b2; config.ts getStartupTarget() → index.ts
+ * ConnectionManager.startOn()): resolveStartupTarget(config, usable), where
+ * the cloud credential's usability (production: getCloudCredentials() !==
+ * null, which may decrypt the cloud secret) is asked only when
+ * `activeController` names a cloud controller — with the local controller
+ * active (the default) the start does exactly what it did before.
+ * @param {StoredConfig} config - The stored config.
+ * @param {() => boolean} isCloudCredentialUsable - Whether the cloud credential is usable now.
+ * @returns {ConnectionTarget} The target to start with.
+ */
+export function startupTargetOf(config: StoredConfig, isCloudCredentialUsable: () => boolean): ConnectionTarget {
+  if (activeControllerOf(config) === LOCAL_CONTROLLER) {
+    return localTarget();
+  }
+  return resolveStartupTarget(config, isCloudCredentialUsable() === true);
 }

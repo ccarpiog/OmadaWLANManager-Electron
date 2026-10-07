@@ -435,8 +435,18 @@ async function runEndToEnd(binary, certDir, fingerprintA, fingerprintB) {
     };
     /** @returns {number} Logout POSTs the fake controller received so far. */
     const logoutCount = () => controller.requests.filter((request) => request.method === 'POST' && request.path.endsWith('/api/v2/logout')).length;
-    /** @returns {Promise<string>} 'installed' when main serves controller data, else 'not connected'. */
-    const installedState = () => page.evaluate(() => window.omadaAPI.getAccessPoints().then(() => 'installed', () => 'not connected'));
+    /**
+     * Asks main for the controller data with a session nonce (the data
+     * channels are session-bound since inbox I-1b2b2).
+     * @param {string} [nonce] - The session nonce (default: a well-formed nonce of no session).
+     * @returns {Promise<string>} 'installed' when main serves controller data for that nonce,
+     *   'not connected' when no open session is installed, else the refusal message
+     *   (e.g. "…: superseded (…)" for another session's nonce).
+     */
+    const installedState = (nonce = '0'.repeat(32)) => page.evaluate((sessionNonce) => window.omadaAPI.getAccessPoints(sessionNonce).then(
+      () => 'installed',
+      (error) => (/: notConnected \(/.test(String(error.message)) ? 'not connected' : String(error.message))
+    ), nonce);
     /**
      * Saves a config pointing at `target` (with a password) over IPC.
      * @param {string} target - Controller URL.
@@ -490,18 +500,19 @@ async function runEndToEnd(binary, certDir, fingerprintA, fingerprintB) {
       );
     }); // End of check "[e2e] adversarial: CERT_RESET while an authenticated connect..."
 
-    await check('[e2e] adversarial: CERT_RESET while connected, without the renderer disconnecting first: main detaches the controller (data calls refused), logs it out (a logout POST reaches the controller) and removes the pin', async () => {
+    await check('[e2e] adversarial: CERT_RESET while connected, without the renderer disconnecting first: main detaches the controller (data calls refused), logs it out (a logout POST reaches the controller) and removes the pin; the data channels serve only the session nonce of the connect result (another nonce: superseded)', async () => {
       await trustThroughIpc();
       const connected = await page.evaluate(() => window.omadaAPI.connect());
-      const before = await installedState();
+      const before = await installedState(connected.sessionNonce);
+      const otherNonce = await installedState();
       const logoutsBefore = logoutCount();
       const reset = await page.evaluate(() => window.omadaAPI.resetCertificate());
-      const after = await installedState();
+      const after = await installedState(connected.sessionNonce);
       const loggedOut = await eventually(() => logoutCount() === logoutsBefore + 1);
       return verdict(
-        connected.success === true && before === 'installed' && reset.success === true && reset.connectionReset === true &&
-        after === 'not connected' && loggedOut && !('certificatePin' in readConfig()),
-        { connected, before, reset, after, logouts: logoutCount() - logoutsBefore }
+        connected.success === true && before === 'installed' && /: superseded \(/.test(otherNonce) && reset.success === true &&
+        reset.connectionReset === true && after === 'not connected' && loggedOut && !('certificatePin' in readConfig()),
+        { connected, before, otherNonce, reset, after, logouts: logoutCount() - logoutsBefore }
       );
     }); // End of check "[e2e] adversarial: CERT_RESET while connected..."
 

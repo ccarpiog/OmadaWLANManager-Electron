@@ -96,9 +96,16 @@ export interface RendererState {
   controllerHost: string | null;
   siteName: string | null;
   // The opaque session nonce of the connect or site-selection result: echoed
-  // back verbatim with the management-access calls (management.ts), so they
-  // act only on the session on screen; null while not connected
+  // back verbatim with the session-bound calls — the controller data and AP
+  // moves (captured by each flow at its start, session-ticket.ts) and the
+  // management-access calls (management.ts) —, so they act only on the
+  // session on screen; null while not connected
   sessionNonce: string | null;
+  // The name of a connected TP-Link cloud controller, as its connect result
+  // reported it (such a session has no controller URL: the header shows this
+  // name in place of a host); null for the local controller and while not
+  // connected
+  controllerName: string | null;
   // The management capabilities main reported for that session (flags plus
   // a reason code), or null while they are being checked or not connected;
   // they feed readOnlyReason() (view-state.ts). A check run that may change
@@ -243,6 +250,7 @@ export const state: RendererState = {
   controllerHost: null,
   siteName: null,
   sessionNonce: null,
+  controllerName: null,
   managementCapabilities: null,
   managementCheck: 0,
   managedApGroups: null,

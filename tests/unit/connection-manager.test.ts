@@ -237,9 +237,9 @@ class Harness {
    * Simulates the CONFIG_SAVE handler for a controller URL change: config.ts
    * saveConfig() drops the password, site id and pin and reports urlChanged.
    * @param {string} url - The new controller URL.
-   * @returns {Promise<{ success: boolean; urlChanged?: boolean }>} The save result.
+   * @returns {Promise<{ success: boolean; urlChanged?: boolean; connectionReset: boolean }>} The save result.
    */
-  changeUrl(url: string): Promise<{ success: boolean; urlChanged?: boolean }> {
+  changeUrl(url: string): Promise<{ success: boolean; urlChanged?: boolean; connectionReset: boolean }> {
     return this.manager.applyConfigSave(() => {
       this.config = { ...this.config, url, password: 'new-password', siteId: '', pin: null };
       return { success: true, urlChanged: true };
@@ -514,7 +514,7 @@ describe('ConnectionManager: a controller URL change is an atomic controller tra
     assert.equal(harness.sessionId, before + 1, 'session switched in the same step as the save');
     stale.connectResult.resolve({ siteSelected: true, sites: [SITES[0]] });
     assert.deepEqual(await pending, { success: false, error: 'connectionSuperseded' });
-    assert.deepEqual(await save, { success: true, urlChanged: true });
+    assert.deepEqual(await save, { success: true, urlChanged: true, connectionReset: true }, 'the transition ran (inbox I-1b2b2: reported for CONFIG_SAVE)');
     await flush();
     assert.equal(harness.manager.controller, null);
     assert.deepEqual(harness.savedSiteIds, []);

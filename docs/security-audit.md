@@ -1,12 +1,12 @@
 # Security, async-race and accessibility audit (phase 20a)
 
-Date: 2026-10-07. Scope: todo.md 4.13 first half — the IPC surface, redaction, async races in the renderer, destructive confirmations, and accessibility / keyboard behaviour at the three window widths. Measured against `docs/management-design.md` §3 and §4.6–§4.7. The line numbers refer to the tree at the end of phase 20a, except the rows marked I-1a (the TP-Link cloud channels and log lines added by inbox phase I-1a, `docs/omada-cloud-openapi.md`), I-1b1 (the cloud controller session) and I-1b2b1 (the connection targets), which refer to the tree at the end of those phases.
+Date: 2026-10-07. Scope: todo.md 4.13 first half — the IPC surface, redaction, async races in the renderer, destructive confirmations, and accessibility / keyboard behaviour at the three window widths. Measured against `docs/management-design.md` §3 and §4.6–§4.7. The line numbers refer to the tree at the end of phase 20a, except the rows marked I-1a (the TP-Link cloud channels and log lines added by inbox phase I-1a, `docs/omada-cloud-openapi.md`), I-1b1 (the cloud controller session), I-1b2b1 (the connection targets) and I-1b2b2 (the session-bound data channels and the controller switch), which refer to the tree at the end of those phases.
 
 Verification: `npm run build`, `npm test` (1033 tests after the review fixes), `npm run smoke` (270 checks, 10 launches, new `[a11y]`) and `npm run tls-probe` (25 checks) all pass. Every fix below was reverted on its own, and a test then failed (see "Fixed in 20a").
 
 ## 1. IPC channels
 
-All 25 channels are registered in `src/main/index.ts` through `handleTrusted()`, the registrar of `src/main/ipc-trust.ts` (built at `index.ts:213` with `isTrustedIpcSender`, `index.ts:169`). The two TP-Link cloud channels came with I-1a.
+All 26 channels are registered in `src/main/index.ts` through `handleTrusted()`, the registrar of `src/main/ipc-trust.ts` (built at `index.ts:213` with `isTrustedIpcSender`, `index.ts:169`). The two TP-Link cloud channels came with I-1a, the controller switch with I-1b2b2.
 
 - **Sender check:** runs before the handler body. A call from any other frame is rejected with a fixed message.
 - **Failures:** a failure crosses back only as `new Error(redacted message)`. The redaction scrubs the stored password, the Client Secret, the cloud Client Secret and the live cloud account tokens by value (`storedSecrets()`, I-1a: `index.ts:238`), as well as the call's own sensitive argument values.
@@ -27,12 +27,13 @@ Column key:
 | Channel | Shape | Formats / limits | Session | Reply |
 |---|---|---|---|---|
 | `config:load` (`index.ts:414`) | no argument (`requireNoExtraArguments`) | — | n/a | `RendererConfig`: flags only, never the password or Client Secret (`config-model.ts:348`) |
-| `config:save` (`index.ts:441`) | one plain object, known keys only (`isValidConfigSavePayload`, `index.ts:228`; I-1a: `:282`, plus the cloud keys); no extra argument | url ≤ 2048, username ≤ 256, password ≤ 512, clientId ≤ 256, clientSecret ≤ 512, language enum, `removeManagementAccess` literal `true`; I-1a: `cloudRegion` enum, `cloudClientId` ≤ 256, `cloudClientSecret` ≤ 512, `removeCloudAccess` literal `true` and alone; value rules in `saveConfig()` | n/a (a URL change is a controller transition; a cloud-credential change drops the cloud client and its tokens) | codes plus management and cloud flags (`cloudAccess`), never a secret |
+| `config:save` (`index.ts:441`; I-1b2b2: `:577`) | one plain object, known keys only (`isValidConfigSavePayload`, `index.ts:228`; I-1a: `:282`, plus the cloud keys); no extra argument | url ≤ 2048, username ≤ 256, password ≤ 512, clientId ≤ 256, clientSecret ≤ 512, language enum, `removeManagementAccess` literal `true`; I-1a: `cloudRegion` enum, `cloudClientId` ≤ 256, `cloudClientSecret` ≤ 512, `removeCloudAccess` literal `true` and alone; value rules in `saveConfig()` | n/a (a URL change is a controller transition; a cloud-credential change drops the cloud client and its tokens, and on a cloud target runs the same transition) | codes plus management and cloud flags (`cloudAccess`), never a secret; I-1b2b2: `connectionReset` whenever the transition ran — a URL change, or a cloud-credential change that dropped a cloud connection (`finishConfigSave()`, `controller-session.ts:369`) |
 | `omada:connect` (`:474`) | no argument | — | starts a generation (`connection-manager.ts`) | codes; `detail` redacted (fixed in 20a) |
 | `omada:select-site` (`:488`) | 2 arguments, no extra | site id `[A-Za-z0-9_-]{1,64}`, then exact-matched against the authorized list; nonce 32-hex | selection nonce of the current pending record | `ConnectionResult` |
-| `omada:get-aps` (`:513`) | no argument | — | installed controller (`requireController`) | allowlisted `AccessPoint` DTO (`omada-validators.ts:86`) |
-| `omada:get-wlans` (`:521`) | no argument | — | installed controller | allowlisted `GroupListing` (`omada-validators.ts:142`, `:200`) |
-| `omada:set-wlan` (`:528`) | 2 arguments, no extra | MAC regex; group id `[A-Za-z0-9_-]{1,64}` (legacy WLAN-group ids are not 24-hex) | installed controller; no nonce (see §7) | `true` or a redacted rejection |
+| `omada:get-aps` (I-1b2b2: `:652`) | `requireSessionNonce` (1 argument) | nonce 32-hex | I-1b2b2: the installed, open session named by the nonce, before any controller call (`sessionDataReply()`, `controller-session.ts:2471`): none or closed → rejection `notConnected (…)`, another session's nonce → `superseded (…)`; a result or failure arriving after a switch, reconnect or transition → `superseded` | allowlisted `AccessPoint` DTO (`omada-validators.ts:86`) |
+| `omada:get-wlans` (I-1b2b2: `:659`) | `requireSessionNonce` | nonce 32-hex | as `omada:get-aps` | allowlisted `GroupListing` (`omada-validators.ts:142`, `:200`) |
+| `omada:set-wlan` (I-1b2b2: `:664`) | 3 arguments, no extra (`parseApMoveRequest`, `ipc-guards.ts:126`: nonce first) | nonce 32-hex; MAC regex; group id `[A-Za-z0-9_-]{1,64}` (legacy WLAN-group ids are not 24-hex) | as `omada:get-aps` (a stale nonce never reaches the controller) | `true` or a redacted rejection |
+| `omada:switch-controller` (I-1b2b2: `:680`) | one plain object, exactly `{kind: 'local'}` or `{kind: 'cloud', omadacId}` (`parseControllerTargetRequest`, `ipc-guards.ts:149`); no extra argument; refused before any state change | `omadacId` by `isOmadacId()` (`[A-Za-z0-9_-]{1,64}`, never `local` or a reserved object key) | `ConnectionManager.switchTarget()`: the URL-change transition in one synchronous step (every connect, site choice, trust decision and session — its reads and writes — superseded), then `activeController` persisted and the new target connected | the new target's `ConnectionResult` (a cloud refusal: `connectError` with a code-first detail; a cloud success adds `controllerName`) |
 | `omada:disconnect` (`:548`) | 0–1 argument, no extra | nonce 32-hex when given | a nonce scopes the abort to its pending selection | void |
 | `cert:trust` (`:566`) | 1 argument, no extra | nonce 32-hex | trust nonce plus generation; the fingerprint is main's own | codes |
 | `cert:reset` (`:586`) | no argument | — | atomic transition | codes |
@@ -46,7 +47,7 @@ Column key:
 | `cloud:test` (I-1a: `:809`) | no argument (`requireNoExtraArguments`): no host, deviceId, serverHost or URL from the renderer | — (saved credentials only; `notConfigured` without them) | no nonce (see §7); a reply whose credentials were saved, removed or replaced meanwhile is `superseded` (credential generation in `CloudAccessService`, `cloud-access.ts`) | `CloudController` DTOs `{omadacId, name, online, version, connectable, reason}` (`toCloudController()`, `cloud-account-model.ts`) or a code with a codes-only diagnostic, scrubbed by value; never a deviceId, serverHost, secret or token |
 | `cloud:controllers` (I-1a: `:815`) | no argument | — (saved credentials only) | as `cloud:test` | as `cloud:test` |
 
-**Preload** (`src/main/preload.ts`). Its only runtime import is `electron`. It exposes exactly `platform` plus 25 methods, each invoking its own channel through `ipcRenderer.invoke` (the two cloud methods with no argument). No other `ipcRenderer` API is used, and its local channel table equals the shared one. `ipc-surface.test.ts` (structural) checks all of this, and the smoke checks it at runtime (`EXPECTED_BRIDGE`; I-1a: the `[es]` cloud-channels check).
+**Preload** (`src/main/preload.ts`). Its only runtime import is `electron`. It exposes exactly `platform` plus 26 methods, each invoking its own channel through `ipcRenderer.invoke` (the two cloud methods with no argument; I-1b2b2: the three data methods with the session nonce first, `switchController(target)`). No other `ipcRenderer` API is used, and its local channel table equals the shared one. `ipc-surface.test.ts` (structural) checks all of this, and the smoke checks it at runtime (`EXPECTED_BRIDGE`; I-1a: the `[es]` cloud-channels check; I-1b2b2: the `[es]` controller-switch and session-bound data-channel checks).
 
 ## 2. Redaction inventory
 
@@ -107,8 +108,8 @@ Generations, nonces and exclusive flags are in `state.ts`. The session generatio
 |---|---|---|
 | connect, certificate trust, site selection | `connection.ts` re-checks the generation after every await (trust and site after their dialog); nonces come from the result | OK |
 | disconnect | the exclusive flag; generation bumped first; the commit is generation-gated | **fixed:** the session nonce now goes with the old generation at once (`connection.ts:507`) |
-| refresh / `loadData()` | generation checked after the awaits; a stale error is swallowed | OK (latent note in §7) |
-| AP bulk move | exclusive flag; generation after the review, after each AP and after the results (`move-flow.ts`) | OK |
+| refresh / `loadData()` | generation checked after the awaits; a stale error is swallowed. I-1b2b2: the session (generation and nonce) is captured at the start (`session-ticket.ts`); both data calls carry that nonce; the managed re-reads after a refresh start for the captured generation only while it is current (`reloadWithTicket()`) | OK (the 20a latent note in §7 is closed) |
+| AP bulk move | exclusive flag; generation after the review, after each AP and after the results (`move-flow.ts`); I-1b2b2: every move and the reload after the run carry the nonce captured at the flow's start | OK |
 | capability checks / "Test management access" | `settleCheck()`: generation plus nonce plus run number; Test re-checks both | OK |
 | managed AP-group reads / writes | request sequence plus nonce (`managed-groups.ts`); `group-flow.ts`: exclusive flag, generation after the dialog, management re-checked, nonce captured at start | OK |
 | managed network reads / writes | ticket plus `isCurrentNetworkRead()` / `settleNetworkRead()`; `network-flow.ts`: `isGone()` after every dialog step, `guardedWrite()` (management, freshness, `sameManagedNetwork`), fresh re-read before Enable / Disable / Delete | OK; **fixed (20a review):** the Change password review was built from the snapshot taken when the flow opened, and now uses the same fresh re-read |
@@ -116,7 +117,7 @@ Generations, nonces and exclusive flags are in `state.ts`. The session generatio
 | settings save / certificate reset | exclusive flags; the reconnect only for the same generation | OK |
 | Settings opening | — | **fixed:** Settings could open during a write flow's re-read and stack under or over its dialog (`settingsBlocked()`, `settings-modal.ts:55`) |
 
-The write flows send the nonce they captured at the start. Main's `sessionOwnedReply()` plus the write epoch refuse a superseded session.
+The write flows send the nonce they captured at the start. Main's `sessionOwnedReply()` plus the write epoch refuse a superseded session; since I-1b2b2 the data loads and the AP moves do too (`sessionDataReply()`).
 
 ## 4. Destructive and broad actions
 
@@ -196,18 +197,18 @@ Each fix is listed with the check that fails when the fix alone is reverted. Eve
 
 ## 7. Remaining risks (accepted, with the reason)
 
-- **AP move not session-bound in main.** `omada:set-wlan`, `omada:get-aps` and `omada:get-wlans` carry no session nonce, so main serves the installed controller. The renderer never sends them across a session change:
-  - the move flow is exclusive and generation-checked after every await;
-  - main handles IPC in order;
-  - the old controller stays installed until a new connect succeeds (phase 7).
+- ~~**AP move not session-bound in main.**~~ **Closed by inbox phase I-1b2b2.** `omada:get-aps`, `omada:get-wlans` and `omada:set-wlan` now carry the session nonce of the connect result first (preload: `getAccessPoints(sessionNonce)`, `getWlanGroups(sessionNonce)`, `setApWlanGroup(sessionNonce, mac, wlanId)`):
+  - main's guard rejects a missing or malformed nonce (`requireSessionNonce()`, `parseApMoveRequest()`), then `sessionDataReply()` refuses, before any controller call, a call without an installed open session (`notConnected (…)`) or with another session's nonce (`superseded (…)`), the management channels' ownership rules; the replies keep their shapes, so a refusal is a rejection whose message starts with the code;
+  - a result or failure that arrives once a switch, a reconnect or a transition replaced or closed the session is refused as `superseded`, never passed on;
+  - the renderer's load, refresh and move flows capture the nonce (with the generation) at their start and send it (`session-ticket.ts`).
 
-  The spec's ownership rule targets the management channels. Binding the moves to a nonce would change the preload API; I-1b (Open API moves) is the natural place for it.
+  Unit tests: `session-data-reply.test.ts`, `connection-targets.test.ts` (real sessions: a stale nonce sends nothing to the controller; a switch during a read; a reconnect), `ipc-guards.test.ts`, `ipc-surface.test.ts`; smoke `[es]` session-bound data channels; TLS probe (another nonce is `superseded` on the real main).
 - **Cloud channels without a session nonce (I-1a, a decision).** The spec binds new channels to the session nonce, but `cloud:test` and `cloud:controllers` carry none:
   - The only nonce main issues identifies a local controller session (a successful local connect). "Test cloud access" must work while disconnected from, or unable to reach, the local controller, so no nonce exists then.
   - The calls read the TP-Link account only, target no controller, take no argument, and their replies are secret-free DTOs.
   - Stale replies are refused in main instead: `CloudAccessService` keeps a credential generation, and a reply for credentials saved, removed or replaced while it ran answers `superseded`.
-  - Planned for I-1b: cloud controller sessions get session nonces like local ones, so every session-owned read or write on a cloud controller is nonce-bound.
-- **`refreshData()` generation.** It starts the managed reads with the current generation rather than a captured one. This is latent: no path can change the generation during a refresh today, because the exclusive flags refuse it.
+  - Done (I-1b1, I-1b2b2): a cloud controller session gets a session nonce like a local one, so every session-owned read or write on a cloud controller — the management channels and, since I-1b2b2, the data channels — is nonce-bound.
+- ~~**`refreshData()` generation.**~~ **Closed by inbox phase I-1b2b2.** The refresh captures the session (generation and nonce) at its start and starts the managed re-reads for that generation only while it is still the session on screen (`reloadWithTicket()`, `session-ticket.ts`; the reload after a move too); a reload whose session changed starts no follow-up for the new one. Unit test: `renderer-session-ticket.test.ts`.
 - **Late Test result.** A "Test management access" result can appear in a reopened Settings (cosmetic: it still describes the same session).
 - **URL change without confirmation.** A Settings URL change has no confirmation step. It is not in the spec's list of destructive or broad actions, and the required-password placeholders already state the consequence.
 - **Error toasts.** They use the polite live region, not `role=alert`.

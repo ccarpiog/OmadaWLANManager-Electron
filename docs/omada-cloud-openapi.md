@@ -302,8 +302,8 @@ Other outcomes:
 `new ControllerSession({kind: 'cloud', omadacId, name, orgVersion, createOpenApiClient, sleep?})`
 (`src/main/controller-session.ts`; its data side is `CloudControllerBackend` in `src/main/cloud-controller-session.ts`).
 It is Electron-free and unit-tested on fixtures (`tests/unit/cloud-controller-session.test.ts`,
-`tests/fixtures/cloud/controller-tunnel.json`). `ConnectionManager` installs it for a cloud target (§13); no IPC
-channel switches to one yet (phase I-1b2b2).
+`tests/fixtures/cloud/controller-tunnel.json`). `ConnectionManager` installs it for a cloud target (§13), which
+`omada:switch-controller` or the startup target selects.
 
 - **Inputs** (main only):
   - the organization's `omadacId`, name and `orgVersion`, from the organization list, never `/api/info`;
@@ -375,12 +375,13 @@ channel switches to one yet (phase I-1b2b2).
   `<code> (<diagnostic>)` (`describeCloudSessionError()`: the `openApiCode` is added in front of the diagnostic when
   the diagnostic does not name it already). The connect `detail` and the move rejection carry this text, code first.
 
-## 13. Connection targets (phase I-1b2b1)
+## 13. Connection targets (phases I-1b2b1, I-1b2b2)
 
 `ConnectionManager` (`src/main/connection-manager.ts`) connects to a target (`src/main/connection-target.ts`):
-`{kind: 'local'}` (the configured controller, reached directly; the default) or `{kind: 'cloud', omadacId}`. Main
-only, Electron-free, unit-tested in `tests/unit/connection-targets.test.ts`. No IPC channel switches the target yet,
-and the app starts local (phase I-1b2b2 wires both).
+`{kind: 'local'}` (the configured controller, reached directly; the default) or `{kind: 'cloud', omadacId}`.
+Electron-free, unit-tested in `tests/unit/connection-targets.test.ts`. The renderer switches it through
+`omada:switch-controller`, and the app starts on the stored target (both below). No switcher UI exists yet (phase
+I-1c).
 
 - **`switchTarget(target)`:** in one synchronous step, before any await, the target changes and the transition of a
   URL change runs (`invalidateControllerState()`): every in-flight connect, the pending site choice and trust
@@ -410,10 +411,33 @@ and the app starts local (phase I-1b2b2 wires both).
   `/api/info` `omadacId` as `localOmadacId`, only when it is usable and differs from the stored one, and only for
   the URL that connect used.
 - **Cloud credential change:** a save that changes the cloud credential while the target is a cloud controller runs
-  the same transition (`applyConfigSave()`, `cloudCredentialsChanged`). On the local target such a save changes
-  nothing.
+  the same transition (`applyConfigSave()`, `cloudCredentialsChanged`), and the `config:save` reply then carries
+  `connectionReset: true`, as for a URL change (`finishConfigSave()`), so the renderer drops its connected UI. On
+  the local target such a save changes nothing and reports no reset.
 - **Local management save:** `applyManagementAccessChange()` skips an installed cloud session, whose access is the
   account's cloud route, not the local Open API credentials.
-- **Startup (pure, not wired yet):** `resolveStartupTarget(config, cloudCredentialUsable)` returns the stored cloud
-  `omadacId` only while the cloud credential is usable (a Client ID with a secret, the session-only fallback
-  included). Otherwise it returns local: `activeController` survives a dropped credential.
+- **Startup:** once the app is ready, before the window exists, `index.ts` calls
+  `connectionManager.startOn(getStartupTarget())` (`config.ts`): `resolveStartupTarget(config,
+  getCloudCredentials() !== null)` through `startupTargetOf()`, which reads the credential only when
+  `activeController` names a cloud controller. It returns the stored cloud `omadacId` only while the cloud
+  credential is usable (a Client ID with a secret, the session-only fallback included). Otherwise it returns local:
+  `activeController` survives a dropped credential and is not rewritten. `startOn()` sets the target without a
+  transition, a write or a connect, and only while nothing has run yet; the renderer's first `omada:connect` then
+  connects that target. With the local controller active the start is unchanged.
+- **Switch IPC** (`omada:switch-controller`, preload `switchController(target)`, reply: the new target's
+  `ConnectionResult`): the trusted sender, then `parseControllerTargetRequest()` (`ipc-guards.ts`), which accepts
+  exactly `{kind: 'local'}` or `{kind: 'cloud', omadacId}` (a plain object, no other key, `isOmadacId()`) and
+  rejects anything else before any state changes; then `switchTarget()` as above. The renderer must drop its
+  session (generation and nonce) before calling it (phase I-1c builds the switcher).
+- **Session nonces on the data channels:** `omada:get-aps`, `omada:get-wlans` and `omada:set-wlan` carry the
+  session nonce of the connect result first, for local and cloud sessions alike. A missing or malformed nonce is
+  rejected by the guard. Then `sessionDataReply()` (`controller-session.ts`) refuses, before any controller call, a
+  call with no installed open session (`notConnected (…)`; also while a newer connect is in flight) or another
+  session's nonce (`superseded (…)`). A result or failure that settles after a switch, a reconnect or a transition
+  is refused as `superseded`. The replies keep their shapes, so a refusal is a rejection whose message starts with
+  the code. The renderer's load, refresh and move flows capture the nonce and generation at their start
+  (`src/renderer/session-ticket.ts`) and discard a reply that arrives for a replaced session.
+- **A cloud session in the renderer:** a cloud session's `url` is `''`, so its connect result carries
+  `controllerName` (the organization name; absent for a local session), and the header shows that name in place of
+  a host (`controllerHostLabel()`, `src/renderer/validation.ts`). The configured local URL never labels a cloud
+  session, and an empty URL labels nothing.

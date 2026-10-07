@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T16:18:32Z",
+ "updated": "2026-10-07T17:05:45Z",
  "plan": "todo.md",
  "goal": "Add AP-group and Wi-Fi network management for Omada 6.3 to the Electron app, then remote controllers through the TP-Link cloud.",
  "phases": [
@@ -302,7 +302,7 @@
    "title": "TP-Link cloud controllers",
    "status": "in_progress",
    "risk": "high",
-   "summary": "Inbox item: adds remote controllers through the TP-Link Account Level Open API; split into I-1a (done), I-1b and I-1c."
+   "summary": "Inbox item: adds remote controllers through the TP-Link Account Level Open API; I-1a and I-1b done, I-1c next."
   },
   {
    "id": "I-1a",
@@ -317,9 +317,9 @@
   {
    "id": "I-1b",
    "title": "Cloud controller session",
-   "status": "in_progress",
+   "status": "done",
    "risk": "high",
-   "summary": "Split into I-1b1 (cloud controller session on fixtures, done) and I-1b2 (connection targets, switching and wiring)."
+   "summary": "Split into I-1b1 (cloud controller session) and I-1b2 (connection targets, switching and wiring); both done."
   },
   {
    "id": "I-1b1",
@@ -334,9 +334,9 @@
   {
    "id": "I-1b2",
    "title": "Cloud connection targets and wiring",
-   "status": "in_progress",
+   "status": "done",
    "risk": "high",
-   "summary": "Split into I-1b2a (renderer honors unknown network lists, done) and I-1b2b (connection targets, switching and wiring)."
+   "summary": "Split into I-1b2a (renderer honors unknown network lists) and I-1b2b (connection targets, switching and wiring); both done."
   },
   {
    "id": "I-1b2a",
@@ -351,9 +351,9 @@
   {
    "id": "I-1b2b",
    "title": "Cloud connection targets and wiring",
-   "status": "in_progress",
+   "status": "done",
    "risk": "high",
-   "summary": "Split into I-1b2b1 (connection targets in main) and I-1b2b2 (switch IPC, nonce-bound data channels, smoke stub)."
+   "summary": "Split into I-1b2b1 (connection targets in main) and I-1b2b2 (switch IPC, nonce-bound data channels, smoke stub); both done."
   },
   {
    "id": "I-1b2b1",
@@ -368,9 +368,11 @@
   {
    "id": "I-1b2b2",
    "title": "Controller switch IPC and nonce-bound data channels",
-   "status": "queued",
+   "status": "done",
    "risk": "high",
-   "summary": "Adds a guarded controller-switch channel, binds the AP, group and move channels to the session nonce, and extends the smoke stub."
+   "summary": "Adds a guarded controller-switch channel, starts on the stored target and binds the AP, group and move channels to the session nonce.",
+   "review": "docs/reviews/phaseI-1b2b2.md",
+   "narrative": "docs/progress-archive/phase-i-1b2b2.md"
   },
   {
    "id": "I-1c",

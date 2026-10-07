@@ -11,6 +11,7 @@ import {
   getLocalOmadacId,
   getManagementCredentials,
   getRendererConfig,
+  getStartupTarget,
   getStoredSiteId,
   saveActiveController,
   saveCertificatePin,
@@ -26,13 +27,16 @@ import { isCloudRegion } from './cloud-hosts';
 import { createCloudSession } from './cloud-transport';
 import { ConnectionManager } from './connection-manager';
 import {
-  applyManagementAccessChange,
+  accessPointsReply,
+  AppliedConfigSave,
+  apMoveReply,
   changeNetworkPasswordReply,
   ControllerSession,
   createApGroupReply,
   createNetworkReply,
   deleteApGroupReply,
   deleteNetworkReply,
+  finishConfigSave,
   getSessionCapabilities,
   managedApGroupsReply,
   managedNetworksReply,
@@ -40,14 +44,16 @@ import {
   setNetworkEnabledReply,
   testManagementAccess,
   updateNetworkBindingsReply,
-  updateNetworkReply
+  updateNetworkReply,
+  wlanGroupsReply
 } from './controller-session';
 import {
-  MAC_REGEX,
   NONCE_REGEX,
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
   parseApGroupRenameRequest,
+  parseApMoveRequest,
+  parseControllerTargetRequest,
   parseNetworkBindingsRequest,
   parseNetworkCreateRequest,
   parseNetworkDeleteRequest,
@@ -55,8 +61,7 @@ import {
   parseNetworkPasswordRequest,
   parseNetworkUpdateRequest,
   requireNoExtraArguments,
-  requireSessionNonce,
-  WLAN_ID_REGEX
+  requireSessionNonce
 } from './ipc-guards';
 import { createTrustedIpcRegistrar } from './ipc-trust';
 import { createCloudNetTransport, createNetTransport } from './net-transport';
@@ -144,8 +149,9 @@ const cloudAccess = new CloudAccessService({ getCredentials: getCloudCredentials
 // ============================================================================
 
 // The connection state machine (connection-manager.ts): the connection target
-// (the local controller; a TP-Link cloud controller once phase I-1b2b2 wires
-// the switch), connect generation, installed controller session, pending site
+// (the local controller or a TP-Link cloud controller: set at startup from
+// the stored choice — startOn() in the ready handler below — and changed by
+// OMADA_SWITCH_CONTROLLER), connect generation, installed controller session, pending site
 // selection, pending certificate trust and the pin-rejection bookkeeping, plus
 // the atomic controller transitions run on a controller URL change, a
 // certificate reset and a target switch. Each controller is a
@@ -198,8 +204,9 @@ const RENDERER_HTML_PATH = path.normalize(path.join(__dirname, '../renderer/inde
 
 // Format guards for identifiers crossing the IPC boundary. The renderer
 // applies the same patterns (src/renderer/validation.ts — keep both in sync).
-// The AP-move guards, MAC_REGEX and WLAN_ID_REGEX, come from ipc-guards.ts
-// (the cloud controller session checks a move with them too)
+// The AP-move guards, MAC_REGEX and WLAN_ID_REGEX, live in ipc-guards.ts
+// (parseApMoveRequest(); the cloud controller session checks a move with
+// them too)
 const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 // The opaque nonces (site selection, certificate trust, the controller
 // session) are checked with NONCE_REGEX, and the session-owned management
@@ -472,6 +479,19 @@ app.whenReady().then(() => {
   // (no verify proc at all; see cloudSession above)
   cloudSession = createCloudSession((partition) => session.fromPartition(partition));
 
+  // The connection target the app starts with (inbox I-1b2b2), set before
+  // the window — and so before the renderer's first OMADA_CONNECT — exists:
+  // the stored cloud controller (`activeController`) while the cloud
+  // credential is usable, else the local controller, without rewriting the
+  // stored choice (getStartupTarget(): resolveStartupTarget(config,
+  // getCloudCredentials() !== null)). With the local controller active the
+  // start is unchanged. A failure keeps the local default (fixed text only)
+  try {
+    connectionManager.startOn(getStartupTarget());
+  } catch {
+    console.warn('The stored connection target could not be read; starting with the local controller');
+  }
+
   createWindow();
 
   app.on('activate', () => {
@@ -539,7 +559,9 @@ handleTrusted(IPC_CHANNELS.CONFIG_LOAD, async (_event, ...extra: unknown[]): Pro
 // and certificate trust decision are discarded, the installed controller is
 // detached and logged out (its Open API client and token dropped), and the
 // controller session is replaced. The reply then carries connectionReset so
-// the renderer drops its connected UI. A save that keeps the URL but touches
+// the renderer drops its connected UI — also when the transition ran because
+// the save changed the TP-Link cloud credential while the target is a cloud
+// controller (inbox I-1b2b2; finishConfigSave()). A save that keeps the URL but touches
 // the management access (Client ID, Client Secret, removal) drops the
 // installed session's Open API client and capabilities at once and starts NO
 // check run here (applyManagementAccessChange()): the Settings flow
@@ -557,7 +579,7 @@ handleTrusted(IPC_CHANNELS.CONFIG_SAVE, async (_event, payload: unknown, ...extr
   if (!isValidConfigSavePayload(payload)) {
     return { success: false, error: 'saveFailed' };
   }
-  let result: ReturnType<typeof saveConfig>;
+  let result: AppliedConfigSave;
   try {
     // The cloud client is invalidated in the same synchronous step as the
     // write, before applyConfigSave() awaits a controller transition, so no
@@ -576,16 +598,7 @@ handleTrusted(IPC_CHANNELS.CONFIG_SAVE, async (_event, payload: unknown, ...extr
     );
     return { success: false, error: 'saveFailed' };
   }
-  if (!result.success) {
-    return { success: false, error: result.error };
-  }
-  const reply: ConfigSaveResult = { success: true, managementAccess: result.managementAccess, cloudAccess: result.cloudAccess };
-  if (result.urlChanged) {
-    reply.connectionReset = true;
-  } else {
-    applyManagementAccessChange(connectionManager, payload);
-  }
-  return reply;
+  return finishConfigSave(connectionManager, payload, result);
 }); // End of the CONFIG_SAVE handler
 
 // Connect to Omada controller (the password is decrypted in the main process;
@@ -622,45 +635,51 @@ handleTrusted(IPC_CHANNELS.OMADA_SELECT_SITE, async (_event, siteId: unknown, no
   return connectionManager.selectSite(siteId, nonce);
 }); // End of the OMADA_SELECT_SITE handler
 
-/**
- * Returns the installed controller session, or throws when none is (not
- * connected, or detached by a disconnect or a controller transition).
- * @returns {ControllerSession} The installed controller session.
- */
-function requireController(): ControllerSession {
-  const controller = connectionManager.controller;
-  if (!controller) {
-    throw new Error('Not connected to the controller');
-  }
-  return controller;
-}
+// The controller data channels (inbox I-1b2b2; docs/security-audit.md §7):
+// each carries the session nonce of the connect result first, like the
+// management channels. The trusted sender, then the pure guard (the 32-hex
+// nonce — a missing or malformed one is rejected —, no extra argument; for a
+// move also the MAC and the group id, which end up in a request path or
+// body), then the installed session named by the nonce, BEFORE any
+// controller call (sessionDataReply() in controller-session.ts): no open
+// installed session → a rejection 'notConnected (…)', another session's
+// nonce → 'superseded (…)'; a result or failure arriving after a switch, a
+// reconnect or a transition replaced or closed the session is refused as
+// 'superseded' too. The replies keep their shapes (the allowlisted DTOs, or
+// `true`), so a refusal is a rejection whose message starts with its code.
 
-// Get access points
-handleTrusted(IPC_CHANNELS.OMADA_GET_APS, async (_event, ...extra: unknown[]): Promise<AccessPoint[]> => {
-  requireNoExtraArguments(extra);
-  return requireController().getAccessPoints();
+// Get access points ({sessionNonce})
+handleTrusted(IPC_CHANNELS.OMADA_GET_APS, async (_event, sessionNonce: unknown, ...extra: unknown[]): Promise<AccessPoint[]> => {
+  return accessPointsReply(connectionManager, requireSessionNonce(sessionNonce, extra));
 });
 
 // Get the group listing: the groups APs can be assigned to (AP groups on
 // Omada 6.3+, WLAN groups before, empty groups included) plus the controller
 // version and group model they belong to (OmadaController.getWlanGroups())
-handleTrusted(IPC_CHANNELS.OMADA_GET_WLANS, async (_event, ...extra: unknown[]): Promise<GroupListing> => {
-  requireNoExtraArguments(extra);
-  return requireController().getWlanGroups();
+handleTrusted(IPC_CHANNELS.OMADA_GET_WLANS, async (_event, sessionNonce: unknown, ...extra: unknown[]): Promise<GroupListing> => {
+  return wlanGroupsReply(connectionManager, requireSessionNonce(sessionNonce, extra));
 });
 
-// Set WLAN group for an AP. Both identifiers are format-checked before they
-// reach the API client (they end up interpolated into the request path/body)
-handleTrusted(IPC_CHANNELS.OMADA_SET_WLAN, async (_event, mac: unknown, wlanId: unknown, ...extra: unknown[]): Promise<boolean> => {
-  requireNoExtraArguments(extra);
-  if (typeof mac !== 'string' || !MAC_REGEX.test(mac)) {
-    throw new Error('IPC call rejected: invalid MAC address format');
-  }
-  if (typeof wlanId !== 'string' || !WLAN_ID_REGEX.test(wlanId)) {
-    throw new Error('IPC call rejected: invalid WLAN id format');
-  }
-  return requireController().setApWlanGroup(mac, wlanId);
+// Set the group of an AP (sessionNonce, mac, wlanId): `true` or a rejection
+handleTrusted(IPC_CHANNELS.OMADA_SET_WLAN, async (_event, sessionNonce: unknown, mac: unknown, wlanId: unknown, ...extra: unknown[]): Promise<boolean> => {
+  return apMoveReply(connectionManager, parseApMoveRequest(sessionNonce, mac, wlanId, extra));
 }); // End of the OMADA_SET_WLAN handler
+
+// Switch the connection target (inbox I-1b2b2; docs/omada-cloud-openapi.md
+// §13): {kind: 'local'} or {kind: 'cloud', omadacId}. The trusted sender, then
+// the pure guard (parseControllerTargetRequest(): exactly one of the two
+// shapes, no other key, a usable omadacId — anything else is rejected before
+// any state change), then ConnectionManager.switchTarget(): in one
+// synchronous step the transition of a URL change (every in-flight connect,
+// the pending site choice and trust decision, the installed session and its
+// reads and writes superseded; the controller TLS session replaced), the
+// `activeController` write, and the connect to the new target, whose
+// ConnectionResult is the reply (a cloud refusal is connectError with a
+// code-first detail). Switching to the current target is a plain reconnect.
+// The renderer must drop its session (generation and nonce) before calling.
+handleTrusted(IPC_CHANNELS.OMADA_SWITCH_CONTROLLER, async (_event, payload: unknown, ...extra: unknown[]): Promise<ConnectionResult> => {
+  return connectionManager.switchTarget(parseControllerTargetRequest(payload, extra));
+}); // End of the OMADA_SWITCH_CONTROLLER handler
 
 // Disconnect from controller (best-effort server-side logout; logout()
 // swallows network errors itself). Two modes (ConnectionManager.disconnect()):

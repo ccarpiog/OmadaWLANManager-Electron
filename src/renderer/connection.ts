@@ -11,7 +11,7 @@
 // generation-checked after each await (see state.ts).
 // ============================================================================
 
-import type { CertificateActionResult, ConnectionResult, SiteInfo } from '../shared/types';
+import type { AccessPoint, CertificateActionResult, ConnectionResult, SiteInfo } from '../shared/types';
 import { renderApFilterOptions, renderApList } from './ap-list';
 import { GROUP_FILTER_ALL, pruneSelection, sanitizeClientCount, STATUS_FILTER_ALL } from './ap-selection';
 import { showCertificateChanged, showCertificateTrust } from './cert-modal';
@@ -29,6 +29,7 @@ import { renderNotices } from './notices';
 import { applyGroupVocabulary, renderContentViews } from './panels';
 import { renderNavCounts } from './shell';
 import { showSiteSelection } from './site-modal';
+import { captureSessionTicket, fetchControllerData, isTicketCurrent, reloadWithTicket, type SessionTicket } from './session-ticket';
 import { invalidateSession, isOperationInProgress, setListsRefreshing, state } from './state';
 import { renderHeaderMeta, setStatus } from './status';
 import { showToast } from './toast';
@@ -37,6 +38,7 @@ import {
   isValidSiteId,
   isValidWlanId,
   parseCertificateDetails,
+  parseControllerName,
   parseGroupListing,
   parseSessionNonce,
   parseSiteName,
@@ -278,7 +280,9 @@ async function runCertificateChanged(rawCertificate: unknown, generation: number
  * installed session (validated at the boundary): the site name for the
  * header — main reports it for single-site controllers and remembered sites
  * too; `fallbackSiteName` (the name picked in the site modal) covers a result
- * without one — and the opaque session nonce of the management-access calls.
+ * without one —, the opaque session nonce of the session-bound calls (the
+ * controller data and the management access) and, for a TP-Link cloud
+ * controller only, its name (the header's label in place of a host).
  * The management capabilities of the new session, the fresh Open API view
  * of its AP groups and the managed list of its Wi-Fi networks are unknown
  * until fetched.
@@ -288,6 +292,7 @@ async function runCertificateChanged(rawCertificate: unknown, generation: number
 function applySessionDetails(result: ConnectionResult, fallbackSiteName: string | null): void {
   state.siteName = parseSiteName(result.siteName) ?? fallbackSiteName;
   state.sessionNonce = parseSessionNonce(result.sessionNonce);
+  state.controllerName = parseControllerName(result.controllerName);
   state.managementCapabilities = null;
   resetManagedGroups();
   resetManagedNetworks();
@@ -309,6 +314,10 @@ async function commitConnectedUi(generation: number): Promise<void> {
   const config = await window.omadaAPI.loadConfig();
   // Stale result: a newer session owns the UI now
   if (generation !== state.sessionGeneration) return;
+  // The header labels the connection with the configured controller's host,
+  // or — for a TP-Link cloud controller, which has no URL — with the
+  // controller name its connect result carried (state.controllerName;
+  // status.ts never shows the local URL for a cloud session)
   setStatus('connected', config.url);
   connectBtn.textContent = t('disconnect');
   try {
@@ -455,6 +464,7 @@ function clearData(): void {
   state.groupModel = null;
   state.controllerVersion = null;
   state.sessionNonce = null;
+  state.controllerName = null;
   state.managementCapabilities = null;
   // The fresh Open API view of the AP groups and the managed list of the
   // Wi-Fi networks go with the session too (a read in flight is discarded)
@@ -589,18 +599,27 @@ export function retryLoad(): void {
  * dropped). The AP selection survives a reload, pruned to the APs that
  * still exist; the destination is kept when its group still exists under a
  * name no other group shares (move-plan.ts isAmbiguousGroup()). The
- * session generation is captured before awaiting: if it moves on meanwhile
- * (disconnect/reconnect), the result — success or error — is discarded
- * without committing anything to the UI, and the loading state is left alone
- * (invalidateSession() already reset it for the new session).
+ * session — generation and session nonce — is captured before awaiting
+ * (session-ticket.ts; or given by the flow that captured it at its own
+ * start): both calls carry that nonce, so main serves exactly that session,
+ * and if the session moves on meanwhile (disconnect, reconnect, a controller
+ * switch), the result — success or error — is discarded without committing
+ * anything to the UI, and the loading state is left alone
+ * (invalidateSession() already reset it for the new session). Without a
+ * session nonce nothing is asked (a load error).
  * Current-session errors are intentionally not
  * caught here: the caller handles them so the whole UI state stays consistent
  * (see connect(), refreshData(), and the move flow in move-flow.ts); the data
  * on screen and the previous load time stay.
+ * @param {SessionTicket} [ticket] - The session the load belongs to (default:
+ *   the session on screen now).
  * @returns {Promise<void>}
  */
-export async function loadData(): Promise<void> {
-  const generation = state.sessionGeneration;
+export async function loadData(ticket: SessionTicket | null = captureSessionTicket(state)): Promise<void> {
+  if (ticket === null) {
+    throw new Error('No session nonce for the controller data');
+  }
+  const generation = ticket.generation;
   const isReload = state.lastUpdatedAt !== null;
   state.isLoadingData = true;
   refreshBtn.disabled = true;
@@ -616,18 +635,21 @@ export async function loadData(): Promise<void> {
   let failedReload = false;
 
   try {
-    const [aps, rawListing] = await Promise.all([
-      window.omadaAPI.getAccessPoints(),
-      window.omadaAPI.getWlanGroups()
-    ]);
+    const fetched = await fetchControllerData(window.omadaAPI, ticket, state);
 
     // Stale result (the session changed while awaiting): discard it
-    if (generation !== state.sessionGeneration) return;
+    if (fetched.stale) {
+      if (fetched.error !== undefined) {
+        console.warn('Discarding data-load error from a stale session:', fetched.error);
+      }
+      return;
+    }
+    const aps = fetched.accessPoints as AccessPoint[];
 
     // Boundary validation: a listing without a group array throws (a load
     // error, never a silently empty list); an unknown group model becomes
     // the legacy one (the defensive default)
-    const listing = parseGroupListing(rawListing);
+    const listing = parseGroupListing(fetched.listing);
 
     // Keep only entries whose identifiers have a valid format: they cross the
     // IPC boundary again when APs are moved, and a malformed id coming
@@ -686,7 +708,7 @@ export async function loadData(): Promise<void> {
     renderInventoryViews();
   } catch (error) {
     // Stale failure: swallow it (the disconnected/new UI must not react)
-    if (generation !== state.sessionGeneration) {
+    if (!isTicketCurrent(ticket, state)) {
       console.warn('Discarding data-load error from a stale session:', error);
       return;
     }
@@ -722,17 +744,27 @@ export async function loadData(): Promise<void> {
  * previous "Updated hh:mm" time marked as stale, the refresh notice states
  * it (loadData()), and an error toast is shown. A successful refresh also
  * re-reads the fresh Open API view of the AP groups and the managed list of
- * the Wi-Fi networks in the background (while management is on).
+ * the Wi-Fi networks in the background (while management is on). The
+ * session (generation and nonce) is captured at the refresh's START
+ * (reloadWithTicket(), the phase 20a fix): the load sends that nonce, and
+ * the managed re-reads are started for that generation only while it is
+ * still the session on screen — never for a session that replaced it while
+ * the load was awaited.
  * @returns {Promise<void>}
  */
 export async function refreshData(): Promise<void> {
   if (!state.isConnected || isOperationInProgress()) return;
+  const ticket = captureSessionTicket(state);
+  if (ticket === null) return;
 
   try {
-    await loadData();
-    void loadManagedGroups(state.sessionGeneration);
-    void loadManagedNetworks(state.sessionGeneration);
+    await reloadWithTicket(ticket, state, loadData, (generation) => {
+      void loadManagedGroups(generation);
+      void loadManagedNetworks(generation);
+    });
   } catch (error) {
+    // A stale failure (already discarded by loadData()) must not reach the UI
+    if (!isTicketCurrent(ticket, state)) return;
     // An unreachable controller is an expected outcome, reported by the toast
     console.warn('Error refreshing data:', error);
     showToast(t('loadError'), 'error');

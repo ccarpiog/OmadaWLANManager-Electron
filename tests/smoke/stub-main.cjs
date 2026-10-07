@@ -47,6 +47,8 @@ const {
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
   parseApGroupRenameRequest,
+  parseApMoveRequest,
+  parseControllerTargetRequest,
   parseNetworkBindingsRequest,
   parseNetworkCreateRequest,
   parseNetworkDeleteRequest,
@@ -65,9 +67,8 @@ const { bindingRefusalReply, buildBindingsBody, checkBindingRequest, checkBindin
   path.join(distDir, 'main', 'network-binding-plan.js')
 );
 
-// Format guards mirrored from src/main/index.ts (keep in sync)
-const MAC_REGEX = /^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$/;
-const WLAN_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+// Format guards mirrored from src/main/index.ts (keep in sync; the AP-move
+// guards come with parseApMoveRequest() from the compiled ipc-guards.js)
 const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SELECTION_NONCE_REGEX = /^[0-9a-f]{32}$/;
 const TRUST_NONCE_REGEX = /^[0-9a-f]{32}$/;
@@ -217,6 +218,10 @@ function defaultScenario() {
     failChannels: [],
     // When set, CONFIG_SAVE returns this verbatim instead of applying the real rules
     saveResult: null,
+    // When set, the connect of a cloud target (after OMADA_SWITCH_CONTROLLER
+    // to one) returns this verbatim; null: main's refusal without a cloud
+    // credential ({ success: false, error: 'connectError', detail: 'notConfigured' })
+    cloudConnectResult: null,
     // Optional per-channel response delays in ms, e.g. { 'omada:get-aps': 400 }
     delays: {},
   };
@@ -248,6 +253,11 @@ const stub = {
   // selection, in order
   sessionNonce: null,
   issuedSessionNonces: [],
+  // The connection target (OMADA_SWITCH_CONTROLLER, inbox I-1b2b2; mirrors
+  // ConnectionManager.target: local at start) and every `activeController`
+  // value a switch persisted, in order (in memory only)
+  target: { kind: 'local' },
+  activeControllerWrites: [],
   // AP-group writes the fake controller applied, in order:
   // { op: 'create' | 'rename' | 'delete', apGroupId, name? }
   apGroupWrites: [],
@@ -293,6 +303,8 @@ const stub = {
       issuedTrustNonces: this.issuedTrustNonces,
       sessionNonce: this.sessionNonce,
       issuedSessionNonces: this.issuedSessionNonces,
+      target: this.target,
+      activeControllerWrites: this.activeControllerWrites,
       apGroupWrites: this.apGroupWrites,
       networkWrites: this.networkWrites,
       registeredChannels: this.registeredChannels,
@@ -486,6 +498,45 @@ function managementReply(sessionNonce, extra) {
   }
   return { success: true, capabilities: currentCapabilities() };
 } // End of function managementReply()
+
+/**
+ * The session ownership of the controller data channels (OMADA_GET_APS,
+ * OMADA_GET_WLANS, OMADA_SET_WLAN; inbox I-1b2b2), like sessionDataReply() in
+ * src/main/controller-session.ts, checked before any fake controller data is
+ * read or changed: no open installed session (stub.sessionNonce is null as
+ * soon as a newer connect starts, see OMADA_CONNECT) is a rejection starting
+ * with 'notConnected', another session's nonce one starting with
+ * 'superseded' — the same messages as main's sessionDataRefusal(). The nonce
+ * itself was format-checked by the real guard.
+ * @param {string} sessionNonce - The checked session nonce.
+ * @throws {Error} The refusal.
+ */
+function requireDataSession(sessionNonce) {
+  if (!stub.connected || stub.sessionNonce === null) {
+    throw new Error('notConnected (no open controller session is installed)');
+  }
+  if (sessionNonce !== stub.sessionNonce) {
+    throw new Error('superseded (the session nonce does not name the installed controller session)');
+  }
+} // End of function requireDataSession()
+
+/**
+ * The connect of a cloud target (OMADA_CONNECT and OMADA_SWITCH_CONTROLLER
+ * after a switch to one; inbox I-1b2b2): like ConnectionManager.connect(), it
+ * drops the pending site choice and trust decision and closes the installed
+ * session's side the old nonce reaches; then the scripted
+ * `cloudConnectResult`, else main's refusal of a cloud connect without a
+ * usable cloud credential (the stub keeps none): connectError with the
+ * code-first detail 'notConfigured'. Nothing is installed.
+ * @returns {object} The ConnectionResult.
+ */
+function cloudConnectReply() {
+  stub.pendingSelection = null;
+  stub.pendingTrust = null;
+  stub.sessionNonce = null;
+  const scripted = stub.scenario.cloudConnectResult;
+  return scripted ? structuredClone(scripted) : { success: false, error: 'connectError', detail: 'notConfigured' };
+} // End of function cloudConnectReply()
 
 /**
  * The fake controller's AP groups as `GET …/ap-groups` would list them after
@@ -891,10 +942,14 @@ const handlers = {
    * failure template, success (with the site name and a fresh session
    * nonce, see installSession()), or needsSiteSelection with the sites and a
    * fresh 32-hex nonce (a still-authorized remembered site is reused silently,
-   * like OmadaController.connect(preferredSiteId)).
+   * like OmadaController.connect(preferredSiteId)). A cloud target (inbox
+   * I-1b2b2, OMADA_SWITCH_CONTROLLER) answers cloudConnectReply() instead.
    * @returns {object} The ConnectionResult.
    */
   [IPC_CHANNELS.OMADA_CONNECT]: () => {
+    if (stub.target.kind === 'cloud') {
+      return cloudConnectReply();
+    }
     // A newer connect supersedes any pending selection (discardPendingSiteSelection)
     // and any pending certificate trust decision
     stub.pendingSelection = null;
@@ -946,26 +1001,29 @@ const handlers = {
   }, // End of the OMADA_CONNECT handler
 
   /**
-   * OMADA_GET_APS: the fixture APs sorted by name; throws when not connected.
+   * OMADA_GET_APS: the fixture APs sorted by name, for the session named by
+   * the nonce (the real guard requireSessionNonce(), then
+   * requireDataSession()); rejected otherwise.
+   * @param {unknown} sessionNonce - The session nonce echoed by the renderer.
+   * @param {...unknown} extra - Further arguments (must be none).
    * @returns {object[]} The AccessPoint DTOs.
    */
-  [IPC_CHANNELS.OMADA_GET_APS]: () => {
-    if (!stub.connected) {
-      throw new Error('Not connected to the controller');
-    }
+  [IPC_CHANNELS.OMADA_GET_APS]: (sessionNonce, ...extra) => {
+    requireDataSession(requireSessionNonce(sessionNonce, extra));
     return sortedCopy(stub.scenario.accessPoints, 'name');
   },
 
   /**
    * OMADA_GET_WLANS: the GroupListing shape of the real handler — the fixture
    * groups sorted by name plus the scenario's controller version and the group
-   * model the real rule derives from it; throws when not connected.
+   * model the real rule derives from it — for the session named by the nonce
+   * (as OMADA_GET_APS); rejected otherwise.
+   * @param {unknown} sessionNonce - The session nonce echoed by the renderer.
+   * @param {...unknown} extra - Further arguments (must be none).
    * @returns {object} The GroupListing DTO.
    */
-  [IPC_CHANNELS.OMADA_GET_WLANS]: () => {
-    if (!stub.connected) {
-      throw new Error('Not connected to the controller');
-    }
+  [IPC_CHANNELS.OMADA_GET_WLANS]: (sessionNonce, ...extra) => {
+    requireDataSession(requireSessionNonce(sessionNonce, extra));
     const controllerVersion = normalizeControllerVersion(stub.scenario.controllerVersion);
     return {
       controllerVersion,
@@ -975,25 +1033,22 @@ const handlers = {
   }, // End of the OMADA_GET_WLANS handler
 
   /**
-   * OMADA_SET_WLAN: same format guards as the real handler; a MAC listed in
-   * setWlanErrors throws its message (a controller rejection) and one in
-   * setWlanFailMacs resolves false; on success the stub "applies" the move
-   * (the AP now reports the group's name), so a reload shows the change like
-   * a real controller would.
-   * @param {unknown} mac - AP MAC address.
-   * @param {unknown} wlanId - Target group id.
+   * OMADA_SET_WLAN (sessionNonce, mac, wlanId): the real guard
+   * (parseApMoveRequest(): nonce, MAC and group id formats, no extra
+   * argument), then the session named by the nonce (requireDataSession());
+   * a MAC listed in setWlanErrors throws its message (a controller
+   * rejection) and one in setWlanFailMacs resolves false; on success the stub
+   * "applies" the move (the AP now reports the group's name), so a reload
+   * shows the change like a real controller would.
+   * @param {unknown} sessionNonce - The session nonce echoed by the renderer.
+   * @param {unknown} rawMac - AP MAC address.
+   * @param {unknown} rawWlanId - Target group id.
+   * @param {...unknown} extra - Further arguments (must be none).
    * @returns {boolean} The configured result.
    */
-  [IPC_CHANNELS.OMADA_SET_WLAN]: (mac, wlanId) => {
-    if (typeof mac !== 'string' || !MAC_REGEX.test(mac)) {
-      throw new Error('IPC call rejected: invalid MAC address format');
-    }
-    if (typeof wlanId !== 'string' || !WLAN_ID_REGEX.test(wlanId)) {
-      throw new Error('IPC call rejected: invalid WLAN id format');
-    }
-    if (!stub.connected) {
-      throw new Error('Not connected to the controller');
-    }
+  [IPC_CHANNELS.OMADA_SET_WLAN]: (sessionNonce, rawMac, rawWlanId, ...extra) => {
+    const { sessionNonce: nonce, mac, wlanId } = parseApMoveRequest(sessionNonce, rawMac, rawWlanId, extra);
+    requireDataSession(nonce);
     const errorMessage = (stub.scenario.setWlanErrors || {})[mac];
     if (typeof errorMessage === 'string') {
       throw new Error(errorMessage);
@@ -1010,6 +1065,28 @@ const handlers = {
     }
     return stub.scenario.setWlanResult;
   }, // End of the OMADA_SET_WLAN handler
+
+  /**
+   * OMADA_SWITCH_CONTROLLER ({kind: 'local'} | {kind: 'cloud', omadacId};
+   * inbox I-1b2b2): the real guard (parseControllerTargetRequest(): any other
+   * shape is rejected before any state change), then what
+   * ConnectionManager.switchTarget() does in one step — the target changes,
+   * the installed session, the pending site choice and trust decision are
+   * dropped, `activeController` is "persisted" (activeControllerWrites) —
+   * and the connect to the new target (connectTarget()).
+   * @param {unknown} payload - The target sent by the renderer.
+   * @param {...unknown} extra - Further arguments (must be none).
+   * @returns {object} The new target's ConnectionResult.
+   */
+  [IPC_CHANNELS.OMADA_SWITCH_CONTROLLER]: (payload, ...extra) => {
+    const target = parseControllerTargetRequest(payload, extra);
+    stub.target = target;
+    stub.pendingSelection = null;
+    stub.pendingTrust = null;
+    dropSession();
+    stub.activeControllerWrites.push(target.kind === 'cloud' ? target.omadacId : 'local');
+    return handlers[IPC_CHANNELS.OMADA_CONNECT]();
+  }, // End of the OMADA_SWITCH_CONTROLLER handler
 
   /**
    * OMADA_SELECT_SITE: same format guards; succeeds only for the current

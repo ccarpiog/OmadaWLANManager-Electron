@@ -16,6 +16,7 @@ import {
 } from './elements';
 import { t, tFormat } from './i18n';
 import { state } from './state';
+import { controllerHostLabel } from './validation';
 
 /**
  * Sets the connection status shown in the header (indicator colour and
@@ -25,8 +26,9 @@ import { state } from './state';
  * @param {'disconnected' | 'connecting' | 'connected' | 'error'} status - The
  *   new connection status.
  * @param {string} [message] - For 'connected', the controller URL (its host
- *   is displayed next to the site); for 'error', the localized error text to
- *   display.
+ *   is displayed next to the site; a TP-Link cloud session, whose URL is '',
+ *   is labelled with state.controllerName instead — controllerHostLabel());
+ *   for 'error', the localized error text to display.
  */
 export function setStatus(status: 'disconnected' | 'connecting' | 'connected' | 'error', message?: string) {
   statusIndicator.className = 'status-indicator';
@@ -46,16 +48,10 @@ export function setStatus(status: 'disconnected' | 'connecting' | 'connected' | 
       statusIndicator.classList.add('connected');
       statusText.textContent = t('connected');
       // The controller's host (extracted from its URL, falling back to the
-      // raw string if it is not a parseable URL)
-      let host: string | null = null;
-      if (message) {
-        try {
-          host = new URL(message).host;
-        } catch {
-          host = message;
-        }
-      }
-      state.controllerHost = host;
+      // raw string if it is not a parseable URL; none for an empty URL), or
+      // a cloud controller's name: it has no URL, and the configured local
+      // URL must never label it
+      state.controllerHost = controllerHostLabel(message ?? '', state.controllerName);
       state.isConnected = true;
       break;
     }

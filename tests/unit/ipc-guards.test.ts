@@ -9,7 +9,10 @@
 // name and the passphrase, and rejection messages that never quote the
 // passphrase — and the binding payload (phase 19a): exactly {sessionNonce,
 // networkId, apGroupIds}, at most 256 deduplicated 24-hex ids — and that the
-// parsed request is a fresh copy carrying nothing else.
+// parsed request is a fresh copy carrying nothing else — and (inbox
+// I-1b2b2) the AP move's arguments (nonce first, then the MAC and the group
+// id) and the controller switch's target (exactly {kind: 'local'} or
+// {kind: 'cloud', omadacId} with a usable omadacId).
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -22,6 +25,8 @@ import {
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
   parseApGroupRenameRequest,
+  parseApMoveRequest,
+  parseControllerTargetRequest,
   parseNetworkBindingsRequest,
   parseNetworkCreateRequest,
   parseNetworkDeleteRequest,
@@ -280,3 +285,60 @@ describe('Wi-Fi network binding payload guard (phase 19a)', () => {
     assert.deepEqual(parseNetworkBindingsRequest({ sessionNonce: NONCE, networkId: NETWORK_ID, apGroupIds: atCap }, []).apGroupIds, [GROUP_ID]);
   }); // End of test "malformed values are rejected…"
 }); // End of the describe block for the binding payload guard
+
+describe('controller data and switch guards (inbox I-1b2b2)', () => {
+  const MAC = 'AA-BB-CC-00-00-01';
+  const CLOUD_ID = '4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d';
+
+  test('parseApMoveRequest(): exactly (sessionNonce, mac, wlanId), checked nonce first, then the MAC and the group id', () => {
+    assert.deepEqual(parseApMoveRequest(NONCE, MAC, 'group_1', []), { sessionNonce: NONCE, mac: MAC, wlanId: 'group_1' });
+    assert.deepEqual(parseApMoveRequest(NONCE, 'aa:bb:cc:00:00:01', GROUP_ID, []), { sessionNonce: NONCE, mac: 'aa:bb:cc:00:00:01', wlanId: GROUP_ID });
+    for (const nonce of BAD_NONCES) {
+      // A missing or malformed nonce is refused before the MAC and the id are even looked at
+      assert.throws(() => parseApMoveRequest(nonce, 'bad mac', '../x', []), /invalid session nonce format/, JSON.stringify(nonce));
+    }
+    for (const mac of [undefined, null, '', 'AA-BB-CC-00-00', 'AA-BB-CC-00-00-0G', `${MAC} `, [MAC]]) {
+      assert.throws(() => parseApMoveRequest(NONCE, mac, 'group_1', []), /invalid MAC address format/, JSON.stringify(mac));
+    }
+    for (const wlanId of [undefined, null, '', 'a b', '../x', 'x'.repeat(65), 7]) {
+      assert.throws(() => parseApMoveRequest(NONCE, MAC, wlanId, []), /invalid WLAN id format/, JSON.stringify(wlanId));
+    }
+    assert.throws(() => parseApMoveRequest(NONCE, MAC, 'group_1', ['extra']), /unexpected arguments/);
+  }); // End of test "parseApMoveRequest()..."
+
+  test('parseControllerTargetRequest(): exactly {kind: "local"} or {kind: "cloud", omadacId}; a fresh copy', () => {
+    const local = { kind: 'local' };
+    const parsedLocal = parseControllerTargetRequest(local, []);
+    assert.deepEqual(parsedLocal, { kind: 'local' });
+    assert.notEqual(parsedLocal, local);
+    const cloud = { omadacId: CLOUD_ID, kind: 'cloud' };
+    const parsedCloud = parseControllerTargetRequest(cloud, []);
+    assert.deepEqual(parsedCloud, { kind: 'cloud', omadacId: CLOUD_ID });
+    assert.notEqual(parsedCloud, cloud);
+    const nullPrototype = Object.assign(Object.create(null) as Record<string, unknown>, { kind: 'cloud', omadacId: CLOUD_ID });
+    assert.deepEqual(parseControllerTargetRequest(nullPrototype, []), { kind: 'cloud', omadacId: CLOUD_ID });
+  });
+
+  test('parseControllerTargetRequest(): every other shape, kind, key, omadacId or argument is refused', () => {
+    for (const payload of [undefined, null, 'local', 7, [], [{ kind: 'local' }], new Date(), {}, { kind: 'remote' }, { kind: 'LOCAL' }, { kind: ['local'] }]) {
+      assert.throws(() => parseControllerTargetRequest(payload, []), /invalid controller target request$/, String(payload));
+    }
+    for (const payload of [
+      { kind: 'local', omadacId: CLOUD_ID },
+      { kind: 'local', extra: undefined },
+      { kind: 'cloud' },
+      { kind: 'cloud', omadacId: CLOUD_ID, url: 'https://evil.invalid' },
+      { kind: 'cloud', omadacId: CLOUD_ID, deviceId: 'x' }
+    ]) {
+      assert.throws(() => parseControllerTargetRequest(payload, []), /invalid controller target request keys/, JSON.stringify(payload));
+    }
+    for (const omadacId of [undefined, null, 7, '', 'local', '__proto__', 'constructor', 'a b', '../x', 'x'.repeat(65), [CLOUD_ID]]) {
+      assert.throws(() => parseControllerTargetRequest({ kind: 'cloud', omadacId }, []), /invalid controller id format/, JSON.stringify(omadacId));
+    }
+    class Target {
+      kind = 'local';
+    }
+    assert.throws(() => parseControllerTargetRequest(new Target(), []), /invalid controller target request$/, 'a class instance');
+    assert.throws(() => parseControllerTargetRequest({ kind: 'local' }, [1]), /unexpected arguments/);
+  }); // End of test "parseControllerTargetRequest(): every other shape..."
+}); // End of the describe block for the controller data and switch guards

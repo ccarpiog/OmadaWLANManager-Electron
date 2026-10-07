@@ -420,7 +420,7 @@ everything is built against the documented contract and fixtures.
     - `config:save` runs `cloudAccess.invalidate()` inside the save callback, before `applyConfigSave()` awaits a
       controller transition. Unit tests: 1122.
 
-### I-1b Open-API-only cloud `ControllerSession` and `ConnectionManager` targets — risk: high
+### ✅ I-1b Open-API-only cloud `ControllerSession` and `ConnectionManager` targets — risk: high
 - **What (spec "Architecture"):**
   - A `ControllerSession` for cloud controllers with no internal client: sites, `ap-groups/aps`, `ap-groups`, Wi-Fi
     networks and the management writes through the I-1a cloud route.
@@ -500,7 +500,7 @@ everything is built against the documented contract and fixtures.
       - ✅ Routing identifiers: on the cloud route `OpenApiClient` keeps the tunnel base URL, the serverHost origin and
         bare host and the deviceId as by-value scrub values in `#scrub()` (longest first: the base URL goes whole);
         the local route scrubs none (cloud and local tests in `tests/unit/openapi-cloud-route.test.ts`).
-  - **I-1b2 — `ConnectionManager` targets and wiring (risk: high):** local / cloud targets, the switch IPC with the
+  - ✅ **I-1b2 — `ConnectionManager` targets and wiring (risk: high):** local / cloud targets, the switch IPC with the
     synchronous invalidation, `localOmadacId` learned on a local connect, `activeController` / `cloudSites` persisted
     with a local fallback, session nonces on `omada:get-aps` / `omada:get-wlans` / `omada:set-wlan`, race tests, smoke
     stub, `npm run tls-probe` green.
@@ -545,7 +545,7 @@ everything is built against the documented contract and fixtures.
             With nothing known, the empty list says `networksNotReported` instead of `noNetworks`. While the total is a
             lower bound, the search summary reads `searchResultsCountAtLeast` ("Showing N of at least M"). Exact →
             today's keys. The managed list is unchanged, since it lists networks directly.
-      - **I-1b2b — `ConnectionManager` targets and wiring (risk: high):** everything else in the I-1b2 bullet above
+      - ✅ **I-1b2b — `ConnectionManager` targets and wiring (risk: high):** everything else in the I-1b2 bullet above
         (targets, switch IPC, `localOmadacId`, persistence with the local fallback, session nonces on the `omada:*`
         data channels, `CloudSessionError` mapping, race tests, smoke stub, `npm run tls-probe` green). After I-1b2a.
         - **Split (2026-10-07, before starting):**
@@ -595,11 +595,74 @@ everything is built against the documented contract and fixtures.
                 organization list now refuses the cloud connect with `listIncomplete (organization list incomplete)`
                 even when the omadacId is on a page that was read (fail-closed, like the I-1b1 truncated site list);
                 `unknownController` means the complete list lacks it. The two affected assertions were updated.
-          - **I-1b2b2 — switch IPC and nonce-bound data channels (risk: high):** a guarded switch channel over
+          - ✅ **I-1b2b2 — switch IPC and nonce-bound data channels (risk: high):** a guarded switch channel over
             `switchTarget()`, startup honoring the resolved target, session nonces on `omada:get-aps` /
             `omada:get-wlans` / `omada:set-wlan` (main, preload, the renderer's move and refresh flows; the 20a
             `refreshData()` captured-generation fix), the renderer tolerating a cloud session's `url: ''`, smoke-stub
             channels, `npm run tls-probe` green.
+            - **Done (I-1b2b2)** (contract: `docs/omada-cloud-openapi.md` §13; `docs/security-audit.md` §1, §3, §7):
+              - **Switch IPC:** new channel `omada:switch-controller` (`OMADA_SWITCH_CONTROLLER`; preload
+                `switchController(target)`; shared type `ControllerTarget`). It goes through `handleTrusted()`, then
+                the pure `parseControllerTargetRequest()` (`ipc-guards.ts`): exactly `{kind: 'local'}` or
+                `{kind: 'cloud', omadacId}` (a plain object, no other key, `isOmadacId()`). Anything else is rejected
+                before any state change. Then `switchTarget()`; the reply is the new target's `ConnectionResult`.
+                No switcher UI and no renderer flow: the method is only typed and exposed.
+              - **Startup:** `connectionManager.startOn(getStartupTarget())` in the ready handler, before
+                `createWindow()`. `getStartupTarget()` (`config.ts`) is `resolveStartupTarget(config,
+                getCloudCredentials() !== null)` through the pure `startupTargetOf()` (`connection-target.ts`),
+                which reads the credential only when `activeController` names a cloud controller. New
+                `ConnectionManager.startOn()` sets the target without a transition, an `activeController` write or a
+                connect, and only while nothing ran. The local default start is unchanged.
+              - **Data-channel nonces:** the three channels take the session nonce first (`requireSessionNonce()`;
+                set-wlan: the new `parseApMoveRequest()`, nonce, then MAC, then group id). New
+                `sessionDataReply()` (`controller-session.ts`, used by `accessPointsReply()` / `wlanGroupsReply()` /
+                `apMoveReply()`) applies the management channels' ownership rules before any controller call.
+                No installed open session gives `notConnected`; another session's nonce gives `superseded`. A result
+                or failure that settles after the session was replaced or closed is also `superseded`. **Choice:** the
+                replies keep their shapes (list, listing, `true`), so a refusal is a rejection whose message starts
+                with the code (`sessionDataRefusal()`), like the AP-move rejections. **Choice:** a session closed by a
+                newer connect attempt is refused too (`notConnected`). Its internal client still stays logged in
+                until the attempt settles (phase 7), but the data handlers no longer serve it. `requireController()`
+                is gone.
+              - **Renderer flows:** new pure `src/renderer/session-ticket.ts` (`captureSessionTicket()`,
+                `isTicketCurrent()`, `fetchControllerData()`, `reloadWithTicket()`). `loadData()` sends the nonce
+                captured at its start (or the one its flow captured) and discards a stale reply or failure. The move
+                flow captures the session before anything else and sends that nonce with every move and its reload.
+                **20a fix:** `refreshData()` (and the reload after a move) starts the managed re-reads for the
+                generation captured at its start, and only while that session is still on screen.
+              - **`connectionReset`:** `applyConfigSave()` now returns `connectionReset` (whether the transition ran,
+                decided in the save's synchronous step). The CONFIG_SAVE reply is built by the new
+                `finishConfigSave()` (`controller-session.ts`): `connectionReset: true` for a URL change and for a
+                cloud-credential change that dropped a cloud connection. The management-access follow-up is unchanged.
+              - **Cloud `url: ''`:** `ControllerSession.activate()` adds `controllerName` to a cloud session's
+                connect result (a local result is unchanged). The renderer keeps it (`state.controllerName`,
+                `parseControllerName()`), and `setStatus('connected', url)` labels the header through the pure
+                `controllerHostLabel()` (`validation.ts`): the cloud name, else the URL's host as before, nothing for
+                `''`. The local URL never labels a cloud session. No new strings.
+              - **Smoke stub:** the switch channel (the real guard; transition, `activeControllerWrites`, then the
+                connect of the new target; a cloud target is refused `notConfigured` unless `cloudConnectResult` is
+                scripted) and the nonce on the three data channels (the real guards, then `requireDataSession()` with
+                main's messages). `run-smoke.mjs`: `switchController` in the bridge, the set-wlan argument checks skip
+                the nonce (`moveArgs()`), and two new `[es]` checks (the switch channel, the session-bound data
+                channels). The user's lines in `stub-main.cjs` are untouched.
+              - **TLS probe:** `installedState(nonce)` sends a session nonce, and the CERT_RESET-while-connected check
+                also proves the real main answers `superseded` for another nonce. `app-main.cjs` unchanged.
+              - **Tests:** unit 1218 → 1248: `session-data-reply.test.ts` (new, 6), `renderer-session-ticket.test.ts`
+                (new, 8), `connection-targets.test.ts` (+9: startup target, `connectionReset`, the data channels on
+                real local and cloud sessions, the cloud controller name), `ipc-guards.test.ts` (+3),
+                `ipc-surface.test.ts` (+2), `renderer-validation.test.ts` (+2). `redaction-audit.test.ts` registers
+                the new handler bodies. `connection-manager.test.ts` expects the `connectionReset` flag. Smoke 273
+                checks, TLS probe 29.
+              - **For I-1c:** the switcher must invalidate the renderer session (generation and nonce) before
+                `switchController()`, then handle its result like `connect()`. `init()` auto-connects only when a
+                local URL is configured, so a cloud-only setup needs I-1c's entry point. The smoke stub's config load
+                still reports no cloud flags.
+              - **Review** (`docs/reviews/phaseI-1b2b2.md`, Codex, ship-with-fixes, 0 blockers): the one should-fix
+                (`connectionReset` reported for a cloud-credential save while the cloud target has nothing connected)
+                was **declined, no change**. The flag means "the transition ran", exactly as for a URL change since
+                phase 11. The transition still has to run, because it cancels an in-flight cloud connect, which the
+                manager does not track separately. The renderer's `handleConnectionReset()` is a no-op while
+                disconnected except for clearing the remembered site name, which is right after an account change.
 
 ### I-1c Settings cloud section, controller switcher, docs — risk: high
 - **What (spec "UI"):**

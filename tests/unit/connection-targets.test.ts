@@ -17,7 +17,14 @@
 //   organization's tunnel, each refusal before any session exists, the
 //   code-first connect detail and move rejection with no routing identifier,
 //   secret or token, and the races of a switch with a cloud move and with a
-//   managed read (cloud and local).
+//   managed read (cloud and local);
+// - the wiring of inbox I-1b2b2: the startup target (startOn(),
+//   startupTargetOf()), CONFIG_SAVE's connectionReset for a cloud credential
+//   change on a cloud target (applyConfigSave() + finishConfigSave()), the
+//   session nonce on the controller data channels (accessPointsReply(),
+//   wlanGroupsReply(), apMoveReply(): a stale nonce never reaches a
+//   controller; a reply that arrives after a switch or a reconnect is
+//   superseded) and the cloud connect result's controller name.
 
 import assert from 'node:assert/strict';
 import { describe, mock, test } from 'node:test';
@@ -34,20 +41,31 @@ import {
   type CloudControllerLookup,
   type ManagedController
 } from '../../src/main/connection-manager';
-import { activeControllerValue, isSameTarget, normalizeConnectionTarget, resolveStartupTarget, type ConnectionTarget } from '../../src/main/connection-target';
 import {
+  activeControllerValue,
+  isSameTarget,
+  normalizeConnectionTarget,
+  resolveStartupTarget,
+  startupTargetOf,
+  type ConnectionTarget
+} from '../../src/main/connection-target';
+import {
+  accessPointsReply,
   applyManagementAccessChange,
+  apMoveReply,
   ControllerSession,
+  finishConfigSave,
   getSessionCapabilities,
   managedApGroupsReply,
   managementOn,
+  wlanGroupsReply,
   type ManagementCredentials
 } from '../../src/main/controller-session';
 import { createTrustedIpcRegistrar } from '../../src/main/ipc-trust';
 import type { ConnectOutcome } from '../../src/main/omada-api';
 import { OpenApiClient, TOKEN_PATH } from '../../src/main/openapi-client';
 import { REDACTED } from '../../src/main/redact';
-import type { ConnectionResult, SiteInfo } from '../../src/shared/types';
+import type { CloudAccessStatus, ConfigSavePayload, ConnectionResult, ManagementAccessStatus, SiteInfo } from '../../src/shared/types';
 import fourOrganizations from '../fixtures/cloud/organizations-four.json';
 import tunnel from '../fixtures/cloud/controller-tunnel.json';
 import responses from '../fixtures/controller/responses.json';
@@ -498,7 +516,7 @@ describe('ConnectionManager targets: switchTarget()', () => {
   test('a switch during a move: the late result belongs to the detached controller only', async () => {
     const harness = new TargetHarness();
     const local = await harness.connectLocal();
-    // OMADA_SET_WLAN calls the installed controller (requireController())
+    // A move already running on the installed controller (OMADA_SET_WLAN checked its nonce before it started)
     const move = local.setApWlanGroup('AA-BB-CC-00-00-01', 'group-1');
     const { controller: cloud } = await harness.switchToCloud(OMADAC_CLOUD);
     local.moveResult.resolve(true);
@@ -1035,3 +1053,189 @@ describe('cloud targets end to end (fixtures)', () => {
     assert.equal(client.isClosed, false);
   }); // End of test "a local management-credentials save leaves..."
 }); // End of describe 'cloud targets end to end (fixtures)'
+
+// ---------------------------------------------------------------------------
+// Inbox I-1b2b2: startup target, CONFIG_SAVE connectionReset, session-bound
+// controller data channels
+// ---------------------------------------------------------------------------
+
+const OTHER_NONCE = '0'.repeat(32);
+const MANAGEMENT_FLAGS: ManagementAccessStatus = { clientId: '', hasClientSecret: false, clientSecretSessionOnly: false, canPersistClientSecret: true };
+const CLOUD_FLAGS: CloudAccessStatus = {
+  region: 'euw',
+  clientId: 'cloud-client-2',
+  hasCloudSecret: true,
+  cloudSecretSessionOnly: false,
+  canPersistCloudSecret: true,
+  activeController: 'local'
+};
+const CLOUD_SAVE_PAYLOAD: ConfigSavePayload = { url: BASE_URL, username: 'admin', language: 'en', cloudRegion: 'euw', cloudClientId: 'cloud-client-2', cloudClientSecret: 'new-cloud-secret' };
+
+describe('the startup target (inbox I-1b2b2)', () => {
+  test('startupTargetOf(): local unless activeController names a cloud controller; the credential is asked only then, and an unusable one falls back to local', () => {
+    const base: StoredConfig = { url: URL_A, username: 'admin', language: 'en' };
+    let asked = 0;
+    /**
+     * A usability probe that counts its calls.
+     * @param {boolean} usable - What it answers.
+     * @returns {() => boolean} The probe.
+     */
+    const probe = (usable: boolean) => (): boolean => {
+      asked++;
+      return usable;
+    };
+    assert.deepEqual(startupTargetOf(base, probe(true)), { kind: 'local' });
+    assert.deepEqual(startupTargetOf({ ...base, activeController: 'local' }, probe(true)), { kind: 'local' });
+    assert.deepEqual(startupTargetOf({ ...base, activeController: 'not an id' }, probe(true)), { kind: 'local' });
+    assert.equal(asked, 0, 'with the local controller active the credential is never read (the default start is unchanged)');
+    assert.deepEqual(startupTargetOf({ ...base, activeController: OMADAC_CLOUD }, probe(true)), { kind: 'cloud', omadacId: OMADAC_CLOUD });
+    assert.deepEqual(startupTargetOf({ ...base, activeController: OMADAC_CLOUD }, probe(false)), { kind: 'local' }, 'unusable credential → local');
+    assert.equal(asked, 2);
+  }); // End of test "startupTargetOf()..."
+
+  test('startOn(): the first connect goes to the startup target; no transition, activeController write or connect of its own; refused once anything ran; an invalid target throws', async () => {
+    const harness = new TargetHarness();
+    const before = harness.sessionId;
+    assert.equal(harness.manager.startOn({ kind: 'cloud', omadacId: OMADAC_CLOUD }), true);
+    assert.deepEqual(harness.manager.target, { kind: 'cloud', omadacId: OMADAC_CLOUD });
+    assert.deepEqual(harness.writes, [], 'the stored choice is not rewritten');
+    assert.equal(harness.sessionId, before, 'no transition');
+    assert.equal(harness.lookups.length, 0, 'no connect of its own');
+    const pending = harness.manager.connect();
+    await flush();
+    assert.deepEqual(harness.lookups.map((lookup) => lookup.omadacId), [OMADAC_CLOUD], 'the renderer\'s first connect reaches the startup target');
+    harness.lookups[0].reply.resolve(harness.found(OMADAC_CLOUD));
+    await flush();
+    harness.latest.connectResult.resolve({ siteSelected: true, sites: [SITES[0]] });
+    assert.equal((await pending).success, true);
+    assert.equal(harness.manager.startOn({ kind: 'local' }), false, 'too late: a connect ran');
+    assert.deepEqual(harness.manager.target, { kind: 'cloud', omadacId: OMADAC_CLOUD });
+    const fresh = new TargetHarness();
+    assert.throws(() => fresh.manager.startOn({ kind: 'cloud', omadacId: 'local' }), /Connection target rejected/);
+    assert.deepEqual(fresh.manager.target, { kind: 'local' });
+    assert.equal(fresh.manager.startOn({ kind: 'local' }), true, 'the local default stays a valid start');
+  }); // End of test "startOn()..."
+}); // End of describe 'the startup target (inbox I-1b2b2)'
+
+describe('CONFIG_SAVE connectionReset (inbox I-1b2b2)', () => {
+  test('applyConfigSave() tells whether the transition ran: a URL change, or a cloud credential change on a cloud target only', async () => {
+    const harness = new TargetHarness();
+    await harness.connectLocal();
+    assert.equal((await harness.manager.applyConfigSave(() => ({ success: true, urlChanged: false, cloudCredentialsChanged: true }))).connectionReset, false);
+    assert.equal((await harness.manager.applyConfigSave(() => ({ success: true, urlChanged: false }))).connectionReset, false);
+    await harness.switchToCloud(OMADAC_CLOUD);
+    assert.equal((await harness.manager.applyConfigSave(() => ({ success: false, cloudCredentialsChanged: true }))).connectionReset, false);
+    const saved = await harness.manager.applyConfigSave(() => ({ success: true, urlChanged: false, cloudCredentialsChanged: true, extra: 'kept' }));
+    assert.deepEqual(saved, { success: true, urlChanged: false, cloudCredentialsChanged: true, extra: 'kept', connectionReset: true }, 'the save result is passed on');
+    assert.equal((await harness.manager.applyConfigSave(() => ({ success: true, urlChanged: true }))).connectionReset, true);
+  }); // End of test "applyConfigSave() tells whether the transition ran..."
+
+  test('finishConfigSave(): a cloud credential change that dropped a cloud connection replies connectionReset; on the local target it does not; a URL change still does; a failure is its code only', async () => {
+    const harness = new LiveHarness();
+    const local = await harness.manager.connect();
+    assert.equal(local.success, true);
+    const localSession = harness.installed;
+    const keptLocal = await harness.manager.applyConfigSave(() => ({ success: true, urlChanged: false, cloudCredentialsChanged: true, managementAccess: MANAGEMENT_FLAGS, cloudAccess: CLOUD_FLAGS }));
+    assert.deepEqual(finishConfigSave(harness.manager, CLOUD_SAVE_PAYLOAD, keptLocal), { success: true, managementAccess: MANAGEMENT_FLAGS, cloudAccess: CLOUD_FLAGS });
+    assert.equal(harness.manager.controller, localSession, 'the local session does not use the cloud account');
+    const nonce = await harness.switchCloudManaged();
+    const cloudSession = harness.installed;
+    const dropped = await harness.manager.applyConfigSave(() => ({ success: true, urlChanged: false, cloudCredentialsChanged: true, managementAccess: MANAGEMENT_FLAGS, cloudAccess: CLOUD_FLAGS }));
+    assert.deepEqual(finishConfigSave(harness.manager, CLOUD_SAVE_PAYLOAD, dropped), {
+      success: true,
+      managementAccess: MANAGEMENT_FLAGS,
+      cloudAccess: CLOUD_FLAGS,
+      connectionReset: true
+    });
+    assert.equal(harness.manager.controller, null);
+    assert.ok(cloudSession.isClosed);
+    await assert.rejects(accessPointsReply(harness.manager, nonce), { message: /^notConnected \(/ });
+    const urlChange = await harness.manager.applyConfigSave(() => ({ success: true, urlChanged: true, managementAccess: MANAGEMENT_FLAGS, cloudAccess: CLOUD_FLAGS }));
+    assert.equal(finishConfigSave(harness.manager, { url: 'https://other.invalid', username: 'admin', language: 'en', password: 'p' }, urlChange).connectionReset, true);
+    const failed = await harness.manager.applyConfigSave(() => ({ success: false, error: 'cloudClientSecretRequired' as const, cloudCredentialsChanged: true }));
+    assert.deepEqual(finishConfigSave(harness.manager, CLOUD_SAVE_PAYLOAD, failed), { success: false, error: 'cloudClientSecretRequired' });
+  }); // End of test "finishConfigSave(): a cloud credential change..."
+
+  test('finishConfigSave(): a save that kept the URL still applies a management-access change to the installed local session', async () => {
+    const harness = new LiveHarness();
+    harness.managementCredentials = { clientId: 'owm-client-1', clientSecret: 'Cl1ent-S3cret-Value-Never-Shown' };
+    const connected = await harness.manager.connect();
+    assert.deepEqual(await getSessionCapabilities(harness.manager, connected.sessionNonce as string), { success: true, capabilities: managementOn() });
+    const session = harness.installed;
+    assert.ok(session.openApiClient);
+    const saved = await harness.manager.applyConfigSave(() => ({ success: true, urlChanged: false, managementAccess: MANAGEMENT_FLAGS, cloudAccess: CLOUD_FLAGS }));
+    const reply = finishConfigSave(harness.manager, { url: BASE_URL, username: 'admin', language: 'en', clientId: 'owm-client-2', clientSecret: 'other' }, saved);
+    assert.equal(reply.connectionReset, undefined);
+    assert.equal(harness.manager.controller, session);
+    assert.equal(session.openApiClient, null, 'the old Open API client and capabilities are dropped');
+  }); // End of test "finishConfigSave(): a save that kept the URL..."
+}); // End of describe 'CONFIG_SAVE connectionReset (inbox I-1b2b2)'
+
+describe('session-bound controller data channels (inbox I-1b2b2)', () => {
+  test('local: the connect result\'s nonce is served (and carries no controller name); a stale or foreign nonce is refused before any controller request; a disconnect leaves notConnected', async () => {
+    const harness = new LiveHarness();
+    const connected = await harness.manager.connect();
+    assert.equal(connected.success, true);
+    assert.equal('controllerName' in connected, false, 'a local result is unchanged');
+    const nonce = connected.sessionNonce as string;
+    assert.ok((await accessPointsReply(harness.manager, nonce)).length > 0);
+    assert.ok((await wlanGroupsReply(harness.manager, nonce)).groups.length > 0);
+    const mark = harness.localTransport.requests.length;
+    await assert.rejects(accessPointsReply(harness.manager, OTHER_NONCE), { message: /^superseded \(/ });
+    await assert.rejects(wlanGroupsReply(harness.manager, OTHER_NONCE), { message: /^superseded \(/ });
+    await assert.rejects(apMoveReply(harness.manager, { sessionNonce: OTHER_NONCE, mac: MAC_1, wlanId: LOCAL_GROUPS[0].id }), { message: /^superseded \(/ });
+    assert.equal(harness.localTransport.requests.length, mark, 'nothing reached the controller for a stale nonce');
+    await harness.manager.disconnect();
+    for (const reply of [accessPointsReply(harness.manager, nonce), wlanGroupsReply(harness.manager, nonce), apMoveReply(harness.manager, { sessionNonce: nonce, mac: MAC_1, wlanId: LOCAL_GROUPS[0].id })]) {
+      await assert.rejects(reply, { message: /^notConnected \(/ });
+    }
+  }); // End of test "local: the connect result's nonce is served..."
+
+  test('a reconnect: while its login is held the old nonce is notConnected (nothing sent); once it succeeds the old nonce is superseded and only the new one is served', async () => {
+    const harness = new LiveHarness();
+    const first = await harness.manager.connect();
+    const oldNonce = first.sessionNonce as string;
+    const login = heldReply();
+    harness.localTransport.on('POST', `/${LOCAL_ID}/api/v2/login`, login.route);
+    const reconnect = harness.manager.connect();
+    await until(() => login.held);
+    const mark = harness.localTransport.requests.length;
+    await assert.rejects(accessPointsReply(harness.manager, oldNonce), { message: /^notConnected \(/ });
+    assert.equal(harness.localTransport.requests.length, mark, 'the closed session is not asked');
+    login.release({ body: responses.loginOk });
+    const second = await reconnect;
+    assert.equal(second.success, true);
+    assert.notEqual(second.sessionNonce, oldNonce);
+    await assert.rejects(accessPointsReply(harness.manager, oldNonce), { message: /^superseded \(/ });
+    assert.ok((await accessPointsReply(harness.manager, second.sessionNonce as string)).length > 0);
+  }); // End of test "a reconnect..."
+
+  test('a switch during a data read: the late reply of the old session is superseded, never passed on (local read, cloud switch)', async () => {
+    const harness = new LiveHarness();
+    const connected = await harness.manager.connect();
+    const devices = heldReply();
+    harness.localTransport.on('GET', `/${LOCAL_ID}/api/v2/sites/${LOCAL_SITE}/devices`, devices.route);
+    const read = accessPointsReply(harness.manager, connected.sessionNonce as string);
+    await until(() => devices.held);
+    const switched = await harness.manager.switchTarget({ kind: 'cloud', omadacId: CLOUD_ID });
+    assert.equal(switched.success, true);
+    devices.release({ body: responses.devices });
+    await assert.rejects(read, { message: /^superseded \(/ });
+    assert.equal(harness.installed.kind, 'cloud');
+  }); // End of test "a switch during a data read..."
+
+  test('cloud: the connect result names the controller (it has no URL); its nonce is served for the AP list, a move with another nonce never reaches the tunnel', async () => {
+    const harness = new LiveHarness();
+    const result = await harness.manager.switchTarget({ kind: 'cloud', omadacId: CLOUD_ID });
+    assert.equal(result.success, true);
+    assert.equal(result.controllerName, 'OC200 Planta 4');
+    assert.equal(harness.installed.url, '');
+    const nonce = result.sessionNonce as string;
+    assert.equal((await accessPointsReply(harness.manager, nonce)).length, 4);
+    assert.ok((await wlanGroupsReply(harness.manager, nonce)).groups.length > 0);
+    const mark = harness.cloudTransport.requests.length;
+    await assert.rejects(apMoveReply(harness.manager, { sessionNonce: OTHER_NONCE, mac: MAC_1, wlanId: SILENCIO_ID }), { message: /^superseded \(/ });
+    assert.equal(harness.cloudTransport.requests.length, mark, 'no PATCH and no read for a stale nonce');
+    assert.equal(harness.cloudTransport.requestsTo('PATCH', MOVE_URL).length, 0);
+  }); // End of test "cloud: the connect result names the controller..."
+}); // End of describe 'session-bound controller data channels (inbox I-1b2b2)'

@@ -1,8 +1,11 @@
 // Pure shape guards for the session-owned IPC channels (docs/management-design.md
 // §3): the management-access channels of phase 15b, the AP-group channels of
 // phase 16a, the Wi-Fi network read of phase 17a (requireSessionNonce()), the
-// Wi-Fi network writes of phase 18a and the binding write of phase 19a — plus
-// the arity guard of the other channels (requireNoExtraArguments()).
+// Wi-Fi network writes of phase 18a, the binding write of phase 19a, the
+// controller data channels (requireSessionNonce(), parseApMoveRequest()) and
+// the controller switch (parseControllerTargetRequest()) of inbox phase
+// I-1b2b2 — plus the arity guard of the other channels
+// (requireNoExtraArguments()).
 // index.ts calls them right after assertTrustedIpcSender(); the
 // unit tests (tests/unit/ipc-guards.test.ts) and the smoke stub
 // (tests/smoke/stub-main.cjs, which requires the compiled module) use the very
@@ -13,10 +16,12 @@
 // in the payload).
 
 import { AP_GROUP_ID_REGEX } from './ap-group-policy';
+import { isOmadacId } from './cloud-account-model';
 import type {
   ApGroupCreateRequest,
   ApGroupDeleteRequest,
   ApGroupRenameRequest,
+  ControllerTarget,
   NetworkBand,
   NetworkBindingsRequest,
   NetworkCreateRequest,
@@ -95,6 +100,73 @@ export function requireSessionNonce(sessionNonce: unknown, extra: unknown[]): st
   }
   return sessionNonce;
 }
+
+/**
+ * An AP move as OMADA_SET_WLAN receives it, after parseApMoveRequest().
+ */
+export interface ApMoveRequest {
+  sessionNonce: string;
+  mac: string;
+  wlanId: string;
+}
+
+/**
+ * Shape guard of OMADA_SET_WLAN: exactly three arguments — the session nonce
+ * of the connect result (32 lowercase hex characters), the AP's MAC address
+ * (MAC_REGEX) and the destination group id (WLAN_ID_REGEX) — checked in that
+ * order, before anything reaches the controller session (both identifiers end
+ * up in a request path or body).
+ * @param {unknown} sessionNonce - The first argument.
+ * @param {unknown} mac - The second argument.
+ * @param {unknown} wlanId - The third argument.
+ * @param {unknown[]} extra - Any further arguments (must be none).
+ * @returns {ApMoveRequest} The checked arguments.
+ * @throws {Error} On extra arguments, a malformed nonce, MAC or group id.
+ */
+export function parseApMoveRequest(sessionNonce: unknown, mac: unknown, wlanId: unknown, extra: unknown[]): ApMoveRequest {
+  const nonce = requireSessionNonce(sessionNonce, extra);
+  if (typeof mac !== 'string' || !MAC_REGEX.test(mac)) {
+    reject('invalid MAC address format');
+  }
+  if (typeof wlanId !== 'string' || !WLAN_ID_REGEX.test(wlanId)) {
+    reject('invalid WLAN id format');
+  }
+  return { sessionNonce: nonce, mac, wlanId };
+} // End of function parseApMoveRequest()
+
+/**
+ * Shape guard of OMADA_SWITCH_CONTROLLER: one argument, a plain object that is
+ * exactly `{kind: 'local'}` or exactly `{kind: 'cloud', omadacId}` with a
+ * usable omadacId (isOmadacId(), the rule normalizeConnectionTarget() and the
+ * stored `activeController` follow: never 'local' or a reserved object key).
+ * Any other key, kind or value is refused here, before the switch changes
+ * any state.
+ * @param {unknown} payload - The first argument.
+ * @param {unknown[]} extra - Any further arguments (must be none).
+ * @returns {ControllerTarget} A fresh copy with exactly these keys.
+ * @throws {Error} On any other shape.
+ */
+export function parseControllerTargetRequest(payload: unknown, extra: unknown[]): ControllerTarget {
+  if (extra.length > 0) {
+    reject('unexpected arguments');
+  }
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    reject('invalid controller target request');
+  }
+  const kind = (payload as Record<string, unknown>).kind;
+  if (kind === 'local') {
+    requireExactPayload(payload, extra, ['kind'], [], 'controller target');
+    return { kind: 'local' };
+  }
+  if (kind === 'cloud') {
+    const raw = requireExactPayload(payload, extra, ['kind', 'omadacId'], [], 'controller target');
+    if (!isOmadacId(raw.omadacId)) {
+      reject('invalid controller id format');
+    }
+    return { kind: 'cloud', omadacId: raw.omadacId };
+  }
+  reject('invalid controller target request');
+} // End of function parseControllerTargetRequest()
 
 /**
  * Checks that a payload is the only argument and a plain object (Object or

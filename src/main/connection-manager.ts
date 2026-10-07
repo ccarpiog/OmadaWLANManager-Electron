@@ -56,8 +56,10 @@
 // connects it with the site remembered in `cloudSites[omadacId]`; a site the
 // user picks is persisted there, never in the local `siteId`. A cloud
 // failure's `detail` starts with its stable code (describeCloudSessionError()).
-// Nothing switches the target over IPC yet, and the app starts on the local
-// target (phase I-1b2b2 wires both; resolveStartupTarget() is ready).
+// Wiring (inbox I-1b2b2): OMADA_SWITCH_CONTROLLER calls switchTarget() with a
+// target its guard checked (ipc-guards.ts), and index.ts sets the startup
+// target with startOn() — resolveStartupTarget(): the stored cloud controller
+// while the cloud credential is usable, else local — before the window exists.
 
 import { randomBytes } from 'crypto';
 import { CertificateActionResult, ConnectionResult } from '../shared/types';
@@ -75,9 +77,10 @@ export const DEFAULT_LOGOUT_DRAIN_MS = 3000;
 
 /**
  * What an installed controller adds to a successful connect or site-selection
- * result (ControllerSession: the site name and the session nonce).
+ * result (ControllerSession: the site name, the session nonce and, for a
+ * TP-Link cloud controller only, its name).
  */
-export type InstalledDetails = Pick<ConnectionResult, 'siteName' | 'sessionNonce'>;
+export type InstalledDetails = Pick<ConnectionResult, 'siteName' | 'sessionNonce' | 'controllerName'>;
 
 /**
  * What the state machine needs from a controller instance (ControllerSession
@@ -92,8 +95,8 @@ export interface ManagedController {
   // discarded — and any capability check in flight, whose late result is then
   // ignored). Idempotent. Called when the instance is detached or released,
   // before its logout starts, and when a newer connect attempt starts while
-  // it is installed (the instance must then keep serving the internal data
-  // and AP-move calls until it is released)
+  // it is installed (the instance stays logged in until it is released; the
+  // data and AP-move IPC handlers refuse a closed session since inbox I-1b2b2)
   close?(): void;
   // Optional: called synchronously when the instance becomes the installed
   // controller (ControllerSession starts its capability checks here); returns
@@ -333,6 +336,30 @@ export class ConnectionManager<C extends ManagedController> {
   }
 
   /**
+   * Sets the target the app starts with (index.ts: resolveStartupTarget() at
+   * startup, before the window exists), without the transition, the
+   * `activeController` write or the connect of switchTarget(): the stored
+   * choice is not rewritten — a local fallback for an unusable cloud
+   * credential must leave `activeController` as stored. Accepted only while
+   * nothing has happened yet (no connect, disconnect, transition or switch
+   * ran; nothing installed or pending); a later call changes nothing.
+   * @param {ConnectionTarget} target - `{kind: 'local'}` or `{kind: 'cloud', omadacId}`.
+   * @returns {boolean} True when the target was set.
+   * @throws {Error} Before any state change, when `target` is not a valid target.
+   */
+  startOn(target: ConnectionTarget): boolean {
+    const next = normalizeConnectionTarget(target);
+    if (next === null) {
+      throw new Error('Connection target rejected: not a local or cloud target');
+    }
+    if (this.generation !== 0 || this.installed !== null || this.pendingSite !== null || this.pendingTrust !== null) {
+      return false;
+    }
+    this.activeTarget = next;
+    return true;
+  } // End of function startOn()
+
+  /**
    * Records a first-use or mismatch rejection reported by the certificate
    * hooks (index.ts: CertificateTrustSource.onPinRejection).
    * @param {CertificatePinRejection} rejection - The rejection.
@@ -522,18 +549,24 @@ export class ConnectionManager<C extends ManagedController> {
    * credential while the target is a cloud controller (`cloudCredentialsChanged`):
    * the cloud session and any cloud connect in flight were built on the
    * replaced account client. A save that changes neither leaves the
-   * connection alone.
+   * connection alone. The result tells whether the transition ran
+   * (`connectionReset`), decided in the same synchronous step, so CONFIG_SAVE
+   * reports it for both causes.
    * @param {() => R} save - Persists the config; reports success, urlChanged
    *   and (optional) cloudCredentialsChanged.
-   * @returns {Promise<R>} The save result, once the transition (if any) is done.
+   * @returns {Promise<R & { connectionReset: boolean }>} The save result plus
+   *   whether the transition ran, once it is done.
    */
-  async applyConfigSave<R extends { success: boolean; urlChanged?: boolean; cloudCredentialsChanged?: boolean }>(save: () => R): Promise<R> {
+  async applyConfigSave<R extends { success: boolean; urlChanged?: boolean; cloudCredentialsChanged?: boolean }>(
+    save: () => R
+  ): Promise<R & { connectionReset: boolean }> {
     const result = save();
     const cloudChanged = result.cloudCredentialsChanged === true && this.activeTarget.kind === 'cloud';
-    if (result.success && (result.urlChanged || cloudChanged)) {
+    const connectionReset = result.success && (result.urlChanged === true || cloudChanged);
+    if (connectionReset) {
       await this.invalidateControllerState();
     }
-    return result;
+    return { ...result, connectionReset };
   } // End of function applyConfigSave()
 
   /**
@@ -639,14 +672,14 @@ export class ConnectionManager<C extends ManagedController> {
     // and its session nonce answers notConnected on MANAGEMENT_CAPABILITIES /
     // MANAGEMENT_TEST from here on — the new internal login may take long,
     // and no Open API session of the old connection may stay usable
-    // meanwhile. Its INTERNAL client deliberately stays installed (phase-7
-    // behavior): the data and AP-move handlers keep their controller during
-    // the window, it is released (logged out) only once this attempt
-    // succeeds or parks a site selection, and a failed or superseded attempt
-    // leaves it to the next disconnect (the renderer disconnects after a
-    // failed attempt) or controller transition. close() is idempotent, so
-    // the later release closes nothing twice. The same holds for a cloud
-    // session: its data client serves until the release
+    // meanwhile. Since inbox I-1b2b2 the data and AP-move handlers refuse it
+    // the same way (sessionDataReply(): a closed session is notConnected).
+    // Its INTERNAL client deliberately stays installed (phase-7 behavior):
+    // it is released (logged out) only once this attempt succeeds or parks a
+    // site selection, and a failed or superseded attempt leaves it to the
+    // next disconnect (the renderer disconnects after a failed attempt) or
+    // controller transition. close() is idempotent, so the later release
+    // closes nothing twice. The same holds for a cloud session's data client
     this.installed?.close?.();
     const target = this.activeTarget;
     if (target.kind === 'cloud') {

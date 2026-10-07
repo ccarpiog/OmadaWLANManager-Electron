@@ -6,16 +6,20 @@
 // model (else the legacy default) and a sane controller version. Management
 // capabilities and their replies fail closed (only known reason codes, flags
 // on only without a reason, main's codes-only diagnostic), and the site name
-// and session nonce of a connect result are size-checked.
+// and session nonce of a connect result are size-checked. A connected cloud
+// session has no URL (inbox I-1b2b2): the header label is its controller name,
+// and an empty URL labels nothing.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { isSameControllerUrl as mainIsSameControllerUrl, normalizeControllerUrl } from '../../src/main/url';
 import {
+  controllerHostLabel,
   isManagementReason,
   isSameControllerUrl,
   isValidFingerprint,
   parseCertificateDetails,
+  parseControllerName,
   parseGroupListing,
   parseManagementCapabilities,
   parseManagementResult,
@@ -196,3 +200,23 @@ describe('management capabilities and replies', () => {
     }
   });
 }); // End of the describe block for management capabilities and replies
+
+describe('a connected cloud session without a URL (inbox I-1b2b2)', () => {
+  test('controllerHostLabel(): a local URL shows its host as before (raw text when unparseable, nothing for ""); a cloud session\'s url "" shows its controller name, never the local URL', () => {
+    assert.equal(controllerHostLabel('https://controller.invalid:8043', null), 'controller.invalid:8043');
+    assert.equal(controllerHostLabel('https://192.168.1.10', null), '192.168.1.10');
+    assert.equal(controllerHostLabel('not a url', null), 'not a url', 'the pre-I-1b2b2 fallback is kept');
+    assert.equal(controllerHostLabel('', null), null, 'an empty URL: no label, no crash');
+    assert.equal(controllerHostLabel('', 'OC200 Planta 4'), 'OC200 Planta 4');
+    assert.equal(controllerHostLabel('https://controller.invalid:8043', 'OC200 Planta 4'), 'OC200 Planta 4', 'the configured local URL never labels a cloud session');
+    assert.equal(controllerHostLabel('', '   '), null, 'a blank name is no label');
+  });
+
+  test('parseControllerName(): a non-blank string within the cap, else null', () => {
+    assert.equal(parseControllerName('OC200 Planta 4'), 'OC200 Planta 4');
+    assert.equal(parseControllerName('x'.repeat(256)), 'x'.repeat(256));
+    for (const raw of ['', '  ', 'x'.repeat(257), 7, null, undefined, ['OC200']]) {
+      assert.equal(parseControllerName(raw), null, String(raw));
+    }
+  });
+}); // End of describe 'a connected cloud session without a URL'

@@ -176,7 +176,7 @@ const LEGACY_GROUP = Object.fromEntries(data.legacyWlanGroups.map((group) => [gr
 const EXPECTED_BRIDGE = [
   'changeNetworkPassword', 'connect', 'createApGroup', 'createNetwork', 'deleteApGroup', 'deleteNetwork', 'disconnect', 'getAccessPoints',
   'getCloudControllers', 'getManagedApGroups', 'getManagedNetworks', 'getManagementCapabilities', 'getWlanGroups', 'loadConfig', 'platform',
-  'renameApGroup', 'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup', 'setNetworkEnabled', 'testCloudAccess',
+  'renameApGroup', 'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup', 'setNetworkEnabled', 'switchController', 'testCloudAccess',
   'testManagementAccess', 'trustCertificate', 'updateNetwork', 'updateNetworkBindings',
 ];
 // The keys of a CloudController DTO (src/shared/types.ts), sorted: nothing else may cross
@@ -445,6 +445,17 @@ function configureStub(session, patch) {
  */
 function callsTo(snapshot, channel) {
   return snapshot.calls.filter((call) => call.channel === channel);
+}
+
+/**
+ * The move arguments of an OMADA_SET_WLAN call — `[mac, wlanId]`, after the
+ * session nonce it carries first (inbox I-1b2b2; checkDataChannelNonces()
+ * checks the nonce itself).
+ * @param {{ args: unknown[] }} call - The recorded call.
+ * @returns {unknown[]} Its MAC and group id.
+ */
+function moveArgs(call) {
+  return call.args.slice(1);
 }
 
 // ============================================================================
@@ -1550,6 +1561,98 @@ async function checkCloudChannels(session) {
 } // End of function checkCloudChannels()
 
 /**
+ * Checks the controller-switch channel through the real preload bridge (inbox
+ * I-1b2b2; no switcher UI yet — I-1c): a malformed target (an unusable
+ * omadacId, an extra key, an unknown kind, no object) is rejected by the
+ * real guard before any state change; a cloud target is "persisted" and
+ * connected — refused like main without a cloud credential (connectError,
+ * 'notConfigured'); switching back to local persists 'local' and connects the
+ * local target (the first run has no config: configIncomplete). Run while
+ * disconnected, before anything else connects.
+ * @param {object} session - The launch.
+ * @returns {Promise<void>}
+ */
+async function checkSwitchChannel(session) {
+  await check(`[${session.label}] controller switch: switchController() refuses a malformed target before any state change; a cloud target is persisted and refused without a cloud credential (connectError "notConfigured"); back to local persists "local" and connects locally`, async () => {
+    const cloudId = '4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d';
+    const malformed = await session.page.evaluate(async (omadacId) => {
+      /**
+       * Calls switchController() and reports how it settled.
+       * @param {unknown} target - The target to send.
+       * @returns {Promise<string>} 'resolved', or the rejection message.
+       */
+      const outcome = (target) => window.omadaAPI.switchController(target).then(() => 'resolved', (error) => String(error.message));
+      return [
+        await outcome({ kind: 'cloud', omadacId: 'local' }),
+        await outcome({ kind: 'cloud', omadacId: 'not an id' }),
+        await outcome({ kind: 'local', omadacId }),
+        await outcome({ kind: 'remote' }),
+        await outcome(null),
+      ];
+    }, cloudId);
+    const untouched = await stubState(session);
+    const cloud = await session.page.evaluate((omadacId) => window.omadaAPI.switchController({ kind: 'cloud', omadacId }), cloudId);
+    const local = await session.page.evaluate(() => window.omadaAPI.switchController({ kind: 'local' }));
+    const after = await stubState(session);
+    const switches = callsTo(after, 'omada:switch-controller');
+    return verdict(
+      malformed.every((message) => /IPC call rejected: invalid controller (target request|id format)/.test(message)) &&
+      untouched.activeControllerWrites.length === 0 && isDeepStrictEqual(untouched.target, { kind: 'local' }) &&
+      isDeepStrictEqual(cloud, { success: false, error: 'connectError', detail: 'notConfigured' }) &&
+      isDeepStrictEqual(local, { success: false, error: 'configIncomplete' }) &&
+      isDeepStrictEqual(after.activeControllerWrites, [cloudId, 'local']) && isDeepStrictEqual(after.target, { kind: 'local' }) &&
+      after.connected === false && switches.length === 7 && callsTo(after, 'omada:connect').length === 0,
+      { malformed, cloud, local, writes: after.activeControllerWrites, target: after.target, switches: switches.length }
+    );
+  }); // End of check "[label] controller switch"
+} // End of function checkSwitchChannel()
+
+/**
+ * Checks the session nonce on the controller data channels (inbox I-1b2b2)
+ * while connected: every OMADA_GET_APS / OMADA_GET_WLANS / OMADA_SET_WLAN
+ * call the renderer made so far carried, first, a session nonce main handed
+ * out (the current one last); through the real preload, a well-formed nonce
+ * of no session is refused with 'superseded' and a malformed one by the guard,
+ * before any fake controller data is read or changed.
+ * @param {object} session - The launch.
+ * @param {{ mac: string }} ap - An AP to try a refused move with.
+ * @param {{ wlanId: string }} group - A group to try it into.
+ * @returns {Promise<void>}
+ */
+async function checkDataChannelNonces(session, ap, group) {
+  await check(`[${session.label}] session-bound data channels: every get-aps / get-wlans / set-wlan call carried an issued session nonce first (the current one last); a stale nonce is refused ("superseded") and a malformed one by the guard, before any controller data`, async () => {
+    const before = await stubState(session);
+    const dataCalls = before.calls.filter((call) => ['omada:get-aps', 'omada:get-wlans', 'omada:set-wlan'].includes(call.channel));
+    const lastLoad = [callsTo(before, 'omada:get-aps').at(-1), callsTo(before, 'omada:get-wlans').at(-1)];
+    const refused = await session.page.evaluate(async ([mac, wlanId]) => {
+      /**
+       * Reports how a bridge call settled.
+       * @param {Promise<unknown>} promise - The call.
+       * @returns {Promise<string>} 'resolved', or the rejection message.
+       */
+      const outcome = (promise) => promise.then(() => 'resolved', (error) => String(error.message));
+      const stale = '0'.repeat(32);
+      return {
+        aps: await outcome(window.omadaAPI.getAccessPoints(stale)),
+        wlans: await outcome(window.omadaAPI.getWlanGroups(stale)),
+        move: await outcome(window.omadaAPI.setApWlanGroup(stale, mac, wlanId)),
+        malformed: await outcome(window.omadaAPI.getAccessPoints('not-a-nonce')),
+        missing: await outcome(window.omadaAPI.getWlanGroups()),
+      };
+    }, [ap.mac, group.wlanId]);
+    const after = await stubState(session);
+    return verdict(
+      dataCalls.length > 0 && dataCalls.every((call) => before.issuedSessionNonces.includes(call.args[0])) &&
+      lastLoad.every((call) => call?.args[0] === before.sessionNonce) && before.connected === true &&
+      [refused.aps, refused.wlans, refused.move].every((message) => /: superseded \(/.test(message)) &&
+      [refused.malformed, refused.missing].every((message) => /IPC call rejected: invalid session nonce format/.test(message)) &&
+      isDeepStrictEqual(after.scenario.accessPoints, before.scenario.accessPoints) && after.sessionNonce === before.sessionNonce,
+      { refused, dataCalls: dataCalls.length, lastLoad: lastLoad.map((call) => call?.args) }
+    );
+  }); // End of check "[label] session-bound data channels"
+} // End of function checkDataChannelNonces()
+
+/**
  * Checks the language: UI revealed, lang attribute, every static string from
  * ui-strings.json, and no blank label/button/heading.
  * @param {object} session - The launch.
@@ -2331,7 +2434,7 @@ async function runBulkMoveChecks(session) {
      */
     const groupOf = (name) => rows.find((row) => row.name === name)?.group;
     return verdict(
-      isDeepStrictEqual(sets.map((call) => call.args), [[AP.Altillo.mac, GROUP.Exterior.wlanId], [AP.Garaje.mac, GROUP.Exterior.wlanId]]) &&
+      isDeepStrictEqual(sets.map(moveArgs), [[AP.Altillo.mac, GROUP.Exterior.wlanId], [AP.Garaje.mac, GROUP.Exterior.wlanId]]) &&
       modal.title === es.resultsTitle && modal.summary === fmt(es.resultsAllMany, { count: 2, group: 'Exterior' }) &&
       isDeepStrictEqual(modal.results.map((row) => [row.name, row.macText, row.ok, row.status, row.error]), [
         ['Altillo', AP.Altillo.mac, true, es.resultOk, null], ['Garaje', AP.Garaje.mac, true, es.resultOk, null],
@@ -2398,7 +2501,7 @@ async function runBulkMoveChecks(session) {
       modal.summary === fmt(es.reviewOne, { ap: 'Salón', group: 'Exterior' }) &&
       isDeepStrictEqual(modal.rows.aps, { label: `${es.accessPoints} (${es.apOne})`, value: 'Salón', details: [fmt(es.skippedMany, { count: 2 })], warnings: [] }) &&
       modal.rows.clients?.value === fmt(es.clientsMany, { count: 12 }) &&
-      sets.length === 1 && isDeepStrictEqual(sets[0].args, [AP['Salón'].mac, GROUP.Exterior.wlanId]) &&
+      sets.length === 1 && isDeepStrictEqual(moveArgs(sets[0]), [AP['Salón'].mac, GROUP.Exterior.wlanId]) &&
       results.summary === fmt(es.resultsAllOne, { group: 'Exterior' }) && isDeepStrictEqual(results.results.map((row) => row.mac), [AP['Salón'].mac]) &&
       selection.summary === expectedSummary('es', 0, 0),
       { preview, modal, sets, results, selection }
@@ -2493,7 +2596,7 @@ async function runBulkMoveChecks(session) {
       preview.destination === fmt(es.moveDestination, { group: MOVE_GROUP.wlanName }) && preview.button === es.moveOne && reachedMove &&
       modal.summary === fmt(es.reviewOne, { ap: 'Porche', group: MOVE_GROUP.wlanName }) && reachedConfirm && setsBeforeConfirm === 0 &&
       results.results.length === 1 && results.results[0].ok === true && sets.length === 1 &&
-      isDeepStrictEqual(sets[0].args, [AP.Porche.mac, MOVE_GROUP.wlanId]) && porche?.group === groupText(MOVE_GROUP.wlanName) &&
+      isDeepStrictEqual(moveArgs(sets[0]), [AP.Porche.mac, MOVE_GROUP.wlanId]) && porche?.group === groupText(MOVE_GROUP.wlanName) &&
       focusAfter.checkbox === true,
       { reachedList, reachedAp, checked, reachedRadios, reachedGroup, radio, preview, reachedMove, modal, reachedConfirm, setsBeforeConfirm, results, sets, porche, focusAfter }
     );
@@ -2542,8 +2645,8 @@ async function runBulkMoveChecks(session) {
      */
     const groupOf = (name) => rows.find((row) => row.name === name)?.group;
     return verdict(
-      isDeepStrictEqual(sets.map((call) => call.args[0]), [AP.Bodega.mac, AP['EAP Carpio'].mac, AP['Jardín'].mac, AP.Porche.mac]) &&
-      sets.every((call) => call.args[1] === GROUP.Default.wlanId) &&
+      isDeepStrictEqual(sets.map((call) => moveArgs(call)[0]), [AP.Bodega.mac, AP['EAP Carpio'].mac, AP['Jardín'].mac, AP.Porche.mac]) &&
+      sets.every((call) => moveArgs(call)[1] === GROUP.Default.wlanId) &&
       modal.summary === fmt(es.resultsPartial, { moved: 2, total: 4, group: 'Default' }) &&
       isDeepStrictEqual(modal.results.map((row) => [row.name, row.ok, row.status, row.error]), [
         ['Bodega', false, es.resultFailed, es.rejected],
@@ -2574,7 +2677,7 @@ async function runBulkMoveChecks(session) {
     return verdict(
       modal.title === es.reviewTitle && modal.summary === fmt(es.reviewMany, { count: 2, group: 'Default' }) &&
       modal.rows.aps?.value === 'Bodega, Jardín' && modal.activeId === 'cancelMoveBtn' &&
-      isDeepStrictEqual(sets.map((call) => call.args), [[AP.Bodega.mac, GROUP.Default.wlanId], [AP['Jardín'].mac, GROUP.Default.wlanId]]) &&
+      isDeepStrictEqual(sets.map(moveArgs), [[AP.Bodega.mac, GROUP.Default.wlanId], [AP['Jardín'].mac, GROUP.Default.wlanId]]) &&
       results.summary === fmt(es.resultsAllMany, { count: 2, group: 'Default' }) && results.results.every((row) => row.ok) &&
       selection.summary === expectedSummary('es', 0, 0) &&
       rows.find((row) => row.name === 'Bodega')?.group === groupText('Default') && rows.find((row) => row.name === 'Jardín')?.group === groupText('Default'),
@@ -2618,13 +2721,13 @@ async function runBulkMoveChecks(session) {
     await waitForLoadIdle(page);
     const zB = GROUP['zGrupo B'].wlanId;
     return verdict(
-      isDeepStrictEqual(sets.map((call) => call.args), [[AP.Bodega.mac, zB], [AP['Jardín'].mac, zB], [AP.Porche.mac, zB]]) &&
+      isDeepStrictEqual(sets.map(moveArgs), [[AP.Bodega.mac, zB], [AP['Jardín'].mac, zB], [AP.Porche.mac, zB]]) &&
       results.summary === fmt(es.resultsPartial, { moved: 1, total: 3, group: 'zGrupo B' }) &&
       isDeepStrictEqual(results.results.map((row) => [row.name, row.ok]), [['Bodega', false], ['Jardín', false], ['Porche', true]]) &&
       isDeepStrictEqual(results.notes, [es.retryMissingOne, fmt(es.retryRemainingOne, { action: es.retryFailed }), es.notAtomic]) &&
       results.buttons.retry === es.retryFailed && isDeepStrictEqual(selection.checked, [AP['Jardín'].mac]) &&
       review.summary === fmt(es.reviewOne, { ap: 'Jardín', group: 'zGrupo B' }) && review.rows.aps?.value === 'Jardín' &&
-      review.activeId === 'cancelMoveBtn' && isDeepStrictEqual(retrySets.map((call) => call.args), [[AP['Jardín'].mac, zB]]) &&
+      review.activeId === 'cancelMoveBtn' && isDeepStrictEqual(retrySets.map(moveArgs), [[AP['Jardín'].mac, zB]]) &&
       retried.summary === fmt(es.resultsAllOne, { group: 'zGrupo B' }),
       { sets, results, selection, review, retrySets, retried }
     );
@@ -2656,7 +2759,7 @@ async function runBulkMoveChecks(session) {
     await page.click('#clearApSelectionBtn');
     const exterior = GROUP.Exterior.wlanId;
     return verdict(
-      isDeepStrictEqual(sets.map((call) => call.args), [[AP['Jardín'].mac, exterior], [AP.Porche.mac, exterior]]) &&
+      isDeepStrictEqual(sets.map(moveArgs), [[AP['Jardín'].mac, exterior], [AP.Porche.mac, exterior]]) &&
       results.summary === fmt(es.resultsPartial, { moved: 1, total: 2, group: 'Exterior' }) &&
       isDeepStrictEqual(results.notes, [fmt(es.retryDestinationGone, { group: 'Exterior' }), es.notAtomic]) &&
       isDeepStrictEqual(results.buttons, { cancel: null, confirm: null, retry: null, close: es.close }) && results.activeId === 'closeMoveBtn' &&
@@ -2787,6 +2890,7 @@ async function runSpanishFirstRun(electronInfo) {
     await checkWindowLikeRealApp(session);
     await checkTranslations(session, 'es');
     await checkCloudChannels(session);
+    await checkSwitchChannel(session);
 
     await check('[es] first run: settings modal auto-opens with focus in the URL field and an inert background', async () => {
       await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
@@ -3078,7 +3182,7 @@ async function runSpanishFirstRun(electronInfo) {
       const modal = await readMoveModal(page);
       const sets = callsTo(await stubState(session), 'omada:set-wlan');
       return verdict(
-        sets.length === 1 && isDeepStrictEqual(sets[0].args, [MOVE_AP.mac, MOVE_GROUP.wlanId]) &&
+        sets.length === 1 && isDeepStrictEqual(moveArgs(sets[0]), [MOVE_AP.mac, MOVE_GROUP.wlanId]) &&
         modal.title === es.resultsTitle && modal.summary === fmt(es.resultsAllOne, { group: MOVE_GROUP.wlanName }) &&
         isDeepStrictEqual(modal.results, [{ mac: MOVE_AP.mac, ok: true, status: es.resultOk, name: MOVE_AP.name, macText: MOVE_AP.mac, error: null }]) &&
         isDeepStrictEqual(modal.buttons, { cancel: null, confirm: null, retry: null, close: es.close }) && modal.activeId === 'closeMoveBtn',
@@ -3134,12 +3238,15 @@ async function runSpanishFirstRun(electronInfo) {
       const sets = callsTo(await stubState(session), 'omada:set-wlan');
       const row = (await readApItems(page)).find((item) => item.mac === MOVE_AP.mac);
       return verdict(
-        sets.length === 2 && isDeepStrictEqual(sets[1].args, [MOVE_AP.mac, EMPTY_GROUP.wlanId]) &&
+        sets.length === 2 && isDeepStrictEqual(moveArgs(sets[1]), [MOVE_AP.mac, EMPTY_GROUP.wlanId]) &&
         modal.summary === fmt(es.resultsAllOne, { group: EMPTY_GROUP.wlanName }) && modal.results.length === 1 && modal.results[0].ok === true &&
         row?.counts === ` · ${es.networksNone} · ${es.clientsOne}`,
         { sets, modal, row }
       );
     }); // End of check "[es] Silence move -> confirm..."
+
+    // After the absolute OMADA_SET_WLAN counts above (its refused move adds one call)
+    await checkDataChannelNonces(session, MOVE_AP, MOVE_GROUP);
 
     await runSelectionChecks(session);
     await runBulkMoveChecks(session);
@@ -3463,7 +3570,7 @@ async function runSpanishFirstRun(electronInfo) {
         }; // End of function keyboardMove()
         const there = await keyboardMove(target.wlanId);
         const back = original === undefined ? null : await keyboardMove(original.wlanId);
-        const sets = callsTo(await stubState(session), 'omada:set-wlan').slice(-2).map((call) => call.args);
+        const sets = callsTo(await stubState(session), 'omada:set-wlan').slice(-2).map(moveArgs);
         /**
          * Tells whether a move ended on the AP list with focus visible in it.
          * @param {{ focus: object; layout: object }} step - The probes after one move.
@@ -6047,9 +6154,9 @@ async function runApGroupManagement(electronInfo) {
         landed.checked === newId && landed.destination === fmt(TEXT.es.moveDestination, { group: 'Grupo renombrado' }) &&
         landed.status === TEXT.es.moveNoSelection && !landed.details && landedFocus.panel === 'apPanel' && landedFocus.visible &&
         review.open && review.rows.to?.value === 'Grupo renombrado' && review.rows.aps?.value === 'Jardín' && review.activeId === 'cancelMoveBtn' &&
-        isDeepStrictEqual(sets.map((call) => call.args), [[jardin.mac, newId]]) && after.apGroupWrites.length === before.apGroupWrites.length &&
+        isDeepStrictEqual(sets.map(moveArgs), [[jardin.mac, newId]]) && after.apGroupWrites.length === before.apGroupWrites.length &&
         controls.heading === 'Grupo renombrado' && controls.delete.disabled && controls.deleteReason === es.blockedNotEmpty,
-        { landed, landedFocus, review: { rows: review.rows, activeId: review.activeId }, sets: sets.map((call) => call.args), controls }
+        { landed, landedFocus, review: { rows: review.rows, activeId: review.activeId }, sets: sets.map(moveArgs), controls }
       );
     }); // End of check "[groups] es: Mover puntos de acceso aquí..."
 

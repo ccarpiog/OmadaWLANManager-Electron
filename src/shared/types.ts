@@ -115,10 +115,11 @@ export type ConfigSaveError =
   | 'cloudClientSecretRequired';
 
 // Result of a config save. `connectionReset` is true when the save changed the
-// controller URL: the main process then invalidated every in-flight connect
-// attempt, discarded any pending site selection / certificate trust decision
-// and logged out the installed controller, so the renderer must drop its
-// connected UI (it reconnects on its own after a successful save). On success,
+// controller URL, or changed the TP-Link cloud credential while the connection
+// target is a cloud controller: the main process then invalidated every
+// in-flight connect attempt, discarded any pending site selection / certificate
+// trust decision and logged out the installed controller, so the renderer must
+// drop its connected UI (it reconnects on its own after a successful save). On success,
 // `managementAccess` and `cloudAccess` report the management-access and the
 // cloud-access state after the save (flags only, never a secret).
 export interface ConfigSaveResult {
@@ -272,7 +273,11 @@ export interface SiteInfo {
 // echoes it back verbatim with the management-access calls
 // (getManagementCapabilities(), testManagementAccess(), the AP-group calls
 // and the Wi-Fi network calls), so they only ever act on the session it is
-// showing.
+// showing — and with the controller data channels (getAccessPoints(),
+// getWlanGroups(), setApWlanGroup()), which main refuses for any other
+// session. `controllerName` is present only for a TP-Link cloud controller
+// (its organization name): such a session has no controller URL, so the
+// renderer labels the connection with this name instead of a host.
 // When authentication succeeds but the controller manages several sites and
 // none could be picked automatically, `success` is false with no `error`,
 // `needsSiteSelection` is true, `sites` lists the authorized sites, and
@@ -295,7 +300,15 @@ export interface ConnectionResult {
   trustNonce?: string;
   siteName?: string;
   sessionNonce?: string;
+  controllerName?: string;
 }
+
+// The controller the app connects to (switchController()): the configured
+// local controller, reached directly, or a controller of the TP-Link cloud
+// account named by its omadacId. Main accepts exactly these two shapes (no
+// other key; the omadacId in the format of the organization list) and refuses
+// anything else before any state changes.
+export type ControllerTarget = { kind: 'local' } | { kind: 'cloud'; omadacId: string };
 
 // Why management of AP groups and Wi-Fi networks is off for the connected
 // controller (docs/management-design.md §2.2). Main runs the checks in this
@@ -808,9 +821,10 @@ export interface OmadaAPI {
   loadConfig(): Promise<RendererConfig>;
   saveConfig(config: ConfigSavePayload): Promise<ConfigSaveResult>;
   connect(): Promise<ConnectionResult>;
-  getAccessPoints(): Promise<AccessPoint[]>;
-  getWlanGroups(): Promise<GroupListing>;
-  setApWlanGroup(mac: string, wlanId: string): Promise<boolean>;
+  getAccessPoints(sessionNonce: string): Promise<AccessPoint[]>;
+  getWlanGroups(sessionNonce: string): Promise<GroupListing>;
+  setApWlanGroup(sessionNonce: string, mac: string, wlanId: string): Promise<boolean>;
+  switchController(target: ControllerTarget): Promise<ConnectionResult>;
   selectSite(siteId: string, selectionNonce: string): Promise<ConnectionResult>;
   disconnect(selectionNonce?: string): Promise<void>;
   trustCertificate(trustNonce: string): Promise<CertificateActionResult>;
@@ -838,11 +852,15 @@ export const IPC_CHANNELS = {
   CONFIG_LOAD: 'config:load',
   CONFIG_SAVE: 'config:save',
 
-  // Omada operations
+  // Omada operations. The three data channels (get-aps, get-wlans, set-wlan)
+  // carry the session nonce of the connect result first; switch-controller
+  // changes the connection target (local or a TP-Link cloud controller) and
+  // connects to it
   OMADA_CONNECT: 'omada:connect',
   OMADA_GET_APS: 'omada:get-aps',
   OMADA_GET_WLANS: 'omada:get-wlans',
   OMADA_SET_WLAN: 'omada:set-wlan',
+  OMADA_SWITCH_CONTROLLER: 'omada:switch-controller',
   OMADA_SELECT_SITE: 'omada:select-site',
   OMADA_DISCONNECT: 'omada:disconnect',
 

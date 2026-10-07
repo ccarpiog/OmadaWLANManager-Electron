@@ -63,7 +63,9 @@
 // discards the checks in flight: their late results are ignored (sequence +
 // closed checks after every await) and nothing more is sent for them; the
 // management-access replies then answer notConnected for it at once
-// (capabilitiesReply()). The capabilities and
+// (capabilitiesReply()), and so do the controller data calls — the AP and
+// group lists and the AP moves, bound to the session nonce too since inbox
+// I-1b2b2 (sessionDataReply()). The capabilities and
 // every reply built here carry flags, reason codes and a diagnostic made of
 // error codes and counts only — never the Client Secret, a token or
 // controller text; on a cloud controller only, a refusal's diagnostic adds
@@ -157,6 +159,7 @@ import type {
   ApGroupOperationError,
   ApGroupRenameRequest,
   ConfigSavePayload,
+  ConfigSaveResult,
   ControllerInfo,
   GroupListing,
   GroupModel,
@@ -190,6 +193,7 @@ import {
 } from './ap-group-policy';
 import { CloudControllerBackend, CloudControllerSessionOptions } from './cloud-controller-session';
 import { ConnectionManager, createNonce, InstalledDetails, ManagedController } from './connection-manager';
+import type { ApMoveRequest } from './ipc-guards';
 import { bindingRefusalReply, checkBindingRequest, checkBindingScope, networkBindingFacts, planNetworkBindings } from './network-binding-plan';
 import { ConnectOutcome, OmadaController } from './omada-api';
 import type { OmadaTransport } from './omada-transport';
@@ -334,6 +338,47 @@ export function compareIdSets(
 export function touchesManagementAccess(payload: ConfigSavePayload): boolean {
   return payload.clientId !== undefined || payload.clientSecret !== undefined || payload.removeManagementAccess !== undefined;
 }
+
+/**
+ * What CONFIG_SAVE got back from ConnectionManager.applyConfigSave() over
+ * config.ts saveConfig(): the save result plus whether the controller
+ * transition ran (`connectionReset`: a controller URL change, or a cloud
+ * credential change while the target is a cloud controller).
+ */
+export interface AppliedConfigSave extends ConfigSaveResult {
+  urlChanged?: boolean;
+  cloudCredentialsChanged?: boolean;
+  connectionReset: boolean;
+}
+
+/**
+ * Builds CONFIG_SAVE's reply and runs its follow-up. A failure answers its
+ * code only. A success carries the management-access and cloud-access flags
+ * (never a secret) and `connectionReset` whenever the save's transition
+ * dropped the connection — a URL change, or (inbox I-1b2b2) a cloud
+ * credential change that dropped a cloud connection — so the renderer drops
+ * its connected UI. A save that kept the controller URL then applies a
+ * management-access change to the installed session
+ * (applyManagementAccessChange(); after a cloud drop nothing is installed, so
+ * it does nothing).
+ * @param {ConnectionManager<ControllerSession>} manager - The connection state machine.
+ * @param {ConfigSavePayload} payload - The saved (shape-checked) payload.
+ * @param {AppliedConfigSave} saved - The applied save.
+ * @returns {ConfigSaveResult} The reply.
+ */
+export function finishConfigSave(manager: ConnectionManager<ControllerSession>, payload: ConfigSavePayload, saved: AppliedConfigSave): ConfigSaveResult {
+  if (!saved.success) {
+    return { success: false, error: saved.error };
+  }
+  const reply: ConfigSaveResult = { success: true, managementAccess: saved.managementAccess, cloudAccess: saved.cloudAccess };
+  if (saved.connectionReset) {
+    reply.connectionReset = true;
+  }
+  if (saved.urlChanged !== true) {
+    applyManagementAccessChange(manager, payload);
+  }
+  return reply;
+} // End of function finishConfigSave()
 
 /**
  * CONFIG_SAVE follow-up for a successful save that KEPT the controller URL
@@ -963,8 +1008,9 @@ export class ControllerSession implements ManagedController {
    * Called by ConnectionManager when the session becomes the installed one:
    * starts the capability checks in the background (once) and returns what
    * the success result carries — the selected site's name and the session
-   * nonce.
-   * @returns {InstalledDetails} The site name and the session nonce.
+   * nonce, plus, for a cloud controller only, its name (it has no URL the
+   * renderer could label the connection with; a local result is unchanged).
+   * @returns {InstalledDetails} The site name, the session nonce and (cloud) the controller name.
    */
   activate(): InstalledDetails {
     if (!this.#activated && !this.#closed) {
@@ -972,7 +1018,12 @@ export class ControllerSession implements ManagedController {
       void this.#startChecks();
     }
     const site = this.site;
-    return site ? { siteName: site.name, sessionNonce: this.sessionNonce } : { sessionNonce: this.sessionNonce };
+    const details: InstalledDetails = site ? { siteName: site.name, sessionNonce: this.sessionNonce } : { sessionNonce: this.sessionNonce };
+    const name = this.controllerName;
+    if (this.kind === 'cloud' && name !== null && name !== '') {
+      details.controllerName = name;
+    }
+    return details;
   } // End of function activate()
 
   /**
@@ -983,9 +1034,9 @@ export class ControllerSession implements ManagedController {
    * no check run can start afterwards. Idempotent. Called by
    * ConnectionManager on every detach / release, and when a newer connect
    * attempt starts while this session is installed (its data side — the
-   * internal client, or a cloud controller's data client — may keep serving
-   * the data and AP moves until that attempt succeeds and the session is
-   * released: logout()).
+   * internal client, or a cloud controller's data client — stays logged in
+   * until that attempt succeeds and the session is released: logout(); the
+   * IPC data handlers refuse a closed session, sessionDataReply()).
    */
   close(): void {
     if (this.#closed) {
@@ -2368,6 +2419,120 @@ async function sessionOwnedReply<T>(
   }
   return reply;
 } // End of function sessionOwnedReply()
+
+/**
+ * The codes a controller data call (OMADA_GET_APS, OMADA_GET_WLANS,
+ * OMADA_SET_WLAN) is refused with — the management channels' ownership codes.
+ */
+export type SessionDataRefusal = 'notConnected' | 'superseded';
+
+// The rejection message of each refusal: the stable code first, then fixed
+// text (no value is ever quoted)
+const SESSION_DATA_REFUSALS: Record<SessionDataRefusal, string> = {
+  notConnected: 'notConnected (no open controller session is installed)',
+  superseded: 'superseded (the session nonce does not name the installed controller session)'
+};
+
+/**
+ * The rejection of a refused controller data call. The data channels keep
+ * their reply shapes (a list, a listing, `true`), so a refusal is a rejection
+ * whose message starts with its stable code, like the AP-move rejections.
+ * @param {SessionDataRefusal} code - The refusal code.
+ * @returns {Error} The rejection.
+ */
+export function sessionDataRefusal(code: SessionDataRefusal): Error {
+  return new Error(SESSION_DATA_REFUSALS[code]);
+}
+
+/** What a session-bound data call needs from a controller (ControllerSession; a fake in the tests). */
+export interface SessionBound {
+  readonly sessionNonce: string;
+  readonly isClosed: boolean;
+}
+
+/**
+ * Runs a controller data call (inbox I-1b2b2; docs/security-audit.md §7) for
+ * the installed session the renderer names by its session nonce, with the
+ * ownership rules of the management channels (sessionOwnedReply()), checked
+ * BEFORE any controller call: notConnected without an installed session or
+ * when it is closed already (a newer connect attempt, a switch or a
+ * transition started), superseded for another session's nonce. A result —
+ * or a failure — that arrives once the session is no longer the installed,
+ * open one is never passed on: the call is refused as superseded (a switch or
+ * a reconnect overtook it). The nonce's format was checked by the IPC guard.
+ * @template C The controller type.
+ * @template T The call's result.
+ * @param {{ readonly controller: C | null }} manager - The connection state machine.
+ * @param {string} sessionNonce - The nonce the renderer echoed.
+ * @param {(session: C) => Promise<T>} run - The data call.
+ * @returns {Promise<T>} Its result.
+ * @throws {Error} The refusal (sessionDataRefusal()) or the call's own failure.
+ */
+export async function sessionDataReply<C extends SessionBound, T>(
+  manager: { readonly controller: C | null },
+  sessionNonce: string,
+  run: (session: C) => Promise<T>
+): Promise<T> {
+  const session = manager.controller;
+  if (session === null || session.isClosed) {
+    throw sessionDataRefusal('notConnected');
+  }
+  if (session.sessionNonce !== sessionNonce) {
+    throw sessionDataRefusal('superseded');
+  }
+  /**
+   * Whether the session is still the installed, open one.
+   * @returns {boolean} True while it is.
+   */
+  const isInstalled = (): boolean => manager.controller === session && !session.isClosed;
+  let reply: T;
+  try {
+    reply = await run(session);
+  } catch (error) {
+    if (!isInstalled()) {
+      throw sessionDataRefusal('superseded');
+    }
+    throw error;
+  }
+  if (!isInstalled()) {
+    throw sessionDataRefusal('superseded');
+  }
+  return reply;
+} // End of function sessionDataReply()
+
+/**
+ * OMADA_GET_APS: the installed session's access points (ControllerSession
+ * .getAccessPoints()), session-bound (sessionDataReply()).
+ * @param {{ readonly controller: ControllerSession | null }} manager - The connection state machine.
+ * @param {string} sessionNonce - The session nonce from the connect result.
+ * @returns {Promise<AccessPoint[]>} The access points.
+ */
+export function accessPointsReply(manager: { readonly controller: ControllerSession | null }, sessionNonce: string): Promise<AccessPoint[]> {
+  return sessionDataReply(manager, sessionNonce, (session) => session.getAccessPoints());
+}
+
+/**
+ * OMADA_GET_WLANS: the installed session's group listing (ControllerSession
+ * .getWlanGroups()), session-bound (sessionDataReply()).
+ * @param {{ readonly controller: ControllerSession | null }} manager - The connection state machine.
+ * @param {string} sessionNonce - The session nonce from the connect result.
+ * @returns {Promise<GroupListing>} The group listing.
+ */
+export function wlanGroupsReply(manager: { readonly controller: ControllerSession | null }, sessionNonce: string): Promise<GroupListing> {
+  return sessionDataReply(manager, sessionNonce, (session) => session.getWlanGroups());
+}
+
+/**
+ * OMADA_SET_WLAN: one AP move on the installed session (ControllerSession
+ * .setApWlanGroup(): `true` or a rejection), session-bound
+ * (sessionDataReply()): a stale nonce never reaches the controller.
+ * @param {{ readonly controller: ControllerSession | null }} manager - The connection state machine.
+ * @param {ApMoveRequest} request - The shape-checked move (parseApMoveRequest()).
+ * @returns {Promise<boolean>} The move result.
+ */
+export function apMoveReply(manager: { readonly controller: ControllerSession | null }, request: ApMoveRequest): Promise<boolean> {
+  return sessionDataReply(manager, request.sessionNonce, (session) => session.setApWlanGroup(request.mac, request.wlanId));
+}
 
 /**
  * MANAGEMENT_AP_GROUPS: the installed session's AP groups with their capacity
