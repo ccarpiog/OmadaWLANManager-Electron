@@ -58,6 +58,10 @@ npm run dev
    - **URL**: Your controller URL (e.g., `https://192.168.1.1:8043`)
    - **Username**: Your Omada Controller username
    - **Password**: Your Omada Controller password
+   - **Management access (optional)**: the **Client ID** and **Client Secret** of an
+     Open API application created in the controller's settings (client credentials
+     mode). They are stored now and will unlock AP-group and Wi-Fi network
+     management; the app does not use them yet
 3. Click **Connect** to connect to the controller. The first time, the app
    shows the controller certificate's SHA-256 fingerprint: compare it with the
    certificate of your controller and choose **Trust and connect** (no password
@@ -152,10 +156,19 @@ compatible with the old Python version of this application.
   older config is encrypted on first load. Only when the OS offers no
   encryption (e.g. a Linux session without a secret service) is it kept in
   plaintext, with a warning.
+- **Management access (optional):** the Open API Client ID is stored in plain
+  text (it is not a secret); the Client Secret only encrypted with
+  `safeStorage`. When the OS offers no real secret store (no encryption, or on
+  Linux the obfuscation-only `basic_text` backend or an `unknown` one), the
+  Client Secret is never written to disk: it is kept in memory until the app
+  quits, and Settings says so. The window never receives the secret: Settings shows "(unchanged)" when one
+  is stored, and leaving the field blank keeps it for the same Client ID and
+  controller URL (a new Client ID needs its secret). **Remove management
+  access** deletes both when you save.
 - **Credentials are tied to the controller URL:** saving a different URL drops
-  the stored password, the Open API Client Secret (when one is stored), the
-  chosen site and the trusted certificate, and asks for the new controller's
-  password. Leaving the password blank keeps it only while the URL is unchanged.
+  the stored password, the Open API Client ID and Client Secret (stored or kept
+  for the session), the chosen site and the trusted certificate, and asks for
+  the new controller's password. Leaving the password blank keeps it only while the URL is unchanged.
   Saving a different URL also closes the current connection: a connection
   attempt or site choice still in progress for the old controller is discarded.
 - **Trusted certificate:** the SHA-256 fingerprint you confirmed on the first
@@ -247,8 +260,9 @@ omada-electron/
 │   │   ├── net-transport.ts   # Production transport (Electron's net module)
 │   │   ├── cert-verify.ts     # Certificate hooks + replaceable controller session
 │   │   ├── connection-manager.ts # Connection state machine (connect, site choice, trust, reset, URL change)
+│   │   ├── openapi-client.ts  # Open API client (token, paths, pagination; not wired in yet)
 │   │   ├── omada-validators.ts, cookie-jar.ts, url.ts, # Pure, unit-tested helpers
-│   │   │   cert-pinning.ts, config-model.ts, controller-version.ts
+│   │   │   cert-pinning.ts, config-model.ts, controller-version.ts, redact.ts
 │   │   └── preload.ts  # Preload script for secure IPC
 │   ├── renderer/       # Renderer process (Browser), bundled by esbuild
 │   │   ├── index.html  # Main HTML

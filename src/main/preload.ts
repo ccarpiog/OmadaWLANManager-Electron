@@ -42,8 +42,10 @@ contextBridge.exposeInMainWorld('omadaAPI', {
   platform: process.platform,
 
   // Configuration. loadConfig() returns a sanitized view: the stored
-  // password never crosses the bridge, only a hasPassword flag. saveConfig()
-  // sends a password only when the user typed a new one (renderer → main).
+  // password and Open API Client Secret never cross the bridge, only the
+  // hasPassword / hasClientSecret flags (and the Client ID, not a secret).
+  // saveConfig() sends a password or a Client Secret only when the user typed
+  // a new one (renderer → main, once).
   loadConfig: (): Promise<RendererConfig> => {
     return ipcRenderer.invoke(IPC_CHANNELS.CONFIG_LOAD);
   },

@@ -307,6 +307,35 @@
             </div>
           </div>
         </div>
+        <!-- Optional Open API management access (settings-modal.ts): Client
+             ID, Client Secret (never shown back: "(unchanged)" when one is
+             stored), the session-only note, and "Remove management access"
+             with an inline confirmation; the removal is applied by Save -->
+        <div class="form-group management-group" role="group" aria-labelledby="managementHeading" aria-describedby="managementHelp">
+          <h3 class="form-section-title" id="managementHeading"></h3>
+          <p class="form-help" id="managementHelp"></p>
+          <div class="form-field">
+            <label for="clientIdInput" id="labelClientId"></label>
+            <input type="text" id="clientIdInput" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="form-field">
+            <label for="clientSecretInput" id="labelClientSecret"></label>
+            <input type="password" id="clientSecretInput" autocomplete="off">
+          </div>
+          <p class="form-note" id="managementSessionNote" hidden></p>
+          <p class="form-note" id="managementRemovalNote" role="status" hidden></p>
+          <div class="form-actions">
+            <button class="btn btn-secondary btn-compact" id="removeManagementBtn"></button>
+            <button class="btn btn-secondary btn-compact" id="undoManagementRemovalBtn" hidden></button>
+          </div>
+          <div class="cert-reset-confirm" id="managementRemoveConfirm" hidden>
+            <p id="managementRemoveMessage"></p>
+            <div class="cert-reset-actions">
+              <button class="btn btn-secondary btn-compact" id="cancelManagementRemoveBtn" aria-describedby="managementRemoveMessage"></button>
+              <button class="btn btn-danger btn-compact" id="confirmManagementRemoveBtn" aria-describedby="managementRemoveMessage"></button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="cancelSettingsBtn"></button>

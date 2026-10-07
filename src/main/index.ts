@@ -104,6 +104,13 @@ const NONCE_REGEX = /^[0-9a-f]{32}$/;
 const MAX_URL_LENGTH = 2048;
 const MAX_USERNAME_LENGTH = 256;
 const MAX_PASSWORD_LENGTH = 512;
+// Open API management access: the raw Client ID field (trimmed and validated
+// against CLIENT_ID_REGEX by config-model.ts) and the Client Secret
+const MAX_CLIENT_ID_LENGTH = 256;
+const MAX_CLIENT_SECRET_LENGTH = 512;
+
+// The only keys a config-save payload may carry (ConfigSavePayload)
+const CONFIG_SAVE_KEYS = new Set(['url', 'username', 'language', 'password', 'clientId', 'clientSecret', 'removeManagementAccess']);
 
 /**
  * Returns true when an IPC call originates from the app's own renderer: the
@@ -144,18 +151,25 @@ function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
 
 /**
  * Runtime shape guard for the config-save payload arriving over IPC: it must
- * be an object with non-empty string url/username within the length caps, a
- * supported language, and — when present — a string password within the
- * length cap. Detailed value validation (URL normalization, password keep/
- * require rules) stays in saveConfig().
+ * be a plain object carrying only ConfigSavePayload keys, with non-empty
+ * string url/username within the length caps, a supported language, and —
+ * when present — a string password, a non-empty string clientId and a
+ * non-empty string clientSecret within their length caps, and
+ * removeManagementAccess only as the literal true and never together with
+ * clientId/clientSecret. Detailed value validation (URL normalization, the
+ * password and management-access keep/require rules, the Client ID format)
+ * stays in saveConfig().
  * @param {unknown} payload - The raw IPC payload.
  * @returns {payload is ConfigSavePayload} True when the shape is valid.
  */
 function isValidConfigSavePayload(payload: unknown): payload is ConfigSavePayload {
-  if (typeof payload !== 'object' || payload === null) {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
     return false;
   }
   const raw = payload as Record<string, unknown>;
+  if (Object.keys(raw).some((key) => !CONFIG_SAVE_KEYS.has(key))) {
+    return false;
+  }
   if (typeof raw.url !== 'string' || raw.url.length === 0 || raw.url.length > MAX_URL_LENGTH) {
     return false;
   }
@@ -167,6 +181,18 @@ function isValidConfigSavePayload(payload: unknown): payload is ConfigSavePayloa
     return false;
   }
   if (raw.password !== undefined && (typeof raw.password !== 'string' || raw.password.length > MAX_PASSWORD_LENGTH)) {
+    return false;
+  }
+  if (raw.clientId !== undefined && (typeof raw.clientId !== 'string' || raw.clientId.length === 0 || raw.clientId.length > MAX_CLIENT_ID_LENGTH)) {
+    return false;
+  }
+  if (
+    raw.clientSecret !== undefined &&
+    (typeof raw.clientSecret !== 'string' || raw.clientSecret.length === 0 || raw.clientSecret.length > MAX_CLIENT_SECRET_LENGTH)
+  ) {
+    return false;
+  }
+  if (raw.removeManagementAccess !== undefined && (raw.removeManagementAccess !== true || raw.clientId !== undefined || raw.clientSecret !== undefined)) {
     return false;
   }
   return true;
@@ -318,19 +344,22 @@ app.on('before-quit', (event) => {
 // Every handler first verifies the sender frame is the app's own renderer
 // (assertTrustedIpcSender) and runtime-guards its payload before use.
 
-// Load configuration (sanitized: the renderer never receives the password,
-// only a hasPassword flag)
+// Load configuration (sanitized: the renderer never receives the password or
+// the Client Secret, only the hasPassword / hasClientSecret flags)
 ipcMain.handle(IPC_CHANNELS.CONFIG_LOAD, async (event): Promise<RendererConfig> => {
   assertTrustedIpcSender(event);
   return getRendererConfig();
 });
 
-// Save configuration. The handler shape-checks the payload (types, lengths,
-// language enum); saveConfig() then validates/normalizes the URL, enforces
-// the password rules (keep the stored one when absent and the URL is
-// unchanged; require one when nothing usable is stored or the URL changed —
-// a URL change also drops the stored password, Client Secret, site id and
-// certificate pin), and returns error codes instead of throwing raw errors.
+// Save configuration. The handler shape-checks the payload (known keys only,
+// types, lengths, language enum); saveConfig() then validates/normalizes the
+// URL, enforces the password rules (keep the stored one when absent and the
+// URL is unchanged; require one when nothing usable is stored or the URL
+// changed — a URL change also drops the stored password, the Client ID and
+// Client Secret, the site id and the certificate pin) and the management-
+// access rules (the Client Secret only as a safeStorage blob, or session-only
+// in memory), and returns error codes instead of throwing raw errors. The
+// reply carries the management-access flags, never the secret.
 // A URL change is also a controller transition, run by
 // connectionManager.applyConfigSave() in the same synchronous step as the
 // write: every in-flight connect becomes stale, the pending site selection
@@ -352,7 +381,11 @@ ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (event, payload: unknown): Promis
   if (!result.success) {
     return { success: false, error: result.error };
   }
-  return result.urlChanged ? { success: true, connectionReset: true } : { success: true };
+  const reply: ConfigSaveResult = { success: true, managementAccess: result.managementAccess };
+  if (result.urlChanged) {
+    reply.connectionReset = true;
+  }
+  return reply;
 }); // End of the CONFIG_SAVE handler
 
 // Connect to Omada controller (the password is decrypted in the main process;

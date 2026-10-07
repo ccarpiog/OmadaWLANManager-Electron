@@ -1,0 +1,49 @@
+{
+  "description": "GET /openapi/v1/{omadacId}/sites entries (SiteSummaryInfo, docs/omada-openapi-ops.md) for validateOpenApiSite(), and the `result` pages served to OpenApiClient.listSites().",
+  "valid": [
+    {
+      "name": "documented entry: siteId and name kept, other fields dropped",
+      "entry": { "siteId": "64f0c0ffee0000000000a001", "name": "Colegio", "region": "Spain", "timeZone": "Europe/Madrid", "primary": true, "type": 0 },
+      "expected": { "id": "64f0c0ffee0000000000a001", "name": "Colegio" }
+    },
+    {
+      "name": "missing or empty name falls back to the id",
+      "entry": { "siteId": "64f0c0ffee0000000000a002", "name": "" },
+      "expected": { "id": "64f0c0ffee0000000000a002", "name": "64f0c0ffee0000000000a002" }
+    }
+  ],
+  "invalid": [
+    { "name": "null entry", "entry": null },
+    { "name": "string entry", "entry": "site" },
+    { "name": "no siteId", "entry": { "name": "Colegio" } },
+    { "name": "internal-API id field instead of siteId", "entry": { "id": "64f0c0ffee0000000000a001", "name": "Colegio" } },
+    { "name": "empty siteId", "entry": { "siteId": "", "name": "Colegio" } },
+    { "name": "numeric siteId", "entry": { "siteId": 7, "name": "Colegio" } },
+    { "name": "absurdly long siteId", "entry": { "siteId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" } }
+  ],
+  "invalidPages": [
+    { "name": "no result" },
+    { "name": "result without data", "result": { "totalRows": 1 } },
+    { "name": "data is an object", "result": { "totalRows": 1, "data": { "siteId": "a" } } }
+  ],
+  "pages": [
+    {
+      "totalRows": 3,
+      "currentPage": 1,
+      "currentSize": 2,
+      "data": [
+        { "siteId": "site-a", "name": "Colegio" },
+        { "siteId": "site-b", "name": "Oficina" }
+      ]
+    },
+    {
+      "totalRows": 3,
+      "currentPage": 2,
+      "currentSize": 2,
+      "data": [
+        { "siteId": "site-a", "name": "Colegio (duplicate)" },
+        { "siteId": "site-c", "name": "" }
+      ]
+    }
+  ]
+}

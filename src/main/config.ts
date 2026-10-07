@@ -8,7 +8,10 @@ import {
   applyConfigSave,
   decryptStoredPassword,
   defaultConfig,
+  managementAccessStatus,
+  managementCredentialsOf,
   SecretBox,
+  secureSecretStorageAvailable,
   StoredConfig,
   toRendererConfig,
   validateStoredConfig
@@ -25,9 +28,20 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 // never touch the filesystem.
 let cachedConfig: StoredConfig | null = null;
 
+// The Open API Client Secret when secure storage is unavailable (no safeStorage
+// encryption, or Linux's obfuscation-only basic_text / unknown backend — see
+// secureStorageAvailable()): it is never written to disk (no plaintext
+// fallback, unlike the password) and lives only here, in main-process memory,
+// until the app quits, the controller URL changes or management access is
+// removed (applyConfigSave() decides; see config-model.ts). Never sent to the
+// renderer.
+let sessionClientSecret: string | null = null;
+
 /**
  * Reports whether safeStorage encryption can be used, never throwing
  * (safeStorage throws when queried before the app is ready on some platforms).
+ * This is the PASSWORD's rule (plaintext fallback otherwise); on Linux it is
+ * also true for the obfuscation-only basic_text backend.
  * @returns {boolean} True when OS-level encryption is available.
  */
 function encryptionAvailable(): boolean {
@@ -38,9 +52,23 @@ function encryptionAvailable(): boolean {
   }
 }
 
+/**
+ * Reports whether the Open API Client Secret may be persisted: encryption is
+ * available and, on Linux, safeStorage's backend is a real secret store (not
+ * basic_text / unknown). The decision is the pure, unit-tested
+ * secureSecretStorageAvailable() (config-model.ts), which never throws and
+ * queries getSelectedStorageBackend() on Linux only. Not cached: the backend
+ * is only known once the app is ready.
+ * @returns {boolean} True when the Client Secret may be written to disk.
+ */
+function secureStorageAvailable(): boolean {
+  return secureSecretStorageAvailable(process.platform, safeStorage);
+}
+
 // The production SecretBox: safeStorage, with blobs stored as base64
 const safeStorageBox: SecretBox = {
   isEncryptionAvailable: encryptionAvailable,
+  isSecureStorageAvailable: secureStorageAvailable,
   encryptString: (plainText) => safeStorage.encryptString(plainText).toString('base64'),
   decryptString: (blob) => safeStorage.decryptString(Buffer.from(blob, 'base64'))
 };
@@ -167,12 +195,24 @@ function persistConfig(newConfig: StoredConfig, what: string): boolean {
 
 /**
  * Returns the sanitized config for the renderer: no password or Client Secret
- * material, only a hasPassword flag, plus the pinned certificate fingerprint
- * (not a secret) for the Settings display.
+ * material, only the hasPassword / hasClientSecret flags and the Client ID,
+ * plus the pinned certificate fingerprint (not a secret) for the Settings
+ * display.
  * @returns {RendererConfig} The renderer-safe view of the config.
  */
 export function getRendererConfig(): RendererConfig {
-  return toRendererConfig(getCachedConfig(), safeStorageBox);
+  return toRendererConfig(getCachedConfig(), safeStorageBox, sessionClientSecret);
+}
+
+/**
+ * Returns the Open API management credentials (the Client ID and the
+ * session-only or decrypted Client Secret), for the Open API client. Main
+ * process only — never expose this result to the renderer or a log.
+ * @returns {{ clientId: string; clientSecret: string } | null} The
+ *   credentials, or null when management access is not (fully) configured.
+ */
+export function getManagementCredentials(): { clientId: string; clientSecret: string } | null {
+  return managementCredentialsOf(getCachedConfig(), safeStorageBox, sessionClientSecret);
 }
 
 /**
@@ -252,23 +292,33 @@ export function saveStoredSiteId(siteId: string): void {
 /**
  * Validates and saves the configuration sent by the renderer, applying the
  * rules of applyConfigSave() (config-model.ts): URL normalization, the
- * password keep/require rules and the URL-scoped credentials (a URL change
- * drops the password, Client Secret, site id and certificate pin, and
- * requires a typed password). The file is written atomically and the
- * in-memory cache is updated only after a successful write. Errors are
- * returned as codes, never thrown.
+ * password keep/require rules, the URL-scoped credentials (a URL change
+ * drops the password, the Client ID and Client Secret — stored and
+ * session-only —, the site id and the certificate pin, and requires a typed
+ * password) and the management-access rules (the Client Secret is stored only
+ * as a safeStorage blob, or held in memory for this session when secure
+ * storage is unavailable — see secureStorageAvailable()). The file is
+ * written atomically; the in-memory cache and the session-only secret are
+ * updated only after a successful write. Errors are returned as codes, never
+ * thrown.
  * @param {ConfigSavePayload} payload - The settings sent by the renderer.
  * @returns {ConfigSaveResult & { urlChanged?: boolean }} Success flag plus an
- *   error code on failure; on success, whether the controller URL changed
- *   (main-process only — the IPC handler strips it before replying).
+ *   error code on failure; on success, the management-access status (flags
+ *   only) and whether the controller URL changed (main-process only — the IPC
+ *   handler turns it into `connectionReset`).
  */
 export function saveConfig(payload: ConfigSavePayload): ConfigSaveResult & { urlChanged?: boolean } {
-  const outcome = applyConfigSave(getCachedConfig(), payload, safeStorageBox);
+  const outcome = applyConfigSave(getCachedConfig(), payload, safeStorageBox, sessionClientSecret);
   if (!outcome.ok) {
     return { success: false, error: outcome.error };
   }
   if (!persistConfig(outcome.config, 'config')) {
     return { success: false, error: 'saveFailed' };
   }
-  return { success: true, urlChanged: outcome.urlChanged };
+  sessionClientSecret = outcome.sessionClientSecret;
+  return {
+    success: true,
+    urlChanged: outcome.urlChanged,
+    managementAccess: managementAccessStatus(outcome.config, safeStorageBox, sessionClientSecret)
+  };
 } // End of function saveConfig()

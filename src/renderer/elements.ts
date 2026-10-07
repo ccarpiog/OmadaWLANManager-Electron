@@ -129,6 +129,22 @@ export const certResetMessage = document.getElementById('certResetMessage') as H
 export const cancelCertResetBtn = document.getElementById('cancelCertResetBtn') as HTMLButtonElement;
 export const confirmCertResetBtn = document.getElementById('confirmCertResetBtn') as HTMLButtonElement;
 
+// Settings: optional management access (Open API Client ID / Client Secret)
+export const managementHeading = document.getElementById('managementHeading') as HTMLElement;
+export const managementHelp = document.getElementById('managementHelp') as HTMLElement;
+export const labelClientId = document.getElementById('labelClientId') as HTMLElement;
+export const clientIdInput = document.getElementById('clientIdInput') as HTMLInputElement;
+export const labelClientSecret = document.getElementById('labelClientSecret') as HTMLElement;
+export const clientSecretInput = document.getElementById('clientSecretInput') as HTMLInputElement;
+export const managementSessionNote = document.getElementById('managementSessionNote') as HTMLElement;
+export const managementRemovalNote = document.getElementById('managementRemovalNote') as HTMLElement;
+export const removeManagementBtn = document.getElementById('removeManagementBtn') as HTMLButtonElement;
+export const undoManagementRemovalBtn = document.getElementById('undoManagementRemovalBtn') as HTMLButtonElement;
+export const managementRemoveConfirm = document.getElementById('managementRemoveConfirm') as HTMLElement;
+export const managementRemoveMessage = document.getElementById('managementRemoveMessage') as HTMLElement;
+export const cancelManagementRemoveBtn = document.getElementById('cancelManagementRemoveBtn') as HTMLButtonElement;
+export const confirmManagementRemoveBtn = document.getElementById('confirmManagementRemoveBtn') as HTMLButtonElement;
+
 // Move dialog (review, progress, per-AP results)
 export const moveModal = document.getElementById('moveModal') as HTMLElement;
 export const moveModalTitle = document.getElementById('moveModalHeading') as HTMLElement;

@@ -1521,6 +1521,46 @@ body.platform-darwin .title-bar {
   gap: 8px;
 }
 
+/* Settings: optional management access (Open API Client ID / Secret),
+   separated from the connection fields above */
+.management-group {
+  border-top: 1px solid var(--border-color);
+  padding-top: 16px;
+}
+
+.form-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.form-help,
+.form-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  user-select: text;
+}
+
+/* The session-only and pending-removal notes stand out from the help line */
+.form-note {
+  padding: 8px 10px;
+  border-left: 3px solid var(--warning-color);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.form-field {
+  margin-bottom: 12px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* Certificate modal (first use / certificate changed): wide enough for a
    fingerprint to wrap onto two lines */
 .modal-cert {

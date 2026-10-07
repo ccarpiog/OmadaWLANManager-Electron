@@ -10,6 +10,7 @@ import { describe, test } from 'node:test';
 import {
   createHardenedTransport,
   ERROR_BODY_EXCERPT_CHARS,
+  errorBodyExcerpt,
   MAX_RESPONSE_BYTES,
   parseOmadaResponse,
   REQUEST_TIMEOUT_MS,
@@ -127,6 +128,49 @@ describe('parseOmadaResponse', () => {
     assert.throws(() => parseOmadaResponse(502, longBody), { message: `HTTP 502: ${'x'.repeat(ERROR_BODY_EXCERPT_CHARS)}` });
   });
 
+  test('the excerpt is redacted: tokens, passwords, secrets and cookies never reach the error message', () => {
+    const body = '{"errorCode":-1,"password":"hunter2","token":"tok-123","msg":"Cookie: TPOMADA_SESSIONID=sid-9"}';
+    assert.throws(() => parseOmadaResponse(500, body), (error: unknown) => {
+      const message = error instanceof Error ? error.message : '';
+      return message.startsWith('HTTP 500: {"errorCode":-1,') && !['hunter2', 'tok-123', 'sid-9'].some((secret) => message.includes(secret));
+    });
+    assert.throws(() => parseOmadaResponse(200, 'oops client_secret=abc&x=1'), { message: 'Invalid JSON response: oops client_secret=[REDACTED]&x=1' });
+    // A value cut by the excerpt boundary is still redacted
+    const cut = `${'x'.repeat(ERROR_BODY_EXCERPT_CHARS - 20)} "password":"abcdefghijklmnopqrstuvwxyz"`;
+    assert.throws(() => parseOmadaResponse(502, cut), (error: unknown) => error instanceof Error && !error.message.includes('abcdef'));
+  });
+
+  test('a secret straddling the 200-char excerpt cut never survives, quoted or not; the body is redacted before it is cut', () => {
+    // Each body puts the key before the cut and the secret across it, at
+    // several offsets, in every quoting form
+    const forms: { make: (secret: string) => string; secret: string; fragments: string[] }[] = [
+      { make: (secret) => `password="${secret}" rest`, secret: 'hunter two three', fragments: ['hunter', 'two', 'three'] },
+      { make: (secret) => `client_secret='${secret}'; next=1`, secret: 'CS quoted value', fragments: ['CS', 'quoted', 'value'] },
+      { make: (secret) => `Authorization: AccessToken=${secret}\r\nHost: c.invalid`, secret: 'AT-straddle-0123456789', fragments: ['AT-', 'straddle', '0123456789'] },
+      { make: (secret) => `{"msg":"login failed: password=\\"${secret}\\" rejected"}`, secret: 'pw in json', fragments: ['pw', 'in json'] },
+      { make: (secret) => `Cookie: TPOMADA_SESSIONID="${secret}"; Path=/`, secret: 'SID straddle', fragments: ['SID', 'straddle'] },
+      { make: (secret) => `auth Bearer "${secret}" rejected`, secret: 'bearer token value', fragments: ['bearer', 'token value'] }
+    ];
+    for (const form of forms) {
+      const pair = form.make(form.secret);
+      const secretStart = pair.indexOf(form.secret);
+      for (let insideSecret = 1; insideSecret < form.secret.length; insideSecret += 3) {
+        // The cut falls `insideSecret` characters into the secret (the
+        // filler ends with a space: a key starts at a word boundary)
+        const body = `${'x'.repeat(ERROR_BODY_EXCERPT_CHARS - 1 - secretStart - insideSecret)} ${pair}${'y'.repeat(50)}`;
+        assert.throws(() => parseOmadaResponse(500, body), (error: unknown) => {
+          const message = error instanceof Error ? error.message : '';
+          for (const fragment of form.fragments) {
+            assert.ok(!message.includes(fragment), `"${fragment}" survived (cut ${insideSecret} chars in): ${message}`);
+          }
+          assert.ok(message.length <= 'HTTP 500: '.length + ERROR_BODY_EXCERPT_CHARS, message);
+          return message.startsWith('HTTP 500: xxx');
+        });
+      } // End of the loop over the cut offsets
+    } // End of the loop over the quoting forms
+    assert.equal(errorBodyExcerpt(`${'x'.repeat(185)} password="hunter two three"`), `${'x'.repeat(185)} password="[RED`);
+  }); // End of test "a secret straddling the 200-char excerpt cut never survives..."
+
   test('rejects an unparseable 2xx body with a bounded excerpt', () => {
     assert.throws(() => parseOmadaResponse(200, '<!DOCTYPE html><title>Login</title>'), {
       message: 'Invalid JSON response: <!DOCTYPE html><title>Login</title>',
@@ -172,6 +216,19 @@ describe('createHardenedTransport', () => {
     response.emit('end');
     assert.deepEqual(await pending, { statusCode: 200, body: '' });
   }); // End of test "creates the request, sets headers in order, writes the body and ends"
+
+  test('passes PUT and DELETE (and any method) through to the request factory', async () => {
+    for (const method of ['PUT', 'DELETE'] as const) {
+      const { transport, request, options } = setup();
+      const pending = transport.send({ method, url: 'https://c.invalid/openapi/v1/x/sites/s/ap-groups/g', headers: { Authorization: 'AccessToken=t' }, body: method === 'PUT' ? '{"name":"a"}' : undefined }, () => {});
+      assert.deepEqual(options, [{ method, url: 'https://c.invalid/openapi/v1/x/sites/s/ap-groups/g' }]);
+      assert.deepEqual(request.written, method === 'PUT' ? ['{"name":"a"}'] : []);
+      const response = new FakeIncomingMessage(200);
+      request.respond(response);
+      response.emit('end');
+      assert.deepEqual(await pending, { statusCode: 200, body: '' });
+    }
+  });
 
   test('writes nothing when there is no body', async () => {
     const { transport, request } = setup();

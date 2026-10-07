@@ -44,6 +44,14 @@ const TRUST_NONCE_REGEX = /^[0-9a-f]{32}$/;
 const MAX_URL_LENGTH = 2048;
 const MAX_USERNAME_LENGTH = 256;
 const MAX_PASSWORD_LENGTH = 512;
+const MAX_CLIENT_ID_LENGTH = 256;
+const MAX_CLIENT_SECRET_LENGTH = 512;
+const CONFIG_SAVE_KEYS = new Set(['url', 'username', 'language', 'password', 'clientId', 'clientSecret', 'removeManagementAccess']);
+// Mirrored from CLIENT_ID_REGEX in src/main/config-model.ts (keep in sync)
+const CLIENT_ID_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
+// The management-access flags of a RendererConfig with nothing stored
+// (ManagementAccessStatus in src/shared/types.ts)
+const NO_MANAGEMENT_ACCESS = { clientId: '', hasClientSecret: false, clientSecretSessionOnly: false };
 
 // ============================================================================
 // D4 guard: never run against the real home directory
@@ -68,7 +76,12 @@ app.setPath('userData', path.join(os.homedir(), 'electron-user-data'));
 function defaultScenario() {
   return {
     // RendererConfig returned by CONFIG_LOAD (updated by a successful CONFIG_SAVE,
-    // CERT_TRUST and CERT_RESET; pinnedFingerprint mirrors the stored TOFU pin)
+    // CERT_TRUST and CERT_RESET; pinnedFingerprint mirrors the stored TOFU pin).
+    // Its management-access flags (clientId, hasClientSecret,
+    // clientSecretSessionOnly) default to "nothing stored", and
+    // canPersistClientSecret to true; set it to false to play a session
+    // without safeStorage (a typed Client Secret is then session-only). The
+    // stub never keeps a Client Secret, only these flags
     config: { url: '', username: '', language: 'es', hasPassword: false, pinnedFingerprint: null },
     // Fingerprint of the self-signed certificate the fake controller presents,
     // or null when certificate pinning is not involved (as if CA-trusted).
@@ -201,7 +214,10 @@ function isTrustedIpcSender(event) {
  * @returns {boolean} True when the shape is valid.
  */
 function isValidConfigSavePayload(payload) {
-  if (typeof payload !== 'object' || payload === null) {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return false;
+  }
+  if (Object.keys(payload).some((key) => !CONFIG_SAVE_KEYS.has(key))) {
     return false;
   }
   if (typeof payload.url !== 'string' || payload.url.length === 0 || payload.url.length > MAX_URL_LENGTH) {
@@ -216,8 +232,68 @@ function isValidConfigSavePayload(payload) {
   if (payload.password !== undefined && (typeof payload.password !== 'string' || payload.password.length > MAX_PASSWORD_LENGTH)) {
     return false;
   }
+  if (payload.clientId !== undefined && (typeof payload.clientId !== 'string' || payload.clientId.length === 0 || payload.clientId.length > MAX_CLIENT_ID_LENGTH)) {
+    return false;
+  }
+  if (
+    payload.clientSecret !== undefined &&
+    (typeof payload.clientSecret !== 'string' || payload.clientSecret.length === 0 || payload.clientSecret.length > MAX_CLIENT_SECRET_LENGTH)
+  ) {
+    return false;
+  }
+  if (payload.removeManagementAccess !== undefined && (payload.removeManagementAccess !== true || payload.clientId !== undefined || payload.clientSecret !== undefined)) {
+    return false;
+  }
   return true;
 } // End of function isValidConfigSavePayload()
+
+/**
+ * Returns the current RendererConfig with the management-access defaults
+ * filled in (nothing stored; the secret can be persisted).
+ * @returns {object} The RendererConfig.
+ */
+function currentRendererConfig() {
+  return { pinnedFingerprint: null, ...NO_MANAGEMENT_ACCESS, canPersistClientSecret: true, ...stub.scenario.config };
+}
+
+/**
+ * Mirrors applyManagementAccessSave() in src/main/config-model.ts on the
+ * management-access FLAGS only (the stub never keeps a Client Secret): a
+ * removal or a URL change without new credentials clears them; a typed secret
+ * needs a valid Client ID and is session-only when the scenario cannot
+ * persist it; a blank secret keeps the stored one only for the same URL and
+ * Client ID.
+ * @param {object} payload - The (shape-checked) ConfigSavePayload.
+ * @param {object} current - The current RendererConfig.
+ * @param {boolean} urlChanged - Whether the save changes the controller URL.
+ * @returns {{ ok: true; management: object } | { ok: false; error: string }} The outcome.
+ */
+function applyManagementSave(payload, current, urlChanged) {
+  const typedSecret = typeof payload.clientSecret === 'string' && payload.clientSecret.length > 0;
+  if (payload.removeManagementAccess === true) {
+    return { ok: true, management: { ...NO_MANAGEMENT_ACCESS } };
+  }
+  if (payload.clientId === undefined) {
+    if (typedSecret) {
+      return { ok: false, error: 'clientIdRequired' };
+    }
+    if (urlChanged) {
+      return { ok: true, management: { ...NO_MANAGEMENT_ACCESS } };
+    }
+    return { ok: true, management: { clientId: current.clientId, hasClientSecret: current.hasClientSecret, clientSecretSessionOnly: current.clientSecretSessionOnly } };
+  }
+  const clientId = payload.clientId.trim();
+  if (!CLIENT_ID_REGEX.test(clientId)) {
+    return { ok: false, error: 'invalidClientId' };
+  }
+  if (typedSecret) {
+    return { ok: true, management: { clientId, hasClientSecret: true, clientSecretSessionOnly: current.canPersistClientSecret === false } };
+  }
+  if (!urlChanged && clientId === current.clientId) {
+    return { ok: true, management: { clientId, hasClientSecret: current.hasClientSecret, clientSecretSessionOnly: current.clientSecretSessionOnly } };
+  }
+  return { ok: false, error: 'clientSecretRequired' };
+} // End of function applyManagementSave()
 
 /**
  * Returns a copy of a list sorted by a string field with localeCompare, like
@@ -245,20 +321,22 @@ function sleep(ms) {
 
 const handlers = {
   /**
-   * CONFIG_LOAD: the sanitized RendererConfig (never a password; the pinned
-   * fingerprint is public data).
+   * CONFIG_LOAD: the sanitized RendererConfig (never a password or a Client
+   * Secret; the pinned fingerprint is public data).
    * @returns {object} The configured RendererConfig.
    */
-  [IPC_CHANNELS.CONFIG_LOAD]: () => structuredClone({ pinnedFingerprint: null, ...stub.scenario.config }),
+  [IPC_CHANNELS.CONFIG_LOAD]: () => structuredClone(currentRendererConfig()),
 
   /**
    * CONFIG_SAVE: mirrors the handler's shape guard and applyConfigSave()'s
    * rules (URL normalization, password keep/require, URL-scoped credentials:
-   * a URL change requires a typed password and drops the site id and the
-   * certificate pin) but only updates the in-memory scenario — nothing is
-   * written to disk. A URL change is also a controller transition in main
-   * (ConnectionManager.applyConfigSave()): the controller and any pending
-   * decision are dropped and the result carries connectionReset.
+   * a URL change requires a typed password and drops the site id, the
+   * certificate pin and the management access; the management-access rules
+   * on flags, see applyManagementSave()) but only updates the in-memory
+   * scenario — nothing is written to disk. A URL change is also a controller
+   * transition in main (ConnectionManager.applyConfigSave()): the controller
+   * and any pending decision are dropped and the result carries
+   * connectionReset. A success carries managementAccess (flags only).
    * @param {unknown} payload - The ConfigSavePayload sent by the renderer.
    * @returns {object} The ConfigSaveResult.
    */
@@ -281,6 +359,11 @@ const handlers = {
     if (!typedPassword && (urlChanged || !stub.scenario.config.hasPassword)) {
       return { success: false, error: 'passwordRequired' };
     }
+    const current = currentRendererConfig();
+    const management = applyManagementSave(payload, current, urlChanged);
+    if (!management.ok) {
+      return { success: false, error: management.error };
+    }
     let pinnedFingerprint = stub.scenario.config.pinnedFingerprint || null;
     if (urlChanged) {
       stub.storedSiteId = '';
@@ -289,8 +372,17 @@ const handlers = {
       stub.connected = false;
       pinnedFingerprint = null;
     }
-    stub.scenario.config = { url, username: payload.username.trim(), language: payload.language, hasPassword: true, pinnedFingerprint };
-    return urlChanged ? { success: true, connectionReset: true } : { success: true };
+    stub.scenario.config = {
+      url,
+      username: payload.username.trim(),
+      language: payload.language,
+      hasPassword: true,
+      pinnedFingerprint,
+      ...management.management,
+      canPersistClientSecret: current.canPersistClientSecret,
+    };
+    const managementAccess = { ...management.management, canPersistClientSecret: current.canPersistClientSecret };
+    return urlChanged ? { success: true, connectionReset: true, managementAccess } : { success: true, managementAccess };
   }, // End of the CONFIG_SAVE handler
 
   /**

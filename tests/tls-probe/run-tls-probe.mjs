@@ -520,6 +520,40 @@ async function runEndToEnd(binary, certDir, fingerprintA, fingerprintB) {
       }
     }); // End of check "[e2e] adversarial: controller URL change while a multi-site selection..."
 
+    await check('[e2e] management access without safeStorage (real main, todo 4.8): a Client ID + Client Secret save writes the Client ID only (no secret, no encryptedClientSecret on disk); the reply and CONFIG_LOAD report a session-only secret, never its value; an unknown payload key is refused; a blank secret keeps it; a controller URL change clears the Client ID and the session secret', async () => {
+      const secret = 'tls-probe-client-secret-9f8e';
+      /**
+       * Saves a config payload over the real IPC bridge.
+       * @param {object} payload - The ConfigSavePayload (or a malformed one).
+       * @returns {Promise<object>} The ConfigSaveResult.
+       */
+      const save = (payload) => page.evaluate((body) => window.omadaAPI.saveConfig(body), payload);
+      /** @returns {Promise<object>} The RendererConfig from CONFIG_LOAD. */
+      const load = () => page.evaluate(() => window.omadaAPI.loadConfig());
+      const base = { url: otherUrl, username: 'probe', language: 'en' };
+      const saved = await save({ ...base, clientId: ' probe-client ', clientSecret: secret });
+      const fileText = readFileSync(configFile, 'utf8');
+      const view = await load();
+      const unknownKey = await save({ ...base, extra: true });
+      const kept = await save(base);
+      const keptView = await load();
+      const moved = await save({ url, username: 'probe', language: 'en', password: PROBE_PASSWORD });
+      const movedView = await load();
+      const finalText = readFileSync(configFile, 'utf8');
+      const texts = [saved, view, unknownKey, kept, keptView, moved, movedView].map((value) => JSON.stringify(value));
+      const leaked = [...texts, fileText, finalText, mainOutput.join('')].some((text) => text.includes(secret));
+      return verdict(
+        saved.success === true && saved.managementAccess?.hasClientSecret === true && saved.managementAccess?.clientSecretSessionOnly === true &&
+        JSON.parse(fileText).clientId === 'probe-client' && !('encryptedClientSecret' in JSON.parse(fileText)) &&
+        view.clientId === 'probe-client' && view.hasClientSecret === true && view.clientSecretSessionOnly === true &&
+        view.canPersistClientSecret === false && unknownKey.success === false && unknownKey.error === 'saveFailed' &&
+        kept.success === true && keptView.hasClientSecret === true && keptView.clientSecretSessionOnly === true &&
+        moved.success === true && moved.connectionReset === true && movedView.clientId === '' && movedView.hasClientSecret === false &&
+        movedView.clientSecretSessionOnly === false && !('clientId' in JSON.parse(finalText)) && !leaked,
+        { saved, view, unknownKey, kept, keptView, moved, movedView, leaked }
+      );
+    }); // End of check "[e2e] management access without safeStorage..."
+
     await check('[e2e] zero renderer console errors or page errors', async () => verdict(rendererErrors.length === 0, rendererErrors));
   } finally {
     await app.close().catch(() => {});

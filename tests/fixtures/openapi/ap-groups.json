@@ -1,0 +1,79 @@
+{
+  "description": "GET /openapi/v1/{omadacId}/sites/{siteId}/ap-groups entries (ApGroupOpenApiVO, docs/omada-openapi-ops.md) for validateOpenApiApGroup(), and a `result` page served to OpenApiClient.listApGroups().",
+  "valid": [
+    {
+      "name": "documented entry: id, name, default flag, apNum, ssidNameList and remainingBinding kept",
+      "entry": {
+        "id": "6501c0ffee0000000000b001",
+        "name": "Default",
+        "primary": true,
+        "apNum": 4,
+        "ssidNameList": ["Casa", "Invitados"],
+        "remainingBinding": { "0": 6, "1": 6, "2": 8 },
+        "site": "ignored"
+      },
+      "expected": {
+        "id": "6501c0ffee0000000000b001",
+        "name": "Default",
+        "isDefault": true,
+        "apNum": 4,
+        "ssidNameList": ["Casa", "Invitados"],
+        "remainingBinding": { "0": 6, "1": 6, "2": 8 }
+      }
+    },
+    {
+      "name": "an empty group: no networks, 0 APs, not default",
+      "entry": { "id": "6501c0ffee0000000000b002", "name": "zNinguna", "primary": false, "apNum": 0, "ssidNameList": [] },
+      "expected": { "id": "6501c0ffee0000000000b002", "name": "zNinguna", "apNum": 0, "ssidNameList": [] }
+    },
+    {
+      "name": "only the id: the name normalized, every optional field absent",
+      "entry": { "id": "6501c0ffee0000000000b003" },
+      "expected": { "id": "6501c0ffee0000000000b003", "name": "" }
+    },
+    {
+      "name": "insane optional fields are dropped or filtered (primary not true, negative or fractional apNum, non-string SSID names, bad bindings)",
+      "entry": {
+        "id": "6501c0ffee0000000000b004",
+        "name": "Aulas",
+        "primary": "true",
+        "apNum": -1,
+        "ssidNameList": ["Aulas", 5, null, "Profes"],
+        "remainingBinding": { "0": 2, "1": -1, "2": 1.5, "mlo": "4" }
+      },
+      "expected": {
+        "id": "6501c0ffee0000000000b004",
+        "name": "Aulas",
+        "ssidNameList": ["Aulas", "Profes"],
+        "remainingBinding": { "0": 2 }
+      }
+    },
+    {
+      "name": "fractional apNum and a remainingBinding array are left out",
+      "entry": { "id": "6501c0ffee0000000000b005", "name": "Patio", "apNum": 2.5, "ssidNameList": "Casa", "remainingBinding": [1, 2] },
+      "expected": { "id": "6501c0ffee0000000000b005", "name": "Patio" }
+    }
+  ],
+  "invalid": [
+    { "name": "null entry", "entry": null },
+    { "name": "array entry", "entry": [] },
+    { "name": "no id", "entry": { "name": "Default", "apNum": 4 } },
+    { "name": "internal-API wlanId instead of id", "entry": { "wlanId": "6501c0ffee0000000000b001", "name": "Default" } },
+    { "name": "empty id", "entry": { "id": "", "name": "Default" } },
+    { "name": "numeric id", "entry": { "id": 42, "name": "Default" } }
+  ],
+  "page": {
+    "totalRows": 3,
+    "currentPage": 1,
+    "currentSize": 100,
+    "maxSsids2G": 8,
+    "maxSsids5G": 8,
+    "maxSsids6G": 8,
+    "maxSsidsMlo": 4,
+    "data": [
+      { "id": "6501c0ffee0000000000b001", "name": "Default", "primary": true, "apNum": 4, "ssidNameList": ["Casa", "Invitados"], "remainingBinding": { "0": 6, "1": 6, "2": 8 } },
+      { "id": "6501c0ffee0000000000b002", "name": "zNinguna", "primary": false, "apNum": 0, "ssidNameList": [] },
+      { "id": "6501c0ffee0000000000b006", "name": "zGrupo B", "primary": false, "apNum": 2, "ssidNameList": ["Taller"] }
+    ]
+  }
+}

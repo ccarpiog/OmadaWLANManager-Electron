@@ -2,9 +2,11 @@
 // talks to the controller only through the OmadaTransport interface below, so
 // it can be driven by a fake transport in unit tests. The production transport
 // is createHardenedTransport() over Electron's net.request (net-transport.ts);
-// this module itself never imports Electron.
+// this module itself never imports Electron. OpenApiClient (openapi-client.ts)
+// uses the same transport contract, hence PUT and DELETE.
 
 import { OmadaApiResponse } from '../shared/types';
+import { redactText } from './redact';
 
 // Request hardening limits
 export const REQUEST_TIMEOUT_MS = 15000; // Abort any request that takes longer than this
@@ -12,11 +14,18 @@ export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024; // Cap accumulated response b
 export const ERROR_BODY_EXCERPT_CHARS = 200; // Max body characters quoted in HTTP error messages
 
 /**
- * One HTTP request as built by OmadaController: absolute URL, the headers to
- * set (in this order), and the already-serialized JSON body, if any.
+ * HTTP methods the transport sends: the internal client uses GET/POST/PATCH,
+ * the Open API client (openapi-client.ts) also PUT and DELETE.
+ */
+export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+
+/**
+ * One HTTP request as built by OmadaController or OpenApiClient: absolute
+ * URL, the headers to set (in this order), and the already-serialized JSON
+ * body, if any.
  */
 export interface OmadaHttpRequest {
-  method: 'GET' | 'POST' | 'PATCH';
+  method: HttpMethod;
   url: string;
   headers: Record<string, string>;
   body?: string;
@@ -89,9 +98,25 @@ export interface TransportLimits {
 }
 
 /**
+ * Returns the bounded, redacted excerpt of a response body quoted in an error
+ * message (the message can reach the renderer as error detail): the WHOLE
+ * body goes through redactText() (redact.ts) first and only then is it cut
+ * to ERROR_BODY_EXCERPT_CHARS characters, so the cut can never split a secret
+ * away from the key that identifies it (a prefix of redacted text is still
+ * redacted). The body is already capped at MAX_RESPONSE_BYTES and the scan is
+ * linear, so redacting all of it stays cheap on this error-only path.
+ * @param {string} body - Raw response body.
+ * @returns {string} The excerpt.
+ */
+export function errorBodyExcerpt(body: string): string {
+  return redactText(body).slice(0, ERROR_BODY_EXCERPT_CHARS);
+}
+
+/**
  * Turns a fully received response into the parsed Omada API envelope. A
- * non-2xx status is rejected with a bounded body excerpt instead of trying to
- * JSON-parse an HTML error page; an unparseable body is rejected the same way.
+ * non-2xx status is rejected with a bounded, redacted body excerpt instead of
+ * trying to JSON-parse an HTML error page; an unparseable body is rejected the
+ * same way.
  * @param {number} statusCode - HTTP status code of the response.
  * @param {string} body - Raw response body.
  * @returns {OmadaApiResponse<T>} The parsed Omada API response.
@@ -99,14 +124,12 @@ export interface TransportLimits {
  */
 export function parseOmadaResponse<T>(statusCode: number, body: string): OmadaApiResponse<T> {
   if (statusCode < 200 || statusCode >= 300) {
-    const excerpt = body.slice(0, ERROR_BODY_EXCERPT_CHARS);
-    throw new Error(`HTTP ${statusCode}: ${excerpt}`);
+    throw new Error(`HTTP ${statusCode}: ${errorBodyExcerpt(body)}`);
   }
   try {
     return JSON.parse(body) as OmadaApiResponse<T>;
   } catch {
-    const excerpt = body.slice(0, ERROR_BODY_EXCERPT_CHARS);
-    throw new Error(`Invalid JSON response: ${excerpt}`);
+    throw new Error(`Invalid JSON response: ${errorBodyExcerpt(body)}`);
   }
 } // End of function parseOmadaResponse()
 

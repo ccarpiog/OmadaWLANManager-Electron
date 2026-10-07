@@ -11,23 +11,33 @@ import {
   cancelCertResetBtn,
   cancelMoveBtn,
   cancelSettingsBtn,
+  cancelManagementRemoveBtn,
   cancelSiteBtn,
   certModalTitle,
   closeMoveBtn,
   closeSettingsBtn,
   confirmCertBtn,
   confirmCertResetBtn,
+  confirmManagementRemoveBtn,
   confirmMoveBtn,
   connectBtn,
   destinationPanelTitle,
   destinationSearchInput,
   labelCertPin,
+  labelClientId,
+  labelClientSecret,
   labelLanguage,
   labelPassword,
   labelUrl,
   labelUsername,
+  managementHeading,
+  managementHelp,
+  managementRemovalNote,
+  managementRemoveMessage,
+  managementSessionNote,
   moveModalTitle,
   refreshBtn,
+  removeManagementBtn,
   resetCertBtn,
   retryFailedBtn,
   saveSettingsBtn,
@@ -36,6 +46,7 @@ import {
   siteModalMessage,
   siteModalTitle,
   statusText,
+  undoManagementRemovalBtn,
 } from './elements';
 import { renderApFilterOptions, renderApList } from './ap-list';
 import { renderDestinationList } from './destination-pane';
@@ -104,6 +115,19 @@ export function applyTranslations() {
   resetCertBtn.textContent = t('certReset');
   cancelCertResetBtn.textContent = t('cancel');
   confirmCertResetBtn.textContent = t('certResetAction');
+  // Management-access section (the Client Secret placeholder depends on what
+  // is stored and is refreshed per open / per edit, see settings-modal.ts)
+  managementHeading.textContent = t('managementTitle');
+  managementHelp.textContent = t('managementHelp');
+  labelClientId.textContent = t('clientId');
+  labelClientSecret.textContent = t('clientSecret');
+  managementSessionNote.textContent = t('managementSessionOnly');
+  managementRemovalNote.textContent = t('managementRemovalPending');
+  managementRemoveMessage.textContent = t('managementRemoveConfirm');
+  removeManagementBtn.textContent = t('managementRemove');
+  undoManagementRemovalBtn.textContent = t('managementUndoRemoval');
+  cancelManagementRemoveBtn.textContent = t('cancel');
+  confirmManagementRemoveBtn.textContent = t('managementRemoveAction');
 
   // Move dialog: review defaults (move-dialog.ts rewrites the title and the
   // move button's label for each phase and plan)

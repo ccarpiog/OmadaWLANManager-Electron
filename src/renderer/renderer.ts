@@ -44,7 +44,10 @@
 //   destination-pane.ts   destination pane (group radios, search, Silence
 //                         section, move preview, move button)
 //   modal-focus.ts        modal Tab focus trap and inert background
-//   settings-modal.ts     settings modal (open/close/save, certificate reset)
+//   management-form.ts    pure management-access form rules (Client ID /
+//                         Client Secret save plan, secret placeholder)
+//   settings-modal.ts     settings modal (open/close/save, certificate reset,
+//                         the management-access section)
 //   move-dialog.ts        move review / progress / per-AP results dialog
 //   site-modal.ts         site-selection modal (multi-site controllers)
 //   cert-modal.ts         certificate first-use / "certificate changed" modal
@@ -82,11 +85,15 @@ import {
   apStatusFilterSelect,
   backBtn,
   cancelCertResetBtn,
+  cancelManagementRemoveBtn,
   cancelSettingsBtn,
   clearApSelectionBtn,
+  clientIdInput,
+  clientSecretInput,
   closeApDetailsBtn,
   closeSettingsBtn,
   confirmCertResetBtn,
+  confirmManagementRemoveBtn,
   connectBtn,
   destinationBackBtn,
   destinationList,
@@ -101,11 +108,13 @@ import {
   openDestinationBtn,
   passwordInput,
   refreshBtn,
+  removeManagementBtn,
   resetCertBtn,
   saveSettingsBtn,
   selectAllApsBtn,
   settingsBtn,
   settingsModal,
+  undoManagementRemovalBtn,
   urlInput,
   usernameInput,
   viewArea,
@@ -132,11 +141,16 @@ import {
 } from './networks-view';
 import {
   cancelCertificateReset,
+  cancelManagementRemoval,
   closeSettings,
   confirmCertificateReset,
+  confirmManagementRemoval,
   openSettings,
   requestCertificateReset,
+  requestManagementRemoval,
   saveSettings,
+  undoManagementRemoval,
+  updateManagementAffordance,
   updatePasswordAffordance,
 } from './settings-modal';
 import { isAppView } from './shell';
@@ -254,8 +268,18 @@ cancelSettingsBtn.addEventListener('click', closeSettings);
 saveSettingsBtn.addEventListener('click', saveSettings);
 
 // Credentials are URL-scoped: editing the URL updates what a blank password
-// field means ("unchanged" vs "required for the new URL")
+// field means ("unchanged" vs "required for the new URL"), and so does it for
+// the Client Secret, which also belongs to the Client ID
 urlInput.addEventListener('input', updatePasswordAffordance);
+urlInput.addEventListener('input', updateManagementAffordance);
+clientIdInput.addEventListener('input', updateManagementAffordance);
+
+// Management access (Settings): "Remove management access" with an inline
+// confirmation; the removal is staged and applied by Save
+removeManagementBtn.addEventListener('click', requestManagementRemoval);
+cancelManagementRemoveBtn.addEventListener('click', cancelManagementRemoval);
+confirmManagementRemoveBtn.addEventListener('click', confirmManagementRemoval);
+undoManagementRemovalBtn.addEventListener('click', undoManagementRemoval);
 
 // Trusted certificate (Settings): reset with an inline confirmation
 resetCertBtn.addEventListener('click', requestCertificateReset);
@@ -275,8 +299,8 @@ settingsModal.addEventListener('click', (e) => {
 document.addEventListener('keydown', handleGlobalKeydown);
 
 // Enter submits the settings form from any of its text fields (not only the
-// password one)
-for (const settingsField of [urlInput, usernameInput, passwordInput]) {
+// password one), the management-access fields included
+for (const settingsField of [urlInput, usernameInput, passwordInput, clientIdInput, clientSecretInput]) {
   settingsField.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') saveSettings();
   });

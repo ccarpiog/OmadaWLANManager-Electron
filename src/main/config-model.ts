@@ -1,11 +1,12 @@
 // Config model and save rules. Pure (no Electron, no filesystem): encryption
 // is injected through the SecretBox interface (config.ts passes a safeStorage
 // implementation, unit tests a fake), so the rules — including the URL-scoped
-// credentials of todo.md 4.4 — are unit-tested directly
-// (tests/unit/config-model.test.ts). config.ts owns the file I/O, the
-// in-memory cache and the legacy-password migration.
+// credentials of todo.md 4.4 and the optional Open API management access of
+// todo.md 4.8 — are unit-tested directly (tests/unit/config-model.test.ts).
+// config.ts owns the file I/O, the in-memory cache, the session-only Client
+// Secret and the legacy-password migration.
 
-import type { ConfigSaveError, ConfigSavePayload, Language, RendererConfig } from '../shared/types';
+import type { ConfigSaveError, ConfigSavePayload, Language, ManagementAccessStatus, RendererConfig } from '../shared/types';
 import { CertificatePin, isValidCertificatePin, pinnedFingerprintFor } from './cert-pinning';
 import { isSameControllerUrl, normalizeControllerUrl } from './url';
 
@@ -16,6 +17,13 @@ export const DEFAULT_LANGUAGE: Language = 'es';
 // Length cap for a stored site id (Omada ids are short generated strings; the
 // cap only rejects absurd values coming from a hand-edited config file)
 const MAX_SITE_ID_LENGTH = 128;
+
+// Format of an Open API Client ID after trimming: 1–128 letters, digits, '.',
+// '_' or '-'. The controller generates it (a hex-like string in TP-Link's
+// documentation); the exact format is unverified (D4), so the check only
+// rejects implausible input. The renderer mirrors it in
+// src/renderer/management-form.ts (keep both in sync).
+export const CLIENT_ID_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
 
 /**
  * Shape of the config as persisted on disk and cached in memory.
@@ -29,9 +37,10 @@ const MAX_SITE_ID_LENGTH = 128;
  * plaintext `password` field is also how legacy (pre-encryption) config files
  * look; config.ts migrates those once on first load.
  *
- * Everything tied to one controller — the password, the Client Secret, the
- * site id and the certificate pin — is scoped to `url`: applyConfigSave()
- * drops all of them when the URL changes.
+ * Everything tied to one controller — the password, the Open API Client ID
+ * and Client Secret, the site id and the certificate pin — is scoped to
+ * `url`: applyConfigSave() drops all of them when the URL changes (new
+ * management credentials may come with the same save).
  */
 export interface StoredConfig {
   url: string;
@@ -39,9 +48,14 @@ export interface StoredConfig {
   language: Language;
   encryptedPassword?: string;
   password?: string;
-  // Open API Client Secret as a safeStorage blob. Written by the Open API
-  // credentials feature (phase 15); this model only validates, keeps it on a
-  // same-URL save and drops it when the URL changes
+  // Open API management access (optional, todo.md 4.8): the Client ID in
+  // plain text (it is not a secret) and the Client Secret ONLY as a
+  // safeStorage blob. There is no plaintext fallback for the secret: when
+  // secure storage is unavailable (SecretBox.isSecureStorageAvailable(): no
+  // encryption, or Linux's obfuscation-only basic_text / unknown backend) it
+  // is kept in main-process memory for the session only (config.ts) and
+  // nothing secret is written here
+  clientId?: string;
   encryptedClientSecret?: string;
   // Site chosen by the user on a multi-site controller. Reused on the next
   // connect only when it is still in the authorized-site list (the membership
@@ -53,20 +67,83 @@ export interface StoredConfig {
 
 /**
  * The encryption primitives the config needs (safeStorage in production).
- * Blobs are base64 strings.
+ * Blobs are base64 strings. Two availability questions, on purpose:
+ * - isEncryptionAvailable(): may the PASSWORD be encrypted (it falls back to
+ *   plaintext otherwise — its documented, unchanged behaviour);
+ * - isSecureStorageAvailable(): may the Open API CLIENT SECRET be persisted —
+ *   encryption backed by a real OS secret store, not merely obfuscated (see
+ *   secureSecretStorageAvailable()); the secret is session-only otherwise.
  */
 export interface SecretBox {
   isEncryptionAvailable(): boolean;
+  isSecureStorageAvailable(): boolean;
   encryptString(plainText: string): string;
   decryptString(blob: string): string;
 }
 
+// Linux safeStorage backends (Electron's getSelectedStorageBackend()) that
+// keep the encryption key in a real OS secret store. Every other answer —
+// 'basic_text' (a key hardcoded in Chromium: obfuscation, effectively
+// plaintext), 'unknown', a name a future Electron adds, or no answer at all —
+// fails closed: the Client Secret is not persisted.
+export const SECURE_LINUX_STORAGE_BACKENDS: readonly string[] = ['gnome_libsecret', 'kwallet', 'kwallet5', 'kwallet6'];
+
+/**
+ * The part of Electron's safeStorage that secureSecretStorageAvailable()
+ * queries (structurally satisfied by `safeStorage` itself; a fake in tests).
+ * getSelectedStorageBackend() exists on Linux only.
+ */
+export interface SafeStorageProbe {
+  isEncryptionAvailable(): boolean;
+  getSelectedStorageBackend?(): string;
+}
+
+/**
+ * Decides whether a secret with no plaintext fallback (the Open API Client
+ * Secret) may be persisted as a safeStorage blob: encryption must be
+ * available and, on Linux only, the selected backend must be a real secret
+ * store (SECURE_LINUX_STORAGE_BACKENDS) — never 'basic_text' or 'unknown'.
+ * Fails closed and never throws: a throwing query, or a Linux safeStorage
+ * without getSelectedStorageBackend(), means "cannot persist". The backend is
+ * never queried on other platforms (macOS Keychain, Windows DPAPI).
+ * @param {string} platform - The OS (process.platform).
+ * @param {SafeStorageProbe} storage - safeStorage (or a test fake).
+ * @returns {boolean} True when the Client Secret may be written to disk.
+ */
+export function secureSecretStorageAvailable(platform: string, storage: SafeStorageProbe): boolean {
+  try {
+    if (!storage.isEncryptionAvailable()) {
+      return false;
+    }
+    if (platform !== 'linux') {
+      return true;
+    }
+    if (typeof storage.getSelectedStorageBackend !== 'function') {
+      return false;
+    }
+    const backend: unknown = storage.getSelectedStorageBackend();
+    return typeof backend === 'string' && SECURE_LINUX_STORAGE_BACKENDS.includes(backend);
+  } catch {
+    return false;
+  }
+} // End of function secureSecretStorageAvailable()
+
 /**
  * Result of applyConfigSave(): the config to persist, or an error code.
  * `urlChanged` tells the caller to drop TLS state tied to the old controller.
+ * `sessionClientSecret` is the session-only Client Secret the caller must hold
+ * in memory after persisting the config (null = none): kept, replaced by a
+ * newly typed secret when encryption is unavailable, or cleared.
  */
 export type ConfigSaveOutcome =
-  | { ok: true; config: StoredConfig; urlChanged: boolean }
+  | { ok: true; config: StoredConfig; urlChanged: boolean; sessionClientSecret: string | null }
+  | { ok: false; error: ConfigSaveError };
+
+/**
+ * The management-access part of a save (see applyManagementAccessSave()).
+ */
+type ManagementSaveOutcome =
+  | { ok: true; clientId?: string; encryptedClientSecret?: string; sessionClientSecret: string | null }
   | { ok: false; error: ConfigSaveError };
 
 /**
@@ -76,6 +153,19 @@ export type ConfigSaveOutcome =
  */
 export function isSupportedLanguage(value: unknown): value is Language {
   return typeof value === 'string' && (SUPPORTED_LANGUAGES as readonly string[]).includes(value);
+}
+
+/**
+ * Trims and validates an Open API Client ID (CLIENT_ID_REGEX).
+ * @param {unknown} value - The raw Client ID.
+ * @returns {string | null} The trimmed Client ID, or null when invalid.
+ */
+export function normalizeClientId(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return CLIENT_ID_REGEX.test(trimmed) ? trimmed : null;
 }
 
 /**
@@ -115,6 +205,10 @@ export function validateStoredConfig(parsed: unknown): StoredConfig {
   if (typeof raw.password === 'string' && raw.password) {
     config.password = raw.password;
   }
+  const clientId = normalizeClientId(raw.clientId);
+  if (clientId) {
+    config.clientId = clientId;
+  }
   if (typeof raw.encryptedClientSecret === 'string' && raw.encryptedClientSecret) {
     config.encryptedClientSecret = raw.encryptedClientSecret;
   }
@@ -149,14 +243,89 @@ export function decryptStoredPassword(config: StoredConfig, box: SecretBox): str
 } // End of function decryptStoredPassword()
 
 /**
+ * Decrypts the stored Open API Client Secret blob. Main process only — this
+ * value must never be sent over IPC to the renderer.
+ *
+ * While secure storage is unavailable (box.isSecureStorageAvailable() false,
+ * e.g. Linux's basic_text backend) a stored blob is NOT trusted: it is not
+ * decrypted, so it is neither used nor reported (`hasClientSecret` false; the
+ * user types the secret again, which is then session-only and drops the blob).
+ * It is otherwise left on disk untouched, so a blob written under a real
+ * keyring survives a session in which that keyring was missing. A blob that
+ * an earlier build wrote under basic_text cannot be told apart from it
+ * without relying on Chromium's internal blob prefixes, which this app
+ * deliberately does not do; no released build ever persisted the Client
+ * Secret under basic_text (persistence of it is new and fails closed here).
+ * @param {StoredConfig} config - The config holding the blob.
+ * @param {SecretBox} box - Decryption primitives.
+ * @returns {string} The plaintext secret, or '' when none/undecryptable/untrusted.
+ */
+export function decryptStoredClientSecret(config: StoredConfig, box: SecretBox): string {
+  if (!config.encryptedClientSecret || !box.isSecureStorageAvailable()) {
+    return '';
+  }
+  try {
+    return box.decryptString(config.encryptedClientSecret);
+  } catch (error) {
+    // Never log the blob or the error's details beyond the message class
+    console.error('Error decrypting the stored Client Secret:', error instanceof Error ? error.name : 'unknown error');
+    return '';
+  }
+} // End of function decryptStoredClientSecret()
+
+/**
+ * Returns the Open API credentials of a config (main process only, never
+ * over IPC): the stored Client ID with the session-only secret when there is
+ * one, else the decrypted stored secret.
+ * @param {StoredConfig} config - The stored config.
+ * @param {SecretBox} box - Decryption primitives.
+ * @param {string | null} sessionClientSecret - The session-only secret, if any.
+ * @returns {{ clientId: string; clientSecret: string } | null} The
+ *   credentials, or null when the Client ID or a usable secret is missing.
+ */
+export function managementCredentialsOf(
+  config: StoredConfig,
+  box: SecretBox,
+  sessionClientSecret: string | null
+): { clientId: string; clientSecret: string } | null {
+  if (!config.clientId) {
+    return null;
+  }
+  const clientSecret = sessionClientSecret || decryptStoredClientSecret(config, box);
+  return clientSecret ? { clientId: config.clientId, clientSecret } : null;
+} // End of function managementCredentialsOf()
+
+/**
+ * Builds the renderer-safe management-access status (flags only).
+ * `hasClientSecret` is true only for a trusted blob that decrypts (see
+ * decryptStoredClientSecret()) or a session-only secret, so a corrupt or
+ * untrusted blob makes the UI ask for the secret again.
+ * `canPersistClientSecret` is box.isSecureStorageAvailable().
+ * @param {StoredConfig} config - The stored config.
+ * @param {SecretBox} box - Decryption primitives.
+ * @param {string | null} sessionClientSecret - The session-only secret, if any.
+ * @returns {ManagementAccessStatus} The status.
+ */
+export function managementAccessStatus(config: StoredConfig, box: SecretBox, sessionClientSecret: string | null): ManagementAccessStatus {
+  const sessionOnly = typeof sessionClientSecret === 'string' && sessionClientSecret.length > 0;
+  return {
+    clientId: config.clientId ?? '',
+    hasClientSecret: sessionOnly || decryptStoredClientSecret(config, box) !== '',
+    clientSecretSessionOnly: sessionOnly,
+    canPersistClientSecret: box.isSecureStorageAvailable()
+  };
+} // End of function managementAccessStatus()
+
+/**
  * Builds the renderer-safe view of a config: no secret material, only flags,
  * plus the pinned certificate fingerprint (public data) when the pin belongs
- * to the configured origin.
+ * to the configured origin, and the management-access status.
  * @param {StoredConfig} config - The stored config.
- * @param {SecretBox} box - Decryption primitives (to test the password).
+ * @param {SecretBox} box - Decryption primitives (to test the password and the Client Secret).
+ * @param {string | null} [sessionClientSecret] - The session-only Client Secret, if any.
  * @returns {RendererConfig} The renderer-safe view.
  */
-export function toRendererConfig(config: StoredConfig, box: SecretBox): RendererConfig {
+export function toRendererConfig(config: StoredConfig, box: SecretBox, sessionClientSecret: string | null = null): RendererConfig {
   return {
     url: config.url,
     username: config.username,
@@ -164,9 +333,89 @@ export function toRendererConfig(config: StoredConfig, box: SecretBox): Renderer
     // Report a stored password only when it can actually be produced — a
     // corrupt/undecryptable blob must make the UI ask for the password again
     hasPassword: decryptStoredPassword(config, box) !== '',
-    pinnedFingerprint: pinnedFingerprintFor(config.url, config.certificatePin ?? null)
+    pinnedFingerprint: pinnedFingerprintFor(config.url, config.certificatePin ?? null),
+    ...managementAccessStatus(config, box, sessionClientSecret)
   };
 } // End of function toRendererConfig()
+
+/**
+ * Applies the management-access part of a settings save (rules in
+ * applyConfigSave()'s documentation).
+ * @param {StoredConfig} current - The config currently stored.
+ * @param {ConfigSavePayload} payload - The settings sent by the renderer.
+ * @param {SecretBox} box - Encryption primitives.
+ * @param {string | null} sessionClientSecret - The current session-only secret.
+ * @param {boolean} urlChanged - Whether the save changes the controller URL.
+ * @returns {ManagementSaveOutcome} The Client ID, blob and session secret to
+ *   keep, or an error code.
+ */
+function applyManagementAccessSave(
+  current: StoredConfig,
+  payload: ConfigSavePayload,
+  box: SecretBox,
+  sessionClientSecret: string | null,
+  urlChanged: boolean
+): ManagementSaveOutcome {
+  const hasClientId = payload.clientId !== undefined;
+  const hasClientSecretField = payload.clientSecret !== undefined;
+  if (hasClientSecretField && typeof payload.clientSecret !== 'string') {
+    return { ok: false, error: 'saveFailed' };
+  }
+  const typedSecret = typeof payload.clientSecret === 'string' && payload.clientSecret.length > 0 ? payload.clientSecret : null;
+
+  if (payload.removeManagementAccess !== undefined) {
+    // Explicit removal: only the literal true, and never mixed with new values
+    if (payload.removeManagementAccess !== true || hasClientId || hasClientSecretField) {
+      return { ok: false, error: 'saveFailed' };
+    }
+    return { ok: true, sessionClientSecret: null };
+  }
+
+  if (!hasClientId) {
+    if (typedSecret !== null) {
+      return { ok: false, error: 'clientIdRequired' };
+    }
+    if (urlChanged) {
+      // A different controller has its own Open API application
+      return { ok: true, sessionClientSecret: null };
+    }
+    return {
+      ok: true,
+      clientId: current.clientId,
+      encryptedClientSecret: current.encryptedClientSecret,
+      sessionClientSecret
+    };
+  } // End of the branch without a Client ID in the payload
+
+  const clientId = normalizeClientId(payload.clientId);
+  if (clientId === null) {
+    return { ok: false, error: 'invalidClientId' };
+  }
+
+  if (typedSecret !== null) {
+    // A new secret replaces the stored blob and any session-only secret
+    if (box.isSecureStorageAvailable()) {
+      try {
+        return { ok: true, clientId, encryptedClientSecret: box.encryptString(typedSecret), sessionClientSecret: null };
+      } catch (error) {
+        console.error('Error encrypting the Client Secret:', error instanceof Error ? error.name : 'unknown error');
+        return { ok: false, error: 'saveFailed' };
+      }
+    }
+    // No plaintext (nor obfuscated basic_text) fallback for the Client
+    // Secret: session-only
+    console.warn('Secure secret storage is unavailable; the Client Secret is kept in memory for this session only');
+    return { ok: true, clientId, sessionClientSecret: typedSecret };
+  } // End of the typed-secret branch
+
+  // No typed secret: the stored one (blob or session-only) is kept only for
+  // the same controller AND the same Open API application; a new Client ID
+  // or URL never inherits it
+  if (!urlChanged && clientId === current.clientId) {
+    return { ok: true, clientId, encryptedClientSecret: current.encryptedClientSecret, sessionClientSecret };
+  }
+  return { ok: false, error: 'clientSecretRequired' };
+} // End of function applyManagementAccessSave()
 
 /**
  * Applies a settings save from the renderer to the current config. Rules:
@@ -183,12 +432,37 @@ export function toRendererConfig(config: StoredConfig, box: SecretBox): Renderer
  * - a typed password is encrypted when encryption is available, else kept in
  *   plaintext with a warning (documented fallback); an encryption failure is
  *   'saveFailed'.
+ * Management access (Open API Client ID + Client Secret, optional):
+ * - `removeManagementAccess: true` drops the Client ID, the stored blob and
+ *   the session-only secret (any other management field with it: 'saveFailed');
+ * - no `clientId` in the payload: everything is kept for the same URL and
+ *   dropped on a URL change (an Open API application belongs to one
+ *   controller); a typed secret without a Client ID is 'clientIdRequired';
+ * - a `clientId` is trimmed and validated (CLIENT_ID_REGEX) — else
+ *   'invalidClientId';
+ * - a typed secret is encrypted into `encryptedClientSecret` when secure
+ *   storage is available (box.isSecureStorageAvailable(): encryption backed by
+ *   an OS secret store — not Linux basic_text/unknown; an encryption failure
+ *   is 'saveFailed'); otherwise it is NEVER persisted: it becomes the
+ *   session-only secret and the stored blob is dropped (the password keeps
+ *   its own isEncryptionAvailable() rule above);
+ * - a blank secret keeps the stored one (blob or session-only, possibly none)
+ *   only when the URL and the Client ID are both unchanged; otherwise it is
+ *   'clientSecretRequired'.
  * @param {StoredConfig} current - The config currently stored.
  * @param {ConfigSavePayload} payload - The settings sent by the renderer.
  * @param {SecretBox} box - Encryption primitives.
- * @returns {ConfigSaveOutcome} The config to persist, or an error code.
+ * @param {string | null} [sessionClientSecret] - The session-only Client
+ *   Secret currently held in memory (config.ts), if any.
+ * @returns {ConfigSaveOutcome} The config to persist and the session-only
+ *   secret to hold, or an error code.
  */
-export function applyConfigSave(current: StoredConfig, payload: ConfigSavePayload, box: SecretBox): ConfigSaveOutcome {
+export function applyConfigSave(
+  current: StoredConfig,
+  payload: ConfigSavePayload,
+  box: SecretBox,
+  sessionClientSecret: string | null = null
+): ConfigSaveOutcome {
   if (typeof payload !== 'object' || payload === null) {
     return { ok: false, error: 'saveFailed' };
   }
@@ -232,6 +506,11 @@ export function applyConfigSave(current: StoredConfig, payload: ConfigSavePayloa
     plainPassword = current.password;
   } // End of the password keep/require branch
 
+  const management = applyManagementAccessSave(current, payload, box, sessionClientSecret, urlChanged);
+  if (!management.ok) {
+    return { ok: false, error: management.error };
+  }
+
   const config: StoredConfig = {
     url: normalizedUrl,
     username: payload.username.trim(),
@@ -243,13 +522,17 @@ export function applyConfigSave(current: StoredConfig, payload: ConfigSavePayloa
   if (plainPassword) {
     config.password = plainPassword;
   }
+  // Management access, as decided above (dropped on a URL change unless the
+  // payload brought new credentials for the new controller)
+  if (management.clientId) {
+    config.clientId = management.clientId;
+  }
+  if (management.encryptedClientSecret) {
+    config.encryptedClientSecret = management.encryptedClientSecret;
+  }
   // Everything else tied to the controller survives only while the URL is
-  // unchanged: a different controller has its own sites, Open API client and
-  // certificate
+  // unchanged: a different controller has its own sites and certificate
   if (!urlChanged) {
-    if (current.encryptedClientSecret) {
-      config.encryptedClientSecret = current.encryptedClientSecret;
-    }
     if (current.siteId) {
       config.siteId = current.siteId;
     }
@@ -257,5 +540,5 @@ export function applyConfigSave(current: StoredConfig, payload: ConfigSavePayloa
       config.certificatePin = { ...current.certificatePin };
     }
   }
-  return { ok: true, config, urlChanged };
+  return { ok: true, config, urlChanged, sessionClientSecret: management.sessionClientSecret };
 } // End of function applyConfigSave()

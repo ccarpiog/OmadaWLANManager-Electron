@@ -3,12 +3,29 @@
 // Supported languages
 export type Language = 'es' | 'en';
 
-// Sanitized configuration exposed to the renderer. The password itself never
-// leaves the main process — the renderer only learns whether one is stored.
+// The optional Open API management access (todo.md 4.8) as the renderer may
+// see it — never the Client Secret itself. `clientId` is the stored Client ID
+// ('' when none; it is not a secret). `hasClientSecret` is true only when a
+// usable secret exists: a safeStorage blob that decrypts, or a secret kept in
+// main-process memory for this session only (`clientSecretSessionOnly`, set
+// when safeStorage encryption is unavailable: such a secret is never written
+// to disk and is gone after a restart). `canPersistClientSecret` tells whether
+// a newly typed secret can be stored encrypted (false: it would be kept for
+// this session only).
+export interface ManagementAccessStatus {
+  clientId: string;
+  hasClientSecret: boolean;
+  clientSecretSessionOnly: boolean;
+  canPersistClientSecret: boolean;
+}
+
+// Sanitized configuration exposed to the renderer. The password and the Client
+// Secret never leave the main process — the renderer only learns whether they
+// are stored (plus the management-access flags above).
 // `pinnedFingerprint` is the SHA-256 fingerprint of the trusted controller
 // certificate (public data, shown in Settings), or null when no certificate is
 // pinned for the configured controller.
-export interface RendererConfig {
+export interface RendererConfig extends ManagementAccessStatus {
   url: string;
   username: string;
   language: Language;
@@ -20,25 +37,49 @@ export interface RendererConfig {
 // when the user typed a new one; when absent, the main process keeps the
 // previously stored (encrypted) password — but only while the controller URL
 // is unchanged: a different URL always requires a typed password.
+// Management access (all optional; absent = leave it as stored, except that a
+// controller URL change drops the Client ID and the Client Secret):
+// - `clientId`: the Client ID to store (trimmed and validated by main);
+// - `clientSecret`: present only when the user typed one (needs `clientId`);
+//   without it, the stored secret is kept only for the same URL AND the same
+//   Client ID — a new Client ID or URL requires a typed secret;
+// - `removeManagementAccess`: removes the Client ID and the Client Secret
+//   (stored and session-only); sent alone, never with the two fields above.
 export interface ConfigSavePayload {
   url: string;
   username: string;
   language: Language;
   password?: string;
+  clientId?: string;
+  clientSecret?: string;
+  removeManagementAccess?: true;
 }
 
-// Error codes a config save can fail with; the renderer maps them to i18n keys
-export type ConfigSaveError = 'invalidUrl' | 'passwordRequired' | 'saveFailed';
+// Error codes a config save can fail with; the renderer maps them to i18n
+// keys. 'invalidClientId': the Client ID is blank or not a plausible id;
+// 'clientIdRequired': a Client Secret was sent without a Client ID;
+// 'clientSecretRequired': a new Client ID, or a Client ID for a new controller
+// URL, came without a typed Client Secret (an old secret is never reused).
+export type ConfigSaveError =
+  | 'invalidUrl'
+  | 'passwordRequired'
+  | 'saveFailed'
+  | 'invalidClientId'
+  | 'clientIdRequired'
+  | 'clientSecretRequired';
 
 // Result of a config save. `connectionReset` is true when the save changed the
 // controller URL: the main process then invalidated every in-flight connect
 // attempt, discarded any pending site selection / certificate trust decision
 // and logged out the installed controller, so the renderer must drop its
-// connected UI (it reconnects on its own after a successful save).
+// connected UI (it reconnects on its own after a successful save). On success,
+// `managementAccess` reports the management-access state after the save
+// (flags only, never the secret).
 export interface ConfigSaveResult {
   success: boolean;
   error?: ConfigSaveError;
   connectionReset?: boolean;
+  managementAccess?: ManagementAccessStatus;
 }
 
 // Access Point data from Omada API. `clientNum` (optional) is the number of

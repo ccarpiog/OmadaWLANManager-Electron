@@ -86,6 +86,25 @@ export interface Translations {
   certResetAction: string;
   certResetDone: string;
   certResetError: string;
+  // Optional management access in the settings modal (Open API Client ID /
+  // Client Secret; settings-modal.ts). "Client ID" and "Client Secret" are the
+  // controller's own terms, kept in both languages
+  managementTitle: string;
+  managementHelp: string;
+  clientId: string;
+  clientSecret: string;
+  clientSecretRequiredNewUrl: string;
+  clientSecretRequiredNewClientId: string;
+  managementSessionOnly: string;
+  managementRemove: string;
+  managementRemoveConfirm: string;
+  managementRemoveAction: string;
+  managementRemovalPending: string;
+  managementUndoRemoval: string;
+  managementSavedSessionOnly: string;
+  invalidClientId: string;
+  clientIdRequired: string;
+  clientSecretRequired: string;
   // App shell (shell.ts, status.ts): the sidebar views and the header details
   wifiNetworks: string;
   viewNavLabel: string;
@@ -335,6 +354,22 @@ const translations: Record<Language, Translations> = {
     certResetAction: 'Restablecer',
     certResetDone: 'Certificado de confianza restablecido',
     certResetError: 'No se pudo restablecer el certificado de confianza',
+    managementTitle: 'Acceso de gestión (opcional)',
+    managementHelp: 'Permite gestionar los grupos de AP y las redes Wi-Fi. Crea una aplicación de Open API en los ajustes del controlador, en modo de credenciales de cliente, y copia aquí su Client ID y su Client Secret.',
+    clientId: 'Client ID',
+    clientSecret: 'Client Secret',
+    clientSecretRequiredNewUrl: '(obligatorio para la nueva URL)',
+    clientSecretRequiredNewClientId: '(obligatorio para el nuevo Client ID)',
+    managementSessionOnly: 'Este equipo no puede guardar el Client Secret de forma segura: solo se conserva hasta que cierres la aplicación y tendrás que volver a introducirlo la próxima vez.',
+    managementRemove: 'Quitar el acceso de gestión',
+    managementRemoveConfirm: '¿Quitar el acceso de gestión? Al guardar se borrarán el Client ID y el Client Secret.',
+    managementRemoveAction: 'Quitar',
+    managementRemovalPending: 'El acceso de gestión se quitará al guardar.',
+    managementUndoRemoval: 'Mantener el acceso de gestión',
+    managementSavedSessionOnly: 'El Client Secret solo se conserva durante esta sesión.',
+    invalidClientId: 'El Client ID solo puede tener letras, números, puntos, guiones y guiones bajos (hasta 128 caracteres).',
+    clientIdRequired: 'Introduce el Client ID. Para desactivar el acceso de gestión, usa "Quitar el acceso de gestión".',
+    clientSecretRequired: 'Introduce el Client Secret: es obligatorio con un Client ID nuevo o con otra URL del controlador.',
     wifiNetworks: 'Redes Wi-Fi',
     viewNavLabel: 'Vistas',
     siteLabel: 'Sitio: {site}',
@@ -555,6 +590,22 @@ const translations: Record<Language, Translations> = {
     certResetAction: 'Reset',
     certResetDone: 'Trusted certificate reset',
     certResetError: 'Could not reset the trusted certificate',
+    managementTitle: 'Management access (optional)',
+    managementHelp: 'Lets the app manage AP groups and Wi-Fi networks. Create an Open API application in the controller\'s settings, in client credentials mode, and copy its Client ID and Client Secret here.',
+    clientId: 'Client ID',
+    clientSecret: 'Client Secret',
+    clientSecretRequiredNewUrl: '(required for the new URL)',
+    clientSecretRequiredNewClientId: '(required for the new Client ID)',
+    managementSessionOnly: 'This computer cannot store the Client Secret securely: it is kept only until you quit the app, and you will need to enter it again next time.',
+    managementRemove: 'Remove management access',
+    managementRemoveConfirm: 'Remove management access? The Client ID and the Client Secret are deleted when you save.',
+    managementRemoveAction: 'Remove',
+    managementRemovalPending: 'Management access will be removed when you save.',
+    managementUndoRemoval: 'Keep management access',
+    managementSavedSessionOnly: 'The Client Secret is kept for this session only.',
+    invalidClientId: 'The Client ID can only contain letters, digits, dots, hyphens and underscores (up to 128 characters).',
+    clientIdRequired: 'Enter the Client ID. To turn off management access, use "Remove management access".',
+    clientSecretRequired: 'Enter the Client Secret: it is required for a new Client ID or a different controller URL.',
     wifiNetworks: 'Wi-Fi networks',
     viewNavLabel: 'Views',
     siteLabel: 'Site: {site}',

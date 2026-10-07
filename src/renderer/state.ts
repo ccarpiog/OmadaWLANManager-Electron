@@ -125,6 +125,17 @@ export interface RendererState {
   settingsStoredUrl: string;
   settingsHasPassword: boolean;
 
+  // Management access as main reported it when the settings modal opened
+  // (never the Client Secret itself): the stored Client ID, whether a usable
+  // secret exists, whether it is held for this session only, and whether a
+  // newly typed one can be stored encrypted. `settingsRemoveManagement` is
+  // true once the user confirmed "Remove management access" (applied by Save)
+  settingsClientId: string;
+  settingsHasClientSecret: boolean;
+  settingsClientSecretSessionOnly: boolean;
+  settingsCanPersistClientSecret: boolean;
+  settingsRemoveManagement: boolean;
+
   // The element that opened the settings modal (focus returns there on close)
   settingsOpener: HTMLElement | null;
   // True from the moment openSettings() starts until the modal is visible (or
@@ -174,6 +185,11 @@ export const state: RendererState = {
   isResettingCertificate: false,
   settingsStoredUrl: '',
   settingsHasPassword: false,
+  settingsClientId: '',
+  settingsHasClientSecret: false,
+  settingsClientSecretSessionOnly: false,
+  settingsCanPersistClientSecret: true,
+  settingsRemoveManagement: false,
   settingsOpener: null,
   isSettingsOpening: false,
 };

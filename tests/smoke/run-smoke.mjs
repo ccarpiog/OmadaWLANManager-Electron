@@ -173,7 +173,7 @@ const GROUP = Object.fromEntries(data.wlanGroups.map((group) => [group.wlanName,
 const LEGACY_GROUP = Object.fromEntries(data.legacyWlanGroups.map((group) => [group.wlanName, group]));
 const EXPECTED_BRIDGE = ['connect', 'disconnect', 'getAccessPoints', 'getWlanGroups', 'loadConfig', 'platform', 'resetCertificate', 'saveConfig', 'selectSite', 'setApWlanGroup', 'trustCertificate'];
 // One launch per run*() function in main()
-const EXPECTED_LAUNCHES = 3;
+const EXPECTED_LAUNCHES = 4;
 // Fingerprints of the fake controller's self-signed certificates (launch 3)
 const FINGERPRINT_A = Array.from({ length: 32 }, (_, index) => (index * 7 + 16).toString(16).toUpperCase().padStart(2, '0')).join(':');
 const FINGERPRINT_B = Array.from({ length: 32 }, (_, index) => (255 - index).toString(16).toUpperCase().padStart(2, '0')).join(':');
@@ -4244,6 +4244,317 @@ async function runCertificatePinning(electronInfo) {
 } // End of function runCertificatePinning()
 
 // ============================================================================
+// Launch 4: management access in Settings (Open API Client ID / Secret)
+// ============================================================================
+
+// Client Secrets typed in launch 4: none may ever show up in a CONFIG_LOAD
+// result, in the DOM or in an input after the modal closes
+const MGMT_SECRETS = ['smoke-client-secret-1', 'smoke-client-secret-2', 'smoke-session-secret-3', 'smoke-session-secret-4'];
+
+/**
+ * Reads the management-access section of the settings modal.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} Texts, field values, placeholder, notes, buttons and focus.
+ */
+function readManagementSection(page) {
+  return page.evaluate(() => {
+    const byId = (id) => document.getElementById(id);
+    const shown = (id) => Boolean(byId(id)) && byId(id).closest('[hidden]') === null;
+    return {
+      heading: byId('managementHeading')?.textContent || '',
+      help: byId('managementHelp')?.textContent || '',
+      clientIdLabel: byId('labelClientId')?.textContent || '',
+      clientSecretLabel: byId('labelClientSecret')?.textContent || '',
+      clientId: byId('clientIdInput')?.value ?? null,
+      clientSecret: byId('clientSecretInput')?.value ?? null,
+      secretType: byId('clientSecretInput')?.type ?? null,
+      placeholder: byId('clientSecretInput')?.placeholder ?? null,
+      idDisabled: byId('clientIdInput')?.disabled,
+      secretDisabled: byId('clientSecretInput')?.disabled,
+      secretDescribedBy: byId('clientSecretInput')?.getAttribute('aria-describedby') ?? null,
+      sessionNote: shown('managementSessionNote') ? byId('managementSessionNote').textContent : null,
+      removalNote: shown('managementRemovalNote') ? byId('managementRemovalNote').textContent : null,
+      removeShown: shown('removeManagementBtn'),
+      removeDisabled: byId('removeManagementBtn')?.disabled,
+      removeText: byId('removeManagementBtn')?.textContent || '',
+      undoShown: shown('undoManagementRemovalBtn'),
+      confirmShown: shown('managementRemoveConfirm'),
+      confirmMessage: byId('managementRemoveMessage')?.textContent || '',
+      activeId: document.activeElement?.id || '',
+      settingsOpen: byId('settingsModal')?.classList.contains('visible'),
+    };
+  }); // End of the in-page management-section probe
+} // End of function readManagementSection()
+
+/**
+ * Lists the known test secrets found in the renderer: in the DOM, in any
+ * input's current value, or in a fresh CONFIG_LOAD result.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<string[]>} The leaked secrets (empty when clean).
+ */
+function findRendererSecrets(page) {
+  return page.evaluate(async (secrets) => {
+    const config = JSON.stringify(await window.omadaAPI.loadConfig());
+    const values = Array.from(document.querySelectorAll('input')).map((input) => input.value).join('\n');
+    const html = document.documentElement.outerHTML;
+    return secrets.filter((secret) => config.includes(secret) || values.includes(secret) || html.includes(secret));
+  }, MGMT_SECRETS);
+}
+
+/**
+ * Opens Settings once no connection or load is in flight (the button is
+ * disabled while connecting) and waits for focus in the URL field.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function openSettingsWhenIdle(page) {
+  await page.waitForFunction(() => document.getElementById('statusIndicator')?.classList.contains('connected'), null, { timeout: WAIT_MS });
+  await waitForLoadIdle(page);
+  await page.click('#settingsBtn');
+  await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+  await page.waitForFunction(() => document.activeElement?.id === 'urlInput', null, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the settings modal has closed.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function waitForSettingsClosed(page) {
+  await page.waitForFunction(() => !document.getElementById('settingsModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+}
+
+/**
+ * Returns the payload of the latest CONFIG_SAVE call and the number of calls.
+ * @param {object} session - The launch.
+ * @returns {Promise<{ count: number; payload: object | null; config: object }>} The latest save and the stub's config.
+ */
+async function latestSave(session) {
+  const snapshot = await stubState(session);
+  const saves = callsTo(snapshot, 'config:save');
+  return { count: saves.length, payload: saves.length > 0 ? saves[saves.length - 1].args[0] : null, config: snapshot.scenario.config };
+}
+
+/**
+ * Management-access launch (Spanish, then English): the "Management access
+ * (optional)" section in Settings — rendering, saving a Client ID + Client
+ * Secret (sent once, never returned), the "(unchanged)" hint driven by
+ * hasClientSecret and its URL / Client ID variants, Enter in the new fields,
+ * the session-only note and toast when safeStorage is unavailable, Remove
+ * with its inline confirmation (staged, applied by Save, undoable), and a
+ * controller URL change clearing the management access. The stub keeps flags
+ * only; the real main-process rules are unit-tested (config-model.test.ts)
+ * and exercised end to end by the TLS probe.
+ * @param {{ binary: string }} electronInfo - Resolved Electron binary.
+ * @returns {Promise<void>}
+ */
+async function runManagementAccess(electronInfo) {
+  const session = await launch(electronInfo, 'mgmt', {
+    config: { url: CONTROLLER_URL, username: 'admin', language: 'es', hasPassword: true },
+    connect: { success: true },
+    controllerVersion: data.controllerVersion,
+    accessPoints: data.accessPoints,
+    wlanGroups: data.wlanGroups,
+  });
+  const { page } = session;
+  const esStrings = uiStrings.es;
+  const enStrings = uiStrings.en;
+  const base = { url: CONTROLLER_URL, username: 'admin' };
+
+  try {
+    await checkTranslations(session, 'es');
+
+    await check('[mgmt] es: Settings shows "Acceso de gestión (opcional)" with its help line, Client ID and a password-type Client Secret; nothing stored: no placeholder, no session-only note, "Quitar el acceso de gestión" disabled', async () => {
+      await openSettingsWhenIdle(page);
+      const section = await readManagementSection(page);
+      return verdict(
+        section.heading === esStrings['#managementHeading'] && section.help === esStrings['#managementHelp'] &&
+        section.clientIdLabel === 'Client ID' && section.clientSecretLabel === 'Client Secret' && section.clientId === '' &&
+        section.clientSecret === '' && section.secretType === 'password' && section.placeholder === '' && section.sessionNote === null &&
+        section.secretDescribedBy === null && section.removeShown === true && section.removeDisabled === true &&
+        section.removeText === esStrings['#removeManagementBtn'] && section.undoShown === false && section.confirmShown === false &&
+        section.removalNote === null,
+        section
+      );
+    }); // End of check "[mgmt] es: Settings shows "Acceso de gestión (opcional)"..."
+
+    await check('[mgmt] es: Save with a Client ID and a Client Secret sends both once (Client ID trimmed, no password: the stored one is kept), closes, and main then reports hasClientSecret; the secret is in no CONFIG_LOAD result, input or DOM', async () => {
+      await page.fill('#clientIdInput', '  owm-client-1  ');
+      await page.fill('#clientSecretInput', MGMT_SECRETS[0]);
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      const leaks = await findRendererSecrets(page);
+      return verdict(
+        save.count === 1 && isDeepStrictEqual(save.payload, { ...base, language: 'es', clientId: 'owm-client-1', clientSecret: MGMT_SECRETS[0] }) &&
+        save.config.clientId === 'owm-client-1' && save.config.hasClientSecret === true && save.config.clientSecretSessionOnly === false &&
+        leaks.length === 0,
+        { save, leaks }
+      );
+    }); // End of check "[mgmt] es: Save with a Client ID and a Client Secret send..."
+
+    await check('[mgmt] es: reopened, the stored Client ID is shown and the empty Client Secret says "(sin cambios)" (hasClientSecret); a new URL says "(obligatorio para la nueva URL)", a new Client ID "(obligatorio para el nuevo Client ID)", restoring both "(sin cambios)" again; Save then sends no management field', async () => {
+      await openSettingsWhenIdle(page);
+      const opened = await readManagementSection(page);
+      await page.fill('#urlInput', 'https://other-controller.invalid:8043');
+      const newUrl = (await readManagementSection(page)).placeholder;
+      await page.fill('#urlInput', CONTROLLER_URL);
+      const sameUrl = (await readManagementSection(page)).placeholder;
+      await page.fill('#clientIdInput', 'owm-client-2');
+      const newId = (await readManagementSection(page)).placeholder;
+      await page.fill('#clientIdInput', 'owm-client-1');
+      const restored = (await readManagementSection(page)).placeholder;
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      return verdict(
+        opened.clientId === 'owm-client-1' && opened.clientSecret === '' && opened.placeholder === '(sin cambios)' && opened.removeDisabled === false &&
+        newUrl === '(obligatorio para la nueva URL)' && sameUrl === '(sin cambios)' && newId === '(obligatorio para el nuevo Client ID)' &&
+        restored === '(sin cambios)' && save.count === 2 && isDeepStrictEqual(save.payload, { ...base, language: 'es' }) &&
+        save.config.hasClientSecret === true && save.config.clientId === 'owm-client-1',
+        { opened, newUrl, sameUrl, newId, restored, save }
+      );
+    }); // End of check "[mgmt] es: reopened..."
+
+    await check('[mgmt] es: Enter in the Client ID field saves like the other fields — a new Client ID without its secret is refused ("Introduce el Client Secret: …") and nothing is sent; Enter in the Client Secret field then saves both', async () => {
+      await openSettingsWhenIdle(page);
+      await page.fill('#clientIdInput', 'owm-client-2');
+      await page.press('#clientIdInput', 'Enter');
+      await waitForToast(page, 'error', 'Introduce el Client Secret: …');
+      const refused = await latestSave(session);
+      const stillOpen = (await readManagementSection(page)).settingsOpen;
+      await page.fill('#clientSecretInput', MGMT_SECRETS[1]);
+      await page.press('#clientSecretInput', 'Enter');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      return verdict(
+        refused.count === 2 && stillOpen === true && save.count === 3 &&
+        isDeepStrictEqual(save.payload, { ...base, language: 'es', clientId: 'owm-client-2', clientSecret: MGMT_SECRETS[1] }),
+        { refused: refused.count, stillOpen, save }
+      );
+    }); // End of check "[mgmt] es: Enter in the Client ID field saves like the ot..."
+
+    await check('[mgmt] es: without safeStorage the session-only note shows before saving ("Este equipo no puede guardar el Client Secret…", describing the secret field); a typed secret is then kept for this session only (info toast), and the note stays with "(sin cambios)" when reopened', async () => {
+      const current = (await stubState(session)).scenario.config;
+      await configureStub(session, { config: { ...current, canPersistClientSecret: false } });
+      await openSettingsWhenIdle(page);
+      const before = await readManagementSection(page);
+      await page.fill('#clientSecretInput', MGMT_SECRETS[2]);
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      await waitForToast(page, 'info', 'El Client Secret solo se conserva durante esta sesión.');
+      const save = await latestSave(session);
+      await openSettingsWhenIdle(page);
+      const after = await readManagementSection(page);
+      await page.click('#cancelSettingsBtn');
+      await waitForSettingsClosed(page);
+      return verdict(
+        before.sessionNote === esStrings['#managementSessionNote'] && before.secretDescribedBy === 'managementSessionNote' &&
+        isDeepStrictEqual(save.payload, { ...base, language: 'es', clientId: 'owm-client-2', clientSecret: MGMT_SECRETS[2] }) &&
+        save.config.clientSecretSessionOnly === true && save.config.hasClientSecret === true &&
+        after.sessionNote === esStrings['#managementSessionNote'] && after.placeholder === '(sin cambios)' && after.clientSecret === '',
+        { before, save, after }
+      );
+    }); // End of check "[mgmt] es: without safeStorage..."
+
+    await check('[mgmt] es: "Quitar el acceso de gestión" asks inline (focus on Cancelar); Cancelar goes back; Quitar empties and disables both fields, says "El acceso de gestión se quitará al guardar." and focuses "Mantener…", which undoes it; confirmed again, Save sends removeManagementAccess alone and nothing is stored any more', async () => {
+      await openSettingsWhenIdle(page);
+      await page.click('#removeManagementBtn');
+      await page.waitForFunction(() => document.activeElement?.id === 'cancelManagementRemoveBtn', null, { timeout: WAIT_MS });
+      const asking = await readManagementSection(page);
+      await page.click('#cancelManagementRemoveBtn');
+      const cancelled = await readManagementSection(page);
+      await page.click('#removeManagementBtn');
+      await page.click('#confirmManagementRemoveBtn');
+      const staged = await readManagementSection(page);
+      await page.click('#undoManagementRemovalBtn');
+      const undone = await readManagementSection(page);
+      await page.click('#removeManagementBtn');
+      await page.click('#confirmManagementRemoveBtn');
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      return verdict(
+        asking.confirmShown === true && asking.confirmMessage === esStrings['#managementRemoveMessage'] && asking.removeShown === false &&
+        cancelled.confirmShown === false && cancelled.removeShown === true && cancelled.activeId === 'removeManagementBtn' &&
+        staged.clientId === '' && staged.idDisabled === true && staged.secretDisabled === true && staged.removalNote === esStrings['#managementRemovalNote'] &&
+        staged.undoShown === true && staged.removeShown === false && staged.activeId === 'undoManagementRemovalBtn' && staged.placeholder === '' &&
+        undone.clientId === 'owm-client-2' && undone.idDisabled === false && undone.removalNote === null && undone.removeShown === true &&
+        undone.activeId === 'removeManagementBtn' &&
+        isDeepStrictEqual(save.payload, { ...base, language: 'es', removeManagementAccess: true }) &&
+        save.config.clientId === '' && save.config.hasClientSecret === false && save.config.clientSecretSessionOnly === false,
+        { asking, cancelled, staged, undone, save }
+      );
+    }); // End of check "[mgmt] es: Quitar el acceso de gestión..."
+
+    await check('[mgmt] es: reopened after the removal nothing is stored (empty Client ID, no placeholder, Remove disabled); switching the language to English is saved', async () => {
+      await openSettingsWhenIdle(page);
+      const section = await readManagementSection(page);
+      await page.selectOption('#languageSelect', 'en');
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      const lang = await page.evaluate(() => document.documentElement.lang);
+      return verdict(
+        section.clientId === '' && section.placeholder === '' && section.removeDisabled === true &&
+        isDeepStrictEqual(save.payload, { ...base, language: 'en' }) && lang === 'en',
+        { section, save, lang }
+      );
+    }); // End of check "[mgmt] es: reopened after the removal nothing is stored (..."
+
+    await check('[mgmt] en: the section in English ("Management access (optional)", help, "Remove management access", the session-only note); saving a Client ID + secret says "The Client Secret is kept for this session only." and, reopened, the secret field says "(unchanged)"', async () => {
+      await openSettingsWhenIdle(page);
+      const before = await readManagementSection(page);
+      await page.fill('#clientIdInput', 'owm-client-en');
+      await page.fill('#clientSecretInput', MGMT_SECRETS[3]);
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      await waitForToast(page, 'info', 'The Client Secret is kept for this session only.');
+      const save = await latestSave(session);
+      await openSettingsWhenIdle(page);
+      const after = await readManagementSection(page);
+      return verdict(
+        before.heading === enStrings['#managementHeading'] && before.help === enStrings['#managementHelp'] &&
+        before.removeText === enStrings['#removeManagementBtn'] && before.sessionNote === enStrings['#managementSessionNote'] &&
+        before.placeholder === '' &&
+        isDeepStrictEqual(save.payload, { ...base, language: 'en', clientId: 'owm-client-en', clientSecret: MGMT_SECRETS[3] }) &&
+        after.clientId === 'owm-client-en' && after.placeholder === '(unchanged)' && after.sessionNote === enStrings['#managementSessionNote'],
+        { before, save, after }
+      );
+    }); // End of check "[mgmt] en: the section in English..."
+
+    await check('[mgmt] en: a controller URL change clears the management access — with the old Client ID still in its field the secret says "(required for the new URL)" and Save is refused ("Enter the Client Secret: …", nothing sent); with the field cleared the save goes through (connectionReset) and, reopened, nothing is stored', async () => {
+      // The modal is still open from the previous check
+      await page.fill('#urlInput', 'https://other-controller.invalid:8043');
+      await page.fill('#passwordInput', 'other-password');
+      const newUrl = await readManagementSection(page);
+      await page.click('#saveSettingsBtn');
+      await waitForToast(page, 'error', 'Enter the Client Secret: …');
+      const refused = await latestSave(session);
+      await page.fill('#clientIdInput', '');
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      await openSettingsWhenIdle(page);
+      const after = await readManagementSection(page);
+      await page.click('#cancelSettingsBtn');
+      await waitForSettingsClosed(page);
+      const leaks = await findRendererSecrets(page);
+      return verdict(
+        newUrl.placeholder === '(required for the new URL)' && refused.count === save.count - 1 &&
+        isDeepStrictEqual(save.payload, { url: 'https://other-controller.invalid:8043', username: 'admin', language: 'en', password: 'other-password' }) &&
+        save.config.clientId === '' && save.config.hasClientSecret === false && save.config.clientSecretSessionOnly === false &&
+        after.clientId === '' && after.placeholder === '' && after.removeDisabled === true && leaks.length === 0,
+        { newUrl: newUrl.placeholder, refused: refused.count, save, after, leaks }
+      );
+    }); // End of check "[mgmt] en: a controller URL change..."
+  } finally {
+    session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
+    await session.app.close().catch(() => {});
+  }
+} // End of function runManagementAccess()
+
+// ============================================================================
 // Whole-run checks
 // ============================================================================
 
@@ -4325,7 +4636,12 @@ async function main() {
   console.log(`Electron ${electronInfo.version} (${electronInfo.source}): ${electronInfo.binary}\n`);
 
   try {
-    for (const [label, runLaunch] of [['es', runSpanishFirstRun], ['en', runEnglishMultiSite], ['tofu', runCertificatePinning]]) {
+    for (const [label, runLaunch] of [
+      ['es', runSpanishFirstRun],
+      ['en', runEnglishMultiSite],
+      ['tofu', runCertificatePinning],
+      ['mgmt', runManagementAccess],
+    ]) {
       try {
         await runLaunch(electronInfo);
       } catch (error) {

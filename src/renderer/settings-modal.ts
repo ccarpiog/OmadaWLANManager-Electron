@@ -2,26 +2,35 @@
 // Settings Modal
 // ============================================================================
 
-import type { ConfigSavePayload, Language } from '../shared/types';
+import type { ConfigSavePayload, Language, RendererConfig } from '../shared/types';
 import { applyTranslations } from './apply-translations';
 import { connect, disconnect, handleConnectionReset } from './connection';
 import {
   cancelCertResetBtn,
+  cancelManagementRemoveBtn,
   cancelSettingsBtn,
   certPinValue,
   certResetConfirm,
   certResetMessage,
+  clientIdInput,
+  clientSecretInput,
   confirmCertResetBtn,
   connectBtn,
   languageSelect,
+  managementRemovalNote,
+  managementRemoveConfirm,
+  managementSessionNote,
   passwordInput,
+  removeManagementBtn,
   resetCertBtn,
   saveSettingsBtn,
   settingsModal,
+  undoManagementRemovalBtn,
   urlInput,
   usernameInput,
 } from './elements';
-import { setLanguage, t } from './i18n';
+import { setLanguage, t, type Translations } from './i18n';
+import { clientSecretAffordance, planManagementSave, type ClientSecretAffordance, type ManagementFormError } from './management-form';
 import { createFocusTrap, updateBackgroundInert } from './modal-focus';
 import { isOperationInProgress, state } from './state';
 import { showToast } from './toast';
@@ -78,6 +87,7 @@ export async function openSettings(): Promise<void> {
   languageSelect.value = config.language || 'es';
   renderCertificatePin(config.pinnedFingerprint);
   hideCertificateResetConfirm();
+  loadManagementSection(config);
   document.addEventListener('keydown', settingsFocusTrap);
   settingsModal.classList.add('visible');
   updateBackgroundInert();
@@ -86,8 +96,9 @@ export async function openSettings(): Promise<void> {
 } // End of function openSettings()
 
 /**
- * Closes the settings modal (a no-op when it is not open), removes its Tab
- * focus trap, lifts the background inertness, and restores keyboard focus to
+ * Closes the settings modal (a no-op when it is not open), clears the typed
+ * password and Client Secret, removes its Tab focus trap, lifts the
+ * background inertness, and restores keyboard focus to
  * the element that opened it (in that order: focus cannot enter an inert
  * subtree). Covers every close path: the close/cancel buttons, the overlay
  * click, the Escape key, and the post-save close.
@@ -95,6 +106,10 @@ export async function openSettings(): Promise<void> {
 export function closeSettings(): void {
   if (!settingsModal.classList.contains('visible')) return;
   settingsModal.classList.remove('visible');
+  // A typed password or Client Secret never lingers in the DOM once the
+  // modal is closed (saved or not)
+  passwordInput.value = '';
+  clientSecretInput.value = '';
   document.removeEventListener('keydown', settingsFocusTrap);
   updateBackgroundInert();
   state.settingsOpener?.focus();
@@ -119,6 +134,125 @@ export function updatePasswordAffordance(): void {
     passwordInput.placeholder = t('passwordRequiredNewUrl');
   }
 } // End of function updatePasswordAffordance()
+
+// i18n key of each Client Secret placeholder (see clientSecretAffordance())
+const CLIENT_SECRET_PLACEHOLDERS: Record<Exclude<ClientSecretAffordance, 'none'>, keyof Translations> = {
+  unchanged: 'passwordUnchanged',
+  requiredNewUrl: 'clientSecretRequiredNewUrl',
+  requiredNewClientId: 'clientSecretRequiredNewClientId',
+};
+
+// i18n key of each management-access refusal (renderer- or main-side)
+const MANAGEMENT_ERROR_KEYS: Record<ManagementFormError, keyof Translations> = {
+  invalidClientId: 'invalidClientId',
+  clientIdRequired: 'clientIdRequired',
+  clientSecretRequired: 'clientSecretRequired',
+};
+
+/**
+ * Fills the management-access section from the loaded config: the stored
+ * Client ID in its field, the Client Secret field always empty (the secret
+ * never reaches the renderer; only `hasClientSecret` does), the flags in
+ * state, no removal staged and no confirmation open. Values arriving over IPC
+ * are type-checked (a missing field reads as "nothing stored").
+ * @param {RendererConfig} config - The config from loadConfig().
+ */
+function loadManagementSection(config: RendererConfig): void {
+  state.settingsClientId = typeof config.clientId === 'string' ? config.clientId : '';
+  state.settingsHasClientSecret = config.hasClientSecret === true;
+  state.settingsClientSecretSessionOnly = config.clientSecretSessionOnly === true;
+  state.settingsCanPersistClientSecret = config.canPersistClientSecret !== false;
+  state.settingsRemoveManagement = false;
+  clientIdInput.value = state.settingsClientId;
+  clientSecretInput.value = '';
+  managementRemoveConfirm.hidden = true;
+  updateManagementAffordance();
+} // End of function loadManagementSection()
+
+/**
+ * Brings the management-access section up to date with its state: the Client
+ * Secret placeholder (what leaving it blank means, clientSecretAffordance()),
+ * the session-only note (shown when a typed secret could not be stored
+ * encrypted, or the current one is session-only; it then describes the
+ * secret field), and the removal controls — "Remove management access" is
+ * enabled only when something is stored, and once a removal is staged the
+ * fields are emptied and disabled, the pending-removal note shows and "Keep
+ * management access" replaces the Remove button. Called on open and on every
+ * URL or Client ID edit.
+ */
+export function updateManagementAffordance(): void {
+  const staged = state.settingsRemoveManagement;
+  const affordance = staged
+    ? 'none'
+    : clientSecretAffordance({
+        hasClientSecret: state.settingsHasClientSecret,
+        sameUrl: isSameControllerUrl(state.settingsStoredUrl, urlInput.value),
+        clientIdField: clientIdInput.value,
+        storedClientId: state.settingsClientId,
+      });
+  clientSecretInput.placeholder = affordance === 'none' ? '' : t(CLIENT_SECRET_PLACEHOLDERS[affordance]);
+
+  const sessionOnly = !staged && (!state.settingsCanPersistClientSecret || state.settingsClientSecretSessionOnly);
+  managementSessionNote.hidden = !sessionOnly;
+  if (sessionOnly) {
+    clientSecretInput.setAttribute('aria-describedby', 'managementSessionNote');
+  } else {
+    clientSecretInput.removeAttribute('aria-describedby');
+  }
+
+  clientIdInput.disabled = staged;
+  clientSecretInput.disabled = staged;
+  managementRemovalNote.hidden = !staged;
+  undoManagementRemovalBtn.hidden = !staged;
+  removeManagementBtn.hidden = staged || !managementRemoveConfirm.hidden;
+  removeManagementBtn.disabled = state.settingsClientId === '' && !state.settingsHasClientSecret;
+} // End of function updateManagementAffordance()
+
+/**
+ * "Remove management access" handler: asks for confirmation inline (no
+ * second modal), with focus on its Cancel.
+ */
+export function requestManagementRemoval(): void {
+  if (removeManagementBtn.disabled || state.settingsRemoveManagement) return;
+  managementRemoveConfirm.hidden = false;
+  removeManagementBtn.hidden = true;
+  cancelManagementRemoveBtn.focus();
+}
+
+/**
+ * Cancel handler of the inline removal confirmation: back to the Remove button.
+ */
+export function cancelManagementRemoval(): void {
+  managementRemoveConfirm.hidden = true;
+  updateManagementAffordance();
+  removeManagementBtn.focus();
+}
+
+/**
+ * Confirm handler of the inline removal confirmation: stages the removal
+ * (applied by Save as `removeManagementAccess: true`; Cancel, closing the
+ * modal or "Keep management access" drop it), empties the fields and moves
+ * focus to "Keep management access".
+ */
+export function confirmManagementRemoval(): void {
+  state.settingsRemoveManagement = true;
+  managementRemoveConfirm.hidden = true;
+  clientIdInput.value = '';
+  clientSecretInput.value = '';
+  updateManagementAffordance();
+  undoManagementRemovalBtn.focus();
+}
+
+/**
+ * "Keep management access" handler: drops the staged removal and restores the
+ * stored Client ID in its field.
+ */
+export function undoManagementRemoval(): void {
+  state.settingsRemoveManagement = false;
+  clientIdInput.value = state.settingsClientId;
+  updateManagementAffordance();
+  removeManagementBtn.focus();
+}
 
 /**
  * Shows the pinned certificate fingerprint in the trusted-certificate
@@ -216,6 +350,10 @@ export async function confirmCertificateReset(): Promise<void> {
  * the previously stored (encrypted) password, and is a validation error when
  * no password is stored yet OR the URL now designates a different controller
  * (credentials are URL-scoped; the main process enforces the same rules).
+ * The management-access fields follow planManagementSave()
+ * (management-form.ts): the Client Secret is sent only when typed, a blank
+ * one keeps the stored secret for the same controller and Client ID, and a
+ * staged removal is sent as `removeManagementAccess`.
  * The URL is validated/normalized here and again in the main process. A save
  * that changed the controller URL makes the main process close the current
  * connection (reported as `connectionReset`): the connected UI is dropped
@@ -265,10 +403,26 @@ export async function saveSettings(): Promise<void> {
       // Blank field, same controller: the main process keeps the stored password
     }
 
+    // Management access (optional): the Client ID / typed Client Secret, a
+    // staged removal, or nothing when unchanged (mirrors the main rules)
+    const management = planManagementSave({
+      removeStaged: state.settingsRemoveManagement,
+      clientIdField: clientIdInput.value,
+      clientSecretField: clientSecretInput.value,
+      storedClientId: state.settingsClientId,
+      hasClientSecret: state.settingsHasClientSecret,
+      sameUrl: isSameControllerUrl(state.settingsStoredUrl, normalizedUrl),
+    });
+    if (!management.ok) {
+      showToast(t(MANAGEMENT_ERROR_KEYS[management.error]), 'error');
+      return;
+    }
+
     const payload: ConfigSavePayload = {
       url: normalizedUrl,
       username,
-      language: languageSelect.value as Language
+      language: languageSelect.value as Language,
+      ...management.fields
     };
     // Send the password only when the user typed a new one
     if (typedPassword) {
@@ -298,10 +452,18 @@ export async function saveSettings(): Promise<void> {
       applyTranslations();
 
       closeSettings();
+
+      // A typed Client Secret that main could not store encrypted is kept for
+      // this session only: say so (the modal showed the note before saving)
+      if (payload.clientSecret !== undefined && result.managementAccess?.clientSecretSessionOnly === true) {
+        showToast(t('managementSavedSessionOnly'), 'info');
+      }
     } else if (result.error === 'invalidUrl') {
       showToast(t('invalidUrl'), 'error');
     } else if (result.error === 'passwordRequired') {
       showToast(t('passwordRequired'), 'error');
+    } else if (result.error === 'invalidClientId' || result.error === 'clientIdRequired' || result.error === 'clientSecretRequired') {
+      showToast(t(MANAGEMENT_ERROR_KEYS[result.error]), 'error');
     } else {
       showToast(t('saveError'), 'error');
     }

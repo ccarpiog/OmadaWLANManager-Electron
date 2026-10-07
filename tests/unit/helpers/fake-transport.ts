@@ -1,6 +1,6 @@
 // Fake OmadaTransport for unit tests: serves canned replies per
 // "METHOD /path?query" route and records every request, so OmadaController
-// can be driven end-to-end without Electron or any network.
+// and OpenApiClient can be driven end-to-end without Electron or any network.
 
 import type {
   OmadaHttpRequest,
@@ -20,11 +20,13 @@ export interface FakeReply {
 }
 
 /**
- * A route serves either the same reply forever, or a sequence of replies
+ * A route serves either the same reply forever, a sequence of replies
  * (one per call; an exhausted sequence fails the request loudly, which
- * catches unexpected extra calls such as a second re-login).
+ * catches unexpected extra calls such as a second re-login), or a handler
+ * that computes the reply per request (it may return a promise to hold the
+ * reply until the test releases it, or throw to simulate a transport error).
  */
-export type FakeRoute = FakeReply | FakeReply[];
+export type FakeRoute = FakeReply | FakeReply[] | ((request: RecordedRequest) => FakeReply | Promise<FakeReply>);
 
 /**
  * A request as seen by the fake transport.
@@ -95,13 +97,14 @@ export class FakeTransport implements OmadaTransport {
    */
   async send(request: OmadaHttpRequest, onResponseHeaders: (headers: ResponseHeaders) => void): Promise<OmadaHttpResponse> {
     const path = request.url.startsWith(this.baseUrl) ? request.url.slice(this.baseUrl.length) : request.url;
-    this.requests.push({
+    const recorded: RecordedRequest = {
       method: request.method,
       url: request.url,
       path,
       headers: { ...request.headers },
       body: request.body === undefined ? undefined : JSON.parse(request.body),
-    });
+    };
+    this.requests.push(recorded);
 
     const key = `${request.method} ${path}`;
     const route = this.routes.get(key);
@@ -109,7 +112,9 @@ export class FakeTransport implements OmadaTransport {
       throw new Error(`FakeTransport: no route for ${key}`);
     }
     let reply: FakeReply | undefined;
-    if (Array.isArray(route)) {
+    if (typeof route === 'function') {
+      reply = await route(recorded);
+    } else if (Array.isArray(route)) {
       reply = route.shift();
       if (reply === undefined) {
         throw new Error(`FakeTransport: no more replies for ${key}`);
