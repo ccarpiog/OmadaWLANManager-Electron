@@ -494,10 +494,19 @@ everything is built against the documented contract and fixtures.
       - the tunnel's site-id format.
     - **Tests:** unit 1122 → 1153 (`tests/unit/cloud-controller-session.test.ts`, 31 tests, on
       `tests/fixtures/cloud/controller-tunnel.json`); smoke and the TLS probe unchanged.
+    - **Review fixes** (`docs/reviews/phaseI-1b1.md`; unit 1153 → 1156):
+      - ✅ Truncated site list: `connect()` now throws `listIncomplete` when `listSites()` is `truncated`, before the
+        empty check and `pickSite()`, so no site is auto-selected from a partial list (existing es / en text; test).
+      - ✅ Routing identifiers: on the cloud route `OpenApiClient` keeps the tunnel base URL, the serverHost origin and
+        bare host and the deviceId as by-value scrub values in `#scrub()` (longest first: the base URL goes whole);
+        the local route scrubs none (cloud and local tests in `tests/unit/openapi-cloud-route.test.ts`).
   - **I-1b2 — `ConnectionManager` targets and wiring (risk: high):** local / cloud targets, the switch IPC with the
     synchronous invalidation, `localOmadacId` learned on a local connect, `activeController` / `cloudSites` persisted
     with a local fallback, session nonces on `omada:get-aps` / `omada:get-wlans` / `omada:set-wlan`, race tests, smoke
     stub, `npm run tls-probe` green.
+    - Acceptance also includes (I-1b1 review): before the cloud session is installable, move planning, inventory and
+      network counts must honor `ssidListUnknown` (no definitive "0 networks" and no reach diff for an unknown
+      group), or the mapper fails closed.
 
 ### I-1c Settings cloud section, controller switcher, docs — risk: high
 - **What (spec "UI"):**

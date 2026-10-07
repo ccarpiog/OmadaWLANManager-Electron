@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T14:58:33Z",
+ "updated": "2026-10-07T15:11:39Z",
  "plan": "todo.md",
  "goal": "Add AP-group and Wi-Fi network management for Omada 6.3 to the Electron app, then remote controllers through the TP-Link cloud.",
  "phases": [
@@ -319,22 +319,24 @@
    "title": "Cloud controller session",
    "status": "in_progress",
    "risk": "high",
-   "summary": "Split into I-1b1 (cloud controller session on fixtures) and I-1b2 (connection targets, switching and wiring)."
+   "summary": "Split into I-1b1 (cloud controller session on fixtures, done) and I-1b2 (connection targets, switching and wiring)."
   },
   {
    "id": "I-1b1",
    "title": "Cloud controller session",
-   "status": "in_progress",
+   "status": "done",
    "risk": "high",
-   "summary": "Cloud controller session implemented, verified and reviewed; its three review fixes are owed before it closes.",
-   "review": "docs/reviews/phaseI-1b1.md"
+   "summary": "Adds an Open-API-only cloud controller session with moves verified by a re-read, on fixtures, not wired yet.",
+   "review": "docs/reviews/phaseI-1b1.md",
+   "narrative": "docs/progress-archive/phase-i-1b1.md",
+   "commit": "5aba471"
   },
   {
    "id": "I-1b2",
    "title": "Cloud connection targets and wiring",
    "status": "queued",
    "risk": "high",
-   "summary": "Adds local and cloud connection targets, controller switching over guarded IPC, persistence and race tests."
+   "summary": "Adds local and cloud connection targets, switching over guarded IPC, persistence, race tests and unknown-network handling; split before starting."
   },
   {
    "id": "I-1c",

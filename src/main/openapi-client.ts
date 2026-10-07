@@ -57,6 +57,10 @@
 //   the cloud route only, a refusal (a non-zero errorCode, also inside a
 //   non-2xx answer) keeps TP-Link's message as well, redacted and scrubbed
 //   (`controllerMessage`, scrubbed of the account's secret and tokens too).
+//   On the cloud route every scrubbed text (a refusal's message, a transport
+//   failure, a token failure) also loses the target's routing identifiers by
+//   value: the tunnel base URL, the serverHost origin and bare host, the
+//   deviceId. The local route scrubs no routing value.
 //   describeOpenApiFailure() appends it: the spec shows a view-only
 //   credential's refusal with its code and message. The local route never
 //   keeps controller text.
@@ -940,6 +944,10 @@ export class OpenApiClient {
   // Tokens this client received (newest last), scrubbed from diagnostics;
   // emptied by close()
   #knownTokens: string[] = [];
+  // Cloud route only: the target's routing identifiers (the tunnel base URL,
+  // the serverHost origin and bare host, the deviceId), scrubbed by value
+  // from every diagnostic. Local: none
+  readonly #routingValues: readonly string[];
   #closed = false;
 
   /**
@@ -966,6 +974,8 @@ export class OpenApiClient {
       }
       this.route = 'cloud';
       this.baseUrl = `${target.serverOrigin}/v1/cloudaccess/${encodePathSegment(target.deviceId)}`;
+      // redactText() replaces longer values first, so the base URL goes whole
+      this.#routingValues = [this.baseUrl, target.serverOrigin, new URL(target.serverOrigin).hostname, target.deviceId];
       this.omadacId = target.omadacId;
       this.clientId = '';
       this.#clientSecret = '';
@@ -998,6 +1008,7 @@ export class OpenApiClient {
     this.#tokenProvider = null;
     this.#throttle = null;
     this.#tokenRejectedCodes = TOKEN_REJECTED_ERROR_CODES;
+    this.#routingValues = [];
   } // End of constructor
 
   /**
@@ -1823,14 +1834,16 @@ export class OpenApiClient {
    * Redacts a diagnostic text, also removing this client's Client Secret,
    * every token it received, the call's own secrets and (cloud route) the
    * token provider's live secrets — the account's cloud Client Secret and
-   * tokens — by value, and cuts it to MAX_DIAGNOSTIC_CHARS.
+   * tokens — and the target's routing identifiers (the tunnel base URL, the
+   * serverHost origin and host, the deviceId) by value, longest first, and
+   * cuts it to MAX_DIAGNOSTIC_CHARS.
    * @param {string} text - The raw text.
    * @param {readonly string[]} [secrets] - The call's own secrets (e.g. a passphrase).
    * @returns {string} The sanitized text.
    */
   #scrub(text: string, secrets: readonly string[] = []): string {
     const providerSecrets = this.#tokenProvider?.liveSecrets?.() ?? [];
-    return redactText(text, [this.#clientSecret, ...this.#knownTokens, ...providerSecrets, ...secrets]).slice(0, MAX_DIAGNOSTIC_CHARS);
+    return redactText(text, [this.#clientSecret, ...this.#knownTokens, ...providerSecrets, ...secrets, ...this.#routingValues]).slice(0, MAX_DIAGNOSTIC_CHARS);
   }
 
   /**

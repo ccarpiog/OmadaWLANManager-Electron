@@ -31,7 +31,9 @@
 // - Sites: connect() reads `GET …/sites` (paged) and picks a site with the
 //   local rule (pickSite(): the only one, or the remembered id while it is
 //   listed; otherwise the user chooses through ConnectOutcome); selectSite()
-//   accepts a listed id only. An empty list is 'noSites'.
+//   accepts a listed id only. A listing not proven complete is
+//   'listIncomplete' before anything else (a partial list could auto-select
+//   the one site it saw); a complete but empty list is 'noSites'.
 // - Access points: `GET …/sites/{siteId}/ap-groups/aps`, paged to totalRows
 //   (a listing not proven complete is 'listIncomplete', never a shorter
 //   list), mapped by toCloudAccessPoint(): a field the controller does not
@@ -112,7 +114,7 @@ const NON_AP_DEVICE_TYPES = /^(gateway|switch)$/i;
 // - 'superseded': the call's client was closed (logout, a newer connect, the
 //   cloud credential changed) while it ran: its answer is discarded;
 // - 'noSites': the controller lists no site;
-// - 'listIncomplete': the AP or group list could not be proven complete;
+// - 'listIncomplete': the site, AP or group list could not be proven complete;
 // - 'requestFailed': an Open API call failed (diagnostic: the call and codes);
 // - 'moveRequestFailed' / 'moveNotConfirmed' / 'moveUnverified': see the header.
 export const CLOUD_SESSION_ERROR_CODES = [
@@ -367,10 +369,13 @@ export class CloudControllerBackend implements ControllerBackend {
   /**
    * Lists the controller's sites through the cloud route and picks one with
    * the local rule (see the header). Refused before any request below 6.3.
+   * A site list not proven complete is refused ('listIncomplete') before the
+   * empty check and the pick, so no site is selected from a partial list.
    * @param {string} [preferredSiteId] - The remembered site id (I-1b2: `cloudSites`).
    * @returns {Promise<ConnectOutcome>} Whether a site is selected, and the sites.
-   * @throws {CloudSessionError} 'versionTooOld', 'versionUnknown', 'noSites',
-   *   'requestFailed', 'superseded' or 'notConnected'.
+   * @throws {CloudSessionError} 'versionTooOld', 'versionUnknown',
+   *   'listIncomplete', 'noSites', 'requestFailed', 'superseded' or
+   *   'notConnected'.
    */
   async connect(preferredSiteId?: string): Promise<ConnectOutcome> {
     if (this.#ended) {
@@ -392,12 +397,13 @@ export class CloudControllerBackend implements ControllerBackend {
       throw this.#callFailed('requestFailed', 'sites', error, client);
     }
     this.#assertCurrent(client);
+    if (listed.truncated) {
+      // Fail closed: pickSite() could auto-select the one site a partial list shows
+      throw new CloudSessionError('listIncomplete', `sites truncated, ${listed.items.length} listed`);
+    }
     const sites = listed.items.map((site) => ({ id: site.id, name: site.name }));
     if (sites.length === 0) {
-      throw new CloudSessionError('noSites', listed.truncated ? 'sites 0, truncated' : 'sites 0');
-    }
-    if (listed.truncated) {
-      console.warn(`Cloud controller site list incomplete: ${sites.length} sites offered`);
+      throw new CloudSessionError('noSites', 'sites 0');
     }
     this.#sites = sites;
     this.#siteId = pickSite(sites, preferredSiteId);

@@ -5,14 +5,15 @@
 // local route), the omadacId taken from the organization, the token from the
 // CloudAccountClient, an auth-error retry through a fresh account token, a
 // non-allowlisted serverHost refused before any request, the shared throttle
-// and the -7132 backoff, and cloud token failures mapped to OpenApiError codes.
+// and the -7132 backoff, cloud token failures mapped to OpenApiError codes, and
+// the target's routing identifiers scrubbed from every diagnostic (cloud only).
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { CLOUD_ORGANIZATIONS_PATH, CLOUD_TOKEN_PATH, CloudAccountClient } from '../../src/main/cloud-account-client';
 import { cloudControllerTarget, validateCloudOrganization, type CloudControllerTarget } from '../../src/main/cloud-account-model';
 import { CloudRequestThrottle } from '../../src/main/cloud-throttle';
-import { OpenApiClient, OpenApiError, TOKEN_PATH, type OpenApiErrorCode } from '../../src/main/openapi-client';
+import { describeOpenApiFailure, OpenApiClient, OpenApiError, TOKEN_PATH, type OpenApiErrorCode } from '../../src/main/openapi-client';
 import guide from '../fixtures/cloud/account-guide.json';
 import { FakeClock } from './helpers/fake-clock';
 import { FakeTransport, type FakeReply } from './helpers/fake-transport';
@@ -202,6 +203,58 @@ describe('OpenApiClient cloud route: tokens and errors', () => {
       assert.ok(starts[index] - starts[index - 5] >= 1000, `start ${index}`);
     }
   }); // End of test "the tunnel and the account share ONE throttle..."
+
+  test('a refusal (2xx and non-2xx) and a transport failure lose the tunnel base URL, the serverHost origin and host and the deviceId by value, the base URL whole', async () => {
+    const { client, transport } = setup();
+    const sites = tunnel(`/openapi/v1/${OMADAC_ID}/sites?page=1&pageSize=100`);
+    const base = `${APS}${PREFIX}`;
+    const host = new URL(APS).hostname;
+    const msg = `No permission for ${base}/openapi/v1 via ${APS} (host ${host}, device ${DEVICE_ID}).`;
+    let call = 0;
+    transport.on('POST', `${EUW}${CLOUD_TOKEN_PATH}`, tokenReply('a1-AT-cloudTokenValue000000000007')).on('GET', sites, () => {
+      call++;
+      if (call === 3) {
+        throw new Error(`connect ECONNREFUSED ${base}/openapi/v1 (${host}, ${DEVICE_ID})`);
+      }
+      return { status: call === 1 ? 200 : 403, body: { errorCode: -1005, msg } };
+    });
+    const refused = await expectOpenApiError(client.listSites(), 'apiError');
+    const forbidden = await expectOpenApiError(client.listSites(), 'httpError');
+    const unreachable = await expectOpenApiError(client.listSites(), 'networkError');
+    // Longest value first: the base URL goes whole, not as "[REDACTED]/v1/cloudaccess/[REDACTED]"
+    const scrubbed = 'No permission for [REDACTED]/openapi/v1 via [REDACTED] (host [REDACTED], device [REDACTED]).';
+    assert.equal(refused.controllerMessage, scrubbed);
+    assert.equal(forbidden.controllerMessage, scrubbed);
+    assert.equal(unreachable.diagnostic, 'connect ECONNREFUSED [REDACTED]/openapi/v1 ([REDACTED], [REDACTED])');
+    for (const error of [refused, forbidden, unreachable]) {
+      for (const text of [error.message, error.diagnostic, error.controllerMessage ?? '', describeOpenApiFailure(error)]) {
+        for (const value of [base, APS, host, DEVICE_ID]) {
+          assert.ok(!text.includes(value), `${value} in ${text}`);
+        }
+      }
+    } // End of the loop over the three failures
+  }); // End of test "a refusal (2xx and non-2xx) and a transport failure..."
+
+  test('the local route scrubs no routing value: its refusal and transport-failure diagnostics are unchanged', async () => {
+    const localBase = 'https://controller.invalid:8043';
+    const transport = new FakeTransport(localBase);
+    const local = new OpenApiClient({ baseUrl: localBase, omadacId: 'c0ffee00c0ffee00c0ffee00', clientId: 'id', clientSecret: 'secret', transport });
+    // Short enough for MAX_DIAGNOSTIC_CHARS with its context
+    const msg = `No permission for ${localBase}/openapi/v1 (device ${DEVICE_ID}).`;
+    let call = 0;
+    transport.on('POST', TOKEN_PATH, tokenReply('AT-local-1')).on('GET', '/openapi/v1/c0ffee00c0ffee00c0ffee00/sites?page=1&pageSize=100', () => {
+      call++;
+      if (call === 2) {
+        throw new Error(`connect ECONNREFUSED ${localBase}/openapi/v1 (${DEVICE_ID})`);
+      }
+      return { body: { errorCode: -1005, msg } };
+    });
+    const refused = await expectOpenApiError(local.listSites(), 'apiError');
+    assert.equal(refused.diagnostic, `GET request failed: errorCode -1005 (${msg})`);
+    assert.equal(refused.controllerMessage, null, 'the local route keeps no controller text');
+    const unreachable = await expectOpenApiError(local.listSites(), 'networkError');
+    assert.equal(unreachable.diagnostic, `connect ECONNREFUSED ${localBase}/openapi/v1 (${DEVICE_ID})`);
+  }); // End of test "the local route scrubs no routing value..."
 });
 
 describe('OpenApiClient cloud route: the serverHost allowlist', () => {

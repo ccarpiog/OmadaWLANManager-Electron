@@ -147,6 +147,8 @@ The template is `{serverHost}/v1/cloudaccess/{deviceId}/**`, followed by the sel
   - On the cloud route only, a refusal (a non-zero `errorCode`, also inside a non-2xx answer) keeps TP-Link's message
     as `OpenApiError.controllerMessage`. It is redacted and scrubbed by value of the client's tokens and of the token
     provider's live secrets (the account's cloud Client Secret and tokens: `CloudTokenProvider.liveSecrets()`).
+    Every scrubbed cloud-route text (that message, a transport or token failure) also loses the target's routing
+    identifiers by value: the tunnel base URL, the `serverHost` origin and bare host, and the `deviceId`.
     `describeOpenApiFailure()` appends it to the codes, e.g. `apiError, errorCode -44121 (…)`. The local route never
     keeps controller text.
 - The cloud controller session (§12, phase I-1b1) uses the cloud route for all its calls. `ConnectionManager` does
@@ -318,7 +320,7 @@ It is Electron-free and unit-tested on fixtures (`tests/unit/cloud-controller-se
 
 | Need | Call (behind `{serverHost}/v1/cloudaccess/{deviceId}`) | Rule |
 |---|---|---|
-| Sites (connect) | `GET /openapi/v1/{omadacId}/sites` (paged) | the only site, or the remembered id while it is listed (`pickSite()`, the local rule); otherwise the user picks a listed id; none → `noSites` |
+| Sites (connect) | `GET /openapi/v1/{omadacId}/sites` (paged) | a listing not proven complete → `listIncomplete` (before anything else: no pick from a partial list); then the only site, or the remembered id while it is listed (`pickSite()`, the local rule); otherwise the user picks a listed id; none → `noSites` |
 | Access points | `GET …/sites/{siteId}/ap-groups/aps` (paged to `totalRows`) | see below |
 | Groups | `GET …/sites/{siteId}/ap-groups` (paged) | see below |
 | Capability check | `GET /openapi/v1/{omadacId}/sites` | the token works and the site is still listed |

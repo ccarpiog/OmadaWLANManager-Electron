@@ -5,7 +5,7 @@
 // management code over one fake transport (no Electron, no network, never a
 // tplinkcloud.com request; tests/fixtures/cloud/controller-tunnel.json):
 // - orgVersion → version / group model, and the fail-closed refusal below 6.3;
-// - sites (GET …/sites) and the site pick;
+// - sites (GET …/sites) and the site pick (never from an incomplete list);
 // - the AP mapping from ap-groups/aps (missing fields → unknown, paging, an
 //   incomplete listing refused) and the group listing from ap-groups (empty
 //   groups, per-band capacity, SSID names, Open API ids);
@@ -450,6 +450,30 @@ describe('cloud controller session: sites', () => {
     assert.equal(refused.openApiCode, 'invalidCredentials', 'I-1b2 can point at Settings');
     assert.match(refused.diagnostic, /errorCode -52602/);
   }); // End of test "no site is noSites; a..."
+
+  test('a site list not proven complete is listIncomplete before the empty check and the pick: the one site seen is not selected, nothing site-scoped is sent', async () => {
+    const harness = new CloudHarness();
+    const sitesPage2 = v1('/sites?page=2&pageSize=100');
+    // One site on page 1 of a reported 2, then an empty page 2: the walk
+    // cannot prove the list complete, and pickSite() would take the one site
+    harness.transport.on('GET', SITES, ok({ totalRows: 2, data: [{ siteId: SITE_ID, name: 'Planta 4' }] })).on('GET', sitesPage2, ok({ totalRows: 2, data: [] }));
+    const session = harness.newSession();
+    const incomplete = await expectCloudError(session.connect(), 'listIncomplete');
+    assert.equal(incomplete.diagnostic, 'sites truncated, 1 listed');
+    assert.equal(session.site, null, 'not auto-selected');
+    assert.equal(session.selectSite(SITE_ID), false, 'nor selectable afterwards');
+    await expectCloudError(session.getAccessPoints(), 'notConnected');
+    await expectCloudError(session.getWlanGroups(), 'notConnected');
+    assert.deepEqual(harness.transport.log(), [`POST ${TOKEN_URL}`, `GET ${SITES}`, `GET ${sitesPage2}`], 'no site-scoped request');
+    // The remembered site does not slip through a partial list either
+    const remembered = harness.newSession();
+    await expectCloudError(remembered.connect(SITE_ID), 'listIncomplete');
+    assert.equal(remembered.site, null);
+    // An empty first page of a reported non-empty list: listIncomplete, not noSites
+    harness.transport.on('GET', SITES, ok({ totalRows: 3, data: [] }));
+    const empty = await expectCloudError(harness.newSession().connect(), 'listIncomplete');
+    assert.equal(empty.diagnostic, 'sites truncated, 0 listed');
+  }); // End of test "a site list not proven complete..."
 });
 
 describe('cloud controller session: access points from ap-groups/aps', () => {
