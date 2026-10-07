@@ -13,9 +13,10 @@ A modern desktop application for moving TP-Link Omada Controller access points b
   without any network — see [Controller versions](#controller-versions)) and the
   **Wi-Fi networks** (with the groups and access points that broadcast each one);
   names link between the views, with **Back to …** to return
-- With management access (Omada 6.3 and later): create, rename and delete AP groups, and
-  see how many more Wi-Fi networks each band of a group can take (the Wi-Fi networks view
-  stays read-only)
+- With management access (Omada 6.3 and later): create, rename and delete AP groups,
+  see how many more Wi-Fi networks each band of a group can take, and see each Wi-Fi
+  network's enabled state, security, bands, whether a password is set and where it is
+  broadcast (the Wi-Fi networks view stays read-only)
 - Move one or more access points into another group, including an empty one to silence them,
   after reviewing which Wi-Fi networks they gain and lose; access points are moved one at a time,
   with a per-access-point result and **Retry failed**
@@ -63,8 +64,9 @@ npm run dev
    - **Password**: Your Omada Controller password
    - **Management access (optional)**: the **Client ID** and **Client Secret** of an
      Open API application created in the controller's settings (client credentials
-     mode). They unlock AP-group management (Wi-Fi network management is not
-     available yet). While connected, the app checks whether they grant it
+     mode). They unlock AP-group management and the Wi-Fi networks' settings in
+     the Wi-Fi networks view (editing Wi-Fi networks is not available yet). While
+     connected, the app checks whether they grant it
      (Omada 6.3 or later, an access token, and the connected site and its AP
      groups must match what the controller reports), and **Test management
      access** shows the precise result
@@ -105,9 +107,17 @@ npm run dev
    the groups and access points that broadcast it ("N groups · M APs", or "at least
    M APs" when some access points' groups cannot be identified). Clicking a
    group, network or access point name opens it in its view; **Back to …** returns
-   to where you were. Security, bands and whether a network is enabled are not
-   shown: they need management access, which the Wi-Fi networks view does not use
-   yet. With management access, the AP groups view adds **New group** (an empty
+   to where you were. Without management access, security, bands and whether a
+   network is enabled are not shown. With it, the Wi-Fi networks view lists the
+   controller's networks with their enabled state, security, bands and where they
+   are broadcast ("All access points", "N groups · M APs", or "Unknown scope" when
+   the controller does not say clearly; a value it does not report clearly reads
+   "Unknown"), and a network's details add whether a password is set (never the
+   password itself); if the networks cannot be read completely, the view says why,
+   with **Retry**, instead of showing a partial list (when a later read fails, the
+   last list stays on screen with a notice giving its time and the reason, and
+   **Retry**). With management access, the
+   AP groups view adds **New group** (an empty
    group, name only), **Rename** and **Delete**, and each group's remaining
    capacity per band ("Not reported" when the controller does not say); a group
    the controller reports full on a band (no room for another Wi-Fi network)

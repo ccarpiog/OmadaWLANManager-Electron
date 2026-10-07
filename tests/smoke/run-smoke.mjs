@@ -179,7 +179,7 @@ const EXPECTED_BRIDGE = [
 // The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
 const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
 // One launch per run*() function in main()
-const EXPECTED_LAUNCHES = 6;
+const EXPECTED_LAUNCHES = 7;
 // Fingerprints of the fake controller's self-signed certificates (launch 3)
 const FINGERPRINT_A = Array.from({ length: 32 }, (_, index) => (index * 7 + 16).toString(16).toUpperCase().padStart(2, '0')).join(':');
 const FINGERPRINT_B = Array.from({ length: 32 }, (_, index) => (255 - index).toString(16).toUpperCase().padStart(2, '0')).join(':');
@@ -6143,6 +6143,862 @@ async function runApGroupManagement(electronInfo) {
 } // End of function runApGroupManagement()
 
 // ============================================================================
+// Launch 7: the Wi-Fi networks view on the managed source (phase 17b) — the
+// managed list with its scopes and values, the details, cross-navigation,
+// no secret in the DOM, a lower bound, the error state with Retry (also for
+// a malformed or incomplete read, never a partial list), stale replies
+// discarded, management off or being checked → the 14a view (Spanish, then
+// English)
+// ============================================================================
+
+// The fixture APs without the one that reports no group (Bodega): every AP
+// is placed, so the scopes are exact (a check adds Bodega back)
+const NETS_APS = data.accessPoints.filter((ap) => ap.wlanGroup !== '');
+// Sentinel secrets planted in the raw payloads of the [nets] launch (plus the
+// stub's default passphrase): none may reach the DOM or a reply
+const NETS_SECRETS = ['SENTINEL-nets-casa-key', 'SENTINEL-nets-oficina-key', 'SENTINEL-nets-radius', 'SENTINEL-nets-catalog', 'SENTINEL-nets-ppsk', 'stub-passphrase-never-shown'];
+
+/**
+ * The id of the n-th network of the [nets] launch.
+ * @param {number} n - Its number (1–9).
+ * @returns {string} The id.
+ */
+function netId(n) {
+  return `5f00c0ffee00000000000e0${n}`;
+}
+
+// The fake controller's Wi-Fi networks for the [nets] launch, as RAW Open API
+// payloads (the stub's `networks` knob; it runs them through main's real
+// validators and DTO builder): Casa (WPA-Personal, 2.4 + 5 GHz, bound to
+// Default), Invitados (open, every band, disabled, "All access points"),
+// Oficina (WPA-Personal, 5 GHz, bound to zGrupo B and Default), IoT
+// (WPA-Enterprise, 2.4 GHz, bound to zNinguna and Exterior) and Rara (values
+// the ops doc does not define: an unknown scope, security, bands and state)
+const NETS_NETWORKS = [
+  {
+    entry: { id: netId(1), name: 'Casa', ssidEnable: true, chooseDevices: 1, band: 3, security: 3, securityKey: 'SENTINEL-nets-catalog' },
+    detail: { id: netId(1), ssidEnable: true, chooseDevices: 1, band: 3, security: 3, apGroupIds: [GROUP.Default.wlanId], pskSetting: { securityKey: 'SENTINEL-nets-casa-key' } },
+    bindings: { apGroups: [{ id: GROUP.Default.wlanId }] },
+  },
+  {
+    entry: { id: netId(2), name: 'Invitados', description: false, chooseDevices: 0, band: 7, security: 0 },
+    detail: { id: netId(2), ssidEnable: false, chooseDevices: 0, band: 7, security: 0 },
+    bindings: { apGroups: [] },
+  },
+  {
+    entry: { id: netId(3), name: 'Oficina', ssidEnable: true, chooseDevices: 1, band: 2, security: 3 },
+    detail: {
+      id: netId(3), ssidEnable: true, chooseDevices: 1, band: 2, security: 3, apGroupIds: [GROUP['zGrupo B'].wlanId, GROUP.Default.wlanId],
+      pskSetting: { securityKey: 'SENTINEL-nets-oficina-key' }, ppskSetting: { keys: [{ key: 'SENTINEL-nets-ppsk' }] },
+    },
+    bindings: { apGroups: [{ id: GROUP['zGrupo B'].wlanId }, { id: GROUP.Default.wlanId }] },
+  },
+  {
+    entry: { id: netId(4), name: 'IoT', ssidEnable: true, chooseDevices: 1, band: 1, security: 2 },
+    detail: { id: netId(4), ssidEnable: true, chooseDevices: 1, band: 1, security: 2, apGroupIds: [GROUP.zNinguna.wlanId, GROUP.Exterior.wlanId], entSetting: { radiusSecret: 'SENTINEL-nets-radius' } },
+    bindings: { apGroups: [{ id: GROUP.zNinguna.wlanId }, { id: GROUP.Exterior.wlanId }] },
+  },
+  {
+    entry: { id: netId(5), name: 'Rara', chooseDevices: 7, band: 0, security: 9 },
+    detail: { id: netId(5), chooseDevices: 7 },
+    bindings: {},
+  },
+];
+// One more network (the stale-reply check): open, 2.4 GHz, "All access points"
+const NETS_NEW_NETWORK = {
+  entry: { id: netId(6), name: 'Nueva', ssidEnable: true, chooseDevices: 0, band: 1, security: 0 },
+  detail: { id: netId(6), ssidEnable: true, chooseDevices: 0, band: 1, security: 0 },
+  bindings: { apGroups: [] },
+};
+// A failed read as main answers it
+const NETS_FAILURE = { success: false, error: 'requestFailed', diagnostic: 'ssids: httpError, HTTP 503' };
+
+// Strings of the managed Wi-Fi networks view (src/renderer/i18n.ts)
+const NETS_TEXT = {
+  es: {
+    all: 'Todos los puntos de acceso', unknownScope: 'Alcance desconocido',
+    enabled: 'Activada', disabled: 'Desactivada', stateUnknown: 'Estado desconocido',
+    open: 'Abierta', wpaPersonal: 'WPA-Personal', wpaEnterprise: 'WPA-Enterprise', securityUnknown: 'Seguridad desconocida', bandsUnknown: 'Bandas desconocidas',
+    band2g: '2,4 GHz', band5g: '5 GHz', bands2g5g: '2,4 GHz y 5 GHz', bandsAll: '2,4 GHz, 5 GHz y 6 GHz',
+    stateLabel: 'Estado', securityLabel: 'Seguridad', bandsLabel: 'Bandas', passphraseLabel: 'Contraseña',
+    passphraseSet: 'Configurada', passphraseNone: 'Ninguna', valueUnknown: 'Se desconoce',
+    allNote: 'Se emite en todos los puntos de acceso del sitio, también en los que se añadan más adelante.',
+    unknownNote: 'El controlador no indica con claridad dónde se emite esta red, así que no se muestran sus grupos ni sus puntos de acceso.',
+    errRequestFailed: 'El controlador no pudo enviar las redes Wi-Fi.',
+    errListIncomplete: 'No se pudo leer la lista completa de redes Wi-Fi (o tiene más de las que la aplicación lee de una vez): no se muestra una lista parcial.',
+    errInvalidReply: 'La respuesta sobre las redes Wi-Fi no es válida: no se muestra nada de ella.',
+    errFailed: 'No se pudieron leer las redes Wi-Fi.',
+    // The refresh-error notice of a stale list (a failed re-read kept it)
+    stale: 'No se pudieron actualizar las redes Wi-Fi. Se muestra la lista de las {time}. {reason}',
+  },
+  en: {
+    all: 'All access points', unknownScope: 'Unknown scope',
+    enabled: 'Enabled', disabled: 'Disabled', stateUnknown: 'State unknown',
+    open: 'Open', wpaPersonal: 'WPA-Personal', wpaEnterprise: 'WPA-Enterprise', securityUnknown: 'Security unknown', bandsUnknown: 'Bands unknown',
+    band2g: '2.4 GHz', band5g: '5 GHz', bands2g5g: '2.4 GHz and 5 GHz', bandsAll: '2.4 GHz, 5 GHz, and 6 GHz',
+    stateLabel: 'State', securityLabel: 'Security', bandsLabel: 'Bands', passphraseLabel: 'Password',
+    passphraseSet: 'Set', passphraseNone: 'None', valueUnknown: 'Unknown',
+    allNote: 'Broadcast on every access point of the site, including those added later.',
+    unknownNote: 'The controller does not report clearly where this network is broadcast, so its AP groups and access points are not shown.',
+    errRequestFailed: 'The controller could not send the Wi-Fi networks.',
+    errListIncomplete: 'The complete list of Wi-Fi networks could not be read (or it has more than the app reads at once): a partial list is not shown.',
+    errInvalidReply: 'The answer about the Wi-Fi networks is not valid: none of it is shown.',
+    errFailed: 'The Wi-Fi networks could not be read.',
+    // The refresh-error notice of a stale list (a failed re-read kept it)
+    stale: 'Couldn\'t refresh the Wi-Fi networks. Showing the list from {time}. {reason}',
+  },
+};
+
+/**
+ * The managed master list the view must show for NETS_NETWORKS and
+ * NETS_APS: per network (sorted by name) its id, name, enabled state /
+ * security / bands line and scope.
+ * @param {'es' | 'en'} language - UI language.
+ * @returns {Array<{ id: string; name: string; props: string; scope: string }>}
+ */
+function expectedManagedItems(language) {
+  const text = TEXT[language];
+  const nets = NETS_TEXT[language];
+  const groups = (count) => (count === 1 ? text.groupOne : fmt(text.groupMany, { count }));
+  return [
+    { id: netId(1), name: 'Casa', props: `${nets.enabled} · ${nets.wpaPersonal} · ${nets.bands2g5g}`, scope: `${groups(1)} · ${fmt(text.apMany, { count: 4 })}` },
+    { id: netId(2), name: 'Invitados', props: `${nets.disabled} · ${nets.open} · ${nets.bandsAll}`, scope: nets.all },
+    { id: netId(4), name: 'IoT', props: `${nets.enabled} · ${nets.wpaEnterprise} · ${nets.band2g}`, scope: `${groups(2)} · ${text.apOne}` },
+    { id: netId(3), name: 'Oficina', props: `${nets.enabled} · ${nets.wpaPersonal} · ${nets.band5g}`, scope: `${groups(2)} · ${fmt(text.apMany, { count: 5 })}` },
+    { id: netId(5), name: 'Rara', props: `${nets.stateUnknown} · ${nets.securityUnknown} · ${nets.bandsUnknown}`, scope: nets.unknownScope },
+  ];
+} // End of function expectedManagedItems()
+
+/**
+ * The facts of a managed network's detail as readDetailPane() reads them.
+ * @param {'es' | 'en'} language - UI language.
+ * @param {string} enabled - The enabled state's value.
+ * @param {string} security - The security's value.
+ * @param {string} bands - The bands' value.
+ * @param {string} passphrase - The password's value.
+ * @returns {object} The facts.
+ */
+function expectedFacts(language, enabled, security, bands, passphrase) {
+  const nets = NETS_TEXT[language];
+  const fact = (label, value) => ({ label, value, status: null, link: null });
+  return {
+    enabled: fact(nets.stateLabel, enabled),
+    security: fact(nets.securityLabel, security),
+    bands: fact(nets.bandsLabel, bands),
+    passphrase: fact(nets.passphraseLabel, passphrase),
+  };
+} // End of function expectedFacts()
+
+/**
+ * Reads the Wi-Fi networks master list with its mode (data-networks-mode):
+ * per item its network id (managed only), name, label, the enabled state /
+ * security / bands line (managed only), scope and aria-current.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<{ mode: string | null; items: object[] }>}
+ */
+function readManagedList(page) {
+  return page.evaluate(() => ({
+    mode: document.getElementById('networkList')?.dataset.networksMode ?? null,
+    items: Array.from(document.querySelectorAll('#networkList .master-item')).map((item) => ({
+      id: item.dataset.networkId ?? null,
+      name: item.dataset.networkName,
+      label: item.querySelector('.item-name')?.textContent ?? '',
+      props: item.querySelector('.network-properties')?.textContent ?? null,
+      scope: item.querySelector('.network-scope')?.textContent ?? '',
+      current: item.getAttribute('aria-current'),
+    })),
+  }));
+} // End of function readManagedList()
+
+/**
+ * Waits until the Wi-Fi networks list is in the given mode.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} mode - 'internal', 'managedLoading', 'managedReady' or 'managedFailed'.
+ * @returns {Promise<void>}
+ */
+async function waitForNetworksMode(page, mode) {
+  await page.waitForFunction((expected) => document.getElementById('networkList')?.dataset.networksMode === expected, mode, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the managed list's error state shows the given text.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} text - Expected message.
+ * @returns {Promise<void>}
+ */
+async function waitForNetworksError(page, text) {
+  await page.waitForFunction((expected) => document.querySelector('#networkList .state-block[data-state="networksError"] p')?.textContent === expected, text, { timeout: WAIT_MS });
+}
+
+/**
+ * Reads the managed list's refresh-error notice (#networksStaleNotice, a
+ * stale list kept after a failed re-read): whether it is shown (and
+ * actually visible), its role, text, failure code (data-error), the time of
+ * the list it keeps (data-read-at, and formatted as the app formats it),
+ * whether it carries the amber stale dot, and its Retry (action and text).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The notice.
+ */
+function readNetworksStaleNotice(page) {
+  return page.evaluate(() => {
+    const notice = document.getElementById('networksStaleNotice');
+    const retry = document.getElementById('networksStaleRetryBtn');
+    const dot = notice?.querySelector('.stale-dot') ?? null;
+    const readAt = notice?.dataset.readAt ? Number(notice.dataset.readAt) : null;
+    return {
+      shown: Boolean(notice && !notice.hidden),
+      visible: Boolean(notice?.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true })),
+      role: notice?.getAttribute('role') ?? null,
+      text: document.getElementById('networksStaleNoticeText')?.textContent ?? '',
+      error: notice?.dataset.error ?? null,
+      readAt,
+      time: readAt === null ? null : new Intl.DateTimeFormat(document.documentElement.lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(readAt)),
+      dot: Boolean(dot?.checkVisibility() && dot.getAttribute('aria-hidden') === 'true' && getComputedStyle(dot).backgroundColor !== 'rgba(0, 0, 0, 0)'),
+      retryAction: retry?.dataset.stateAction ?? null,
+      retryText: retry?.textContent ?? '',
+    };
+  }); // End of the in-page stale-notice probe
+} // End of function readNetworksStaleNotice()
+
+/**
+ * Waits until the managed list's refresh-error notice is shown for the
+ * given failure code.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} error - The failure code (data-error).
+ * @returns {Promise<void>}
+ */
+async function waitForNetworksStale(page, error) {
+  await page.waitForFunction((expected) => {
+    const notice = document.getElementById('networksStaleNotice');
+    return Boolean(notice) && !notice.hidden && notice.dataset.error === expected;
+  }, error, { timeout: WAIT_MS });
+}
+
+/**
+ * Runs "Test management access" again from Settings and waits for its
+ * result line, then closes Settings. While the check runs the session's
+ * capabilities are cleared: the Wi-Fi networks view falls back to its 14a
+ * view and forgets its managed list, so a passing check reads that list
+ * again from scratch (a FIRST read: skeleton, then the list or the error
+ * state).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} text - The expected result line.
+ * @returns {Promise<void>}
+ */
+async function recheckManagement(page, text) {
+  await openSettingsWhenIdle(page);
+  await page.click('#testManagementBtn');
+  await waitForTestResult(page, text);
+  await page.click('#cancelSettingsBtn');
+  await waitForSettingsClosed(page);
+}
+
+/**
+ * Opens a network's detail from the master list and waits for its heading.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} name - The network name.
+ * @returns {Promise<void>}
+ */
+async function openNetworkDetail(page, name) {
+  await page.click(`#networkList .master-item[data-network-name="${name}"]`);
+  await page.waitForFunction((expected) => document.getElementById('networkDetailName')?.textContent === expected, name, { timeout: WAIT_MS });
+}
+
+/**
+ * Clicks Refresh once no load is in flight, and waits for the next
+ * management:networks call to reach the stub.
+ * @param {object} session - The launch.
+ * @returns {Promise<void>}
+ */
+async function refreshNetworks(session) {
+  const before = callsTo(await stubState(session), 'management:networks').length;
+  await waitForLoadIdle(session.page);
+  await session.page.click('#refreshBtn');
+  await waitForStubCall(session, 'management:networks', before);
+}
+
+/**
+ * Lists the [nets] sentinel secrets found in the renderer: in the markup
+ * (attributes included) or in any input's value.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<string[]>} The leaked secrets (empty when clean).
+ */
+function findNetworkSecrets(page) {
+  return page.evaluate((secrets) => {
+    const values = Array.from(document.querySelectorAll('input')).map((input) => input.value).join('\n');
+    const html = document.documentElement.outerHTML;
+    return secrets.filter((secret) => html.includes(secret) || values.includes(secret));
+  }, NETS_SECRETS);
+}
+
+/**
+ * Lists the buttons and fields of the Wi-Fi networks view other than its
+ * master items, cross-links, search, single-pane Back and the error state's
+ * actions (no edit control may exist before phase 18).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<string[]>} Their ids or classes.
+ */
+function networkViewControls(page) {
+  return page.evaluate(() => Array.from(document.querySelectorAll('#viewNetworks button, #viewNetworks input, #viewNetworks select, #viewNetworks textarea'))
+    .filter((element) => !element.classList.contains('master-item') && !element.classList.contains('cross-link') && !element.classList.contains('drill-back') &&
+      element.id !== 'networkSearch' && element.dataset.stateAction === undefined)
+    .map((element) => element.id || element.className));
+}
+
+/**
+ * Wi-Fi networks launch (phase 17b): an Omada 6.3 controller with management
+ * access whose every check passes and scripted networks (NETS_NETWORKS); the
+ * Wi-Fi networks view shows the managed list — scopes "All access points",
+ * "N groups · M APs" and an explicit unknown scope, the enabled state,
+ * security and bands, only whether a password is set — with the details and
+ * cross-navigation; no secret reaches the DOM; an AP without a group makes
+ * the count a lower bound; a failed, malformed or incomplete re-read keeps
+ * the last good list whole, stale, with the refresh-error notice (its time,
+ * the reason, Retry); a failed, malformed or incomplete first read shows the
+ * error state with Retry (never a partial list); late replies of an older
+ * read or session are discarded; while management is off or being checked
+ * the 14a view is shown unchanged, and the Back history's managed entries
+ * survive a check that passes again; English. The read path in main is
+ * unit-tested (wifi-network-read.test.ts), the renderer logic too
+ * (renderer-network-management.test.ts).
+ * @param {{ binary: string }} electronInfo - Resolved Electron binary.
+ * @returns {Promise<void>}
+ */
+async function runManagedNetworks(electronInfo) {
+  const session = await launch(electronInfo, 'nets', {
+    config: { url: CONTROLLER_URL, username: 'admin', language: 'es', hasPassword: true, clientId: 'owm-client-1', hasClientSecret: true },
+    connect: { success: true },
+    siteName: 'Casa',
+    controllerVersion: data.controllerVersion,
+    accessPoints: NETS_APS,
+    wlanGroups: data.wlanGroups,
+    networks: NETS_NETWORKS,
+  });
+  const { page } = session;
+  const es = TEXT.es;
+  const nets = NETS_TEXT.es;
+  /**
+   * The Spanish status label of a fixture AP.
+   * @param {string} name - AP name.
+   * @returns {string} The label.
+   */
+  const statusOf = (name) => es.status[AP[name].statusCategory] ?? es.statusUnknown;
+  // The APs of the Default group, in list order (sorted by name)
+  const defaultAps = ['EAP Carpio', 'Garaje', 'Porche', 'Salón'];
+  const casaSelector = '#networkList .master-item[data-network-name="Casa"] .network-scope';
+
+  try {
+    await checkTranslations(session, 'es');
+
+    await check('[nets] es: management on — the Wi-Fi networks view shows the managed list (getManagedNetworks() with the session nonce) instead of the 14a internal data: one entry per network (5, also the sidebar count), sorted, each with its enabled state, security and bands and its scope — Casa "1 grupo · 4 AP", Invitados "Todos los puntos de acceso", IoT "2 grupos · 1 AP", Oficina "2 grupos · 5 AP", Rara "Alcance desconocido" with "Estado desconocido · Seguridad desconocida · Bandas desconocidas"; no read-only banner', async () => {
+      await waitForConnected(page);
+      await waitForApCount(page, NETS_APS.filter((ap) => MAC_REGEX.test(ap.mac)).length);
+      await page.click('#navNetworks');
+      await waitForNetworksMode(page, 'managedReady');
+      const list = await readManagedList(page);
+      const nav = await readNav(page);
+      const notices = await readNotices(page);
+      const detail = await readDetailPane(page, '#networkDetail');
+      const snapshot = await stubState(session);
+      const reads = callsTo(snapshot, 'management:networks');
+      return verdict(
+        isDeepStrictEqual(list.items.map(({ id, name, props, scope }) => ({ id, name, props, scope })), expectedManagedItems('es')) &&
+        list.items.every((item) => item.label === item.name && item.current === null) && nav.networks.count === '5' &&
+        !notices.bannerShown && detail?.empty === es.networkDetailPrompt &&
+        reads.length >= 1 && reads.every((call) => isDeepStrictEqual(call.args, [snapshot.sessionNonce])),
+        { list, nav: nav.networks, notices, detail, reads: reads.map((call) => call.args), nonce: snapshot.sessionNonce }
+      );
+    }); // End of check "[nets] es: management on..."
+
+    await check('[nets] es: the managed details, read-only — Casa: "Estado Activada", "Seguridad WPA-Personal", "Bandas 2,4 GHz y 5 GHz", "Contraseña Configurada" (only whether one is set), Default ("4 AP") and its 4 APs as links; Invitados: "Ninguna" and the "all access points" note, no group or AP list; IoT: "Contraseña Se desconoce", Exterior ("Sin AP") and zNinguna ("1 AP") with Jardín; Rara: every value "Se desconoce" and the unknown-scope note (never guessed); no edit control in the view', async () => {
+      await openNetworkDetail(page, 'Casa');
+      const casa = await readDetailPane(page, '#networkDetail');
+      const current = (await readManagedList(page)).items.filter((item) => item.current === 'true').map((item) => item.id);
+      await openNetworkDetail(page, 'Invitados');
+      const invitados = await readDetailPane(page, '#networkDetail');
+      await openNetworkDetail(page, 'IoT');
+      const iot = await readDetailPane(page, '#networkDetail');
+      await openNetworkDetail(page, 'Rara');
+      const rara = await readDetailPane(page, '#networkDetail');
+      const controls = await networkViewControls(page);
+      const groupsTitle = (count) => `${es.groupsTitle.apGroup} (${count})`;
+      return verdict(
+        isDeepStrictEqual(current, [netId(1)]) &&
+        casa.heading === 'Casa' && casa.headingTag === 'h3' && casa.summary === `${es.groupOne} · ${fmt(es.apMany, { count: 4 })}` &&
+        isDeepStrictEqual(casa.facts, expectedFacts('es', nets.enabled, nets.wpaPersonal, nets.bands2g5g, nets.passphraseSet)) &&
+        casa.sections.groups?.title === groupsTitle(1) &&
+        isDeepStrictEqual(casa.sections.groups.rows, [{ link: 'Default', status: null, meta: fmt(es.apMany, { count: 4 }) }]) &&
+        isDeepStrictEqual(casa.sections.groups.links.map((link) => [link.kind, link.target]), [['group', GROUP.Default.wlanId]]) &&
+        casa.sections.aps?.title === `${es.accessPoints} (4)` &&
+        isDeepStrictEqual(casa.sections.aps.rows, defaultAps.map((name) => ({ link: name, status: statusOf(name), meta: null }))) &&
+        casa.notes.length === 0 &&
+        invitados.summary === nets.all && isDeepStrictEqual(invitados.facts, expectedFacts('es', nets.disabled, nets.open, nets.bandsAll, nets.passphraseNone)) &&
+        Object.keys(invitados.sections).length === 0 && isDeepStrictEqual(invitados.notes, [{ kind: 'allAccessPoints', text: nets.allNote }]) &&
+        iot.summary === `${fmt(es.groupMany, { count: 2 })} · ${es.apOne}` &&
+        isDeepStrictEqual(iot.facts, expectedFacts('es', nets.enabled, nets.wpaEnterprise, nets.band2g, nets.valueUnknown)) &&
+        iot.sections.groups?.title === groupsTitle(2) &&
+        isDeepStrictEqual(iot.sections.groups.rows, [{ link: 'Exterior', status: null, meta: es.apNone }, { link: 'zNinguna', status: null, meta: es.apOne }]) &&
+        isDeepStrictEqual(iot.sections.aps?.rows, [{ link: 'Jardín', status: statusOf('Jardín'), meta: null }]) &&
+        rara.summary === nets.unknownScope &&
+        isDeepStrictEqual(rara.facts, expectedFacts('es', nets.valueUnknown, nets.valueUnknown, nets.valueUnknown, nets.valueUnknown)) &&
+        Object.keys(rara.sections).length === 0 && isDeepStrictEqual(rara.notes, [{ kind: 'unknownScope', text: nets.unknownNote }]) &&
+        controls.length === 0,
+        { current, casa, invitados, iot, rara, controls }
+      );
+    }); // End of check "[nets] es: the managed details..."
+
+    await check('[nets] es: no secret reaches the renderer — none of the sentinel passphrases, PPSK key and RADIUS secret planted in the raw payloads (nor the stub\'s default passphrase) appears anywhere in the DOM (markup, attributes, input values) after every managed detail was shown, nor in a getManagedNetworks() reply, which carries only the DTO keys', async () => {
+      const leaks = [];
+      for (const name of ['Casa', 'Invitados', 'IoT', 'Oficina', 'Rara']) {
+        await openNetworkDetail(page, name);
+        leaks.push(...(await findNetworkSecrets(page)));
+      }
+      const nonce = (await stubState(session)).sessionNonce;
+      const reply = await callBridge(page, 'getManagedNetworks', nonce);
+      const text = JSON.stringify(reply);
+      const networks = reply.value?.networks ?? [];
+      return verdict(
+        leaks.length === 0 && reply.value?.success === true && networks.length === 5 &&
+        networks.every((network) => isDeepStrictEqual(Object.keys(network).sort(), NETWORK_DTO_KEYS)) &&
+        NETS_SECRETS.every((secret) => !text.includes(secret)),
+        { leaks, reply: text.slice(0, 400) }
+      );
+    }); // End of check "[nets] es: no secret reaches the renderer..."
+
+    await check('[nets] es: cross-navigation keeps working on the managed source — Casa\'s group link opens Default in AP groups with "Volver a Casa"; Default\'s network link "Invitados" opens the managed Invitados (its id selected, its facts shown) with "Volver a Default"; Back twice returns to Casa\'s managed detail with focus on its Default link', async () => {
+      await openNetworkDetail(page, 'Casa');
+      await page.click(`#networkDetail .cross-link[data-link-kind="group"][data-link-target="${GROUP.Default.wlanId}"]`);
+      await page.waitForFunction(() => document.getElementById('groupDetailName')?.textContent === 'Default', null, { timeout: WAIT_MS });
+      const toGroup = await readInventory(page);
+      await page.click('#groupDetail .cross-link[data-link-kind="network"][data-link-target="Invitados"]');
+      await page.waitForFunction(() => document.getElementById('networkDetailName')?.textContent === 'Invitados', null, { timeout: WAIT_MS });
+      const toNetwork = await readInventory(page);
+      const invitados = await readDetailPane(page, '#networkDetail');
+      const current = (await readManagedList(page)).items.filter((item) => item.current === 'true').map((item) => item.id);
+      await page.click('#backBtn');
+      await page.waitForFunction(() => document.getElementById('groupDetailName')?.textContent === 'Default' && !document.getElementById('viewGroups').hidden, null, { timeout: WAIT_MS });
+      const backOnce = await readInventory(page);
+      await page.click('#backBtn');
+      await page.waitForFunction(() => document.getElementById('networkDetailName')?.textContent === 'Casa' && !document.getElementById('viewNetworks').hidden, null, { timeout: WAIT_MS });
+      const backTwice = await readInventory(page);
+      const casa = await readDetailPane(page, '#networkDetail');
+      return verdict(
+        isDeepStrictEqual(toGroup.shown, ['viewGroups']) && toGroup.backLabel === fmt(es.backTo, { target: 'Casa' }) && toGroup.currentGroup === GROUP.Default.wlanId &&
+        isDeepStrictEqual(toNetwork.shown, ['viewNetworks']) && toNetwork.backLabel === fmt(es.backTo, { target: 'Default' }) &&
+        toNetwork.currentNetwork === 'Invitados' && isDeepStrictEqual(current, [netId(2)]) && invitados.facts.passphrase?.value === nets.passphraseNone &&
+        isDeepStrictEqual(backOnce.shown, ['viewGroups']) && backOnce.backLabel === fmt(es.backTo, { target: 'Casa' }) &&
+        isDeepStrictEqual(backTwice.shown, ['viewNetworks']) && backTwice.backHidden && backTwice.currentNetwork === 'Casa' &&
+        backTwice.focus.linkKind === 'group' && backTwice.focus.linkTarget === GROUP.Default.wlanId &&
+        isDeepStrictEqual(casa.facts, expectedFacts('es', nets.enabled, nets.wpaPersonal, nets.bands2g5g, nets.passphraseSet)),
+        { toGroup, toNetwork, current, backOnce, backTwice: backTwice.focus }
+      );
+    }); // End of check "[nets] es: cross-navigation keeps working..."
+
+    await check('[nets] es: a lower bound is never shown as exact — once an AP that reports no group (Bodega) is loaded (Refresh), Casa reads "1 grupo · al menos 4 AP; no se puede identificar el grupo de 1 AP" in the list and the detail (whose AP section then has no count, with the note), while "Todos los puntos de acceso" and "Alcance desconocido" stay', async () => {
+      const expected = `${es.groupOne} · ${fmt(es.apAtLeastMany, { count: 4 })}; ${es.scopeUnknownOne}`;
+      await configureStub(session, { accessPoints: data.accessPoints });
+      try {
+        await refreshNetworks(session);
+        await page.waitForFunction(({ selector, text }) => document.querySelector(selector)?.textContent === text, { selector: casaSelector, text: expected }, { timeout: WAIT_MS });
+        await waitForNetworksMode(page, 'managedReady');
+        const list = await readManagedList(page);
+        const detail = await readDetailPane(page, '#networkDetail');
+        const scopes = Object.fromEntries(list.items.map((item) => [item.name, item.scope]));
+        return verdict(
+          scopes.Casa === expected && scopes.Invitados === nets.all && scopes.Rara === nets.unknownScope &&
+          detail.heading === 'Casa' && detail.summary === expected && detail.sections.aps?.title === es.accessPoints &&
+          isDeepStrictEqual(detail.sections.aps.notes, [es.networkUnknownOne]),
+          { scopes, detail: detail.sections.aps }
+        );
+      } finally {
+        await configureStub(session, { accessPoints: NETS_APS });
+        await refreshNetworks(session);
+        await page.waitForFunction(({ selector, text }) => document.querySelector(selector)?.textContent === text, { selector: casaSelector, text: `${es.groupOne} · ${fmt(es.apMany, { count: 4 })}` }, { timeout: WAIT_MS });
+      }
+    }); // End of check "[nets] es: a lower bound is never shown as exact..."
+
+    await check('[nets] es: a failed RE-READ keeps the last good list (§4.6 refresh error) — after a good read, a refresh whose managed read fails ("requestFailed"), throws, or answers a reply breaking the DTO contract (a valid new network next to a "wep" one) keeps the same 5 networks on screen, whole (nothing of the failed reply mixed in), with Casa still selected and its detail, the sidebar count 5 and no error state; above the view a notice "No se pudieron actualizar las redes Wi-Fi. Se muestra la lista de las hh:mm. <motivo>" (the time of the last good read, the amber stale dot, "Reintentar"), only on this view; its "Reintentar" reads again (the list stays, the notice goes while it runs, focus moves to the search) and the successful read clears it', async () => {
+      const validNew = { id: netId(6), name: 'Nueva', security: 'open', bands: ['band2g'], enabled: true, hasPassphrase: false, scope: 'allAccessPoints', apGroupIds: [] };
+      const cases = [
+        { patch: { networksResult: NETS_FAILURE }, error: 'requestFailed', reason: `${nets.errRequestFailed} (${NETS_FAILURE.diagnostic})` },
+        { patch: { networksResult: null, failChannels: ['management:networks'] }, error: 'failed', reason: nets.errFailed },
+        { patch: { failChannels: [], networksResult: { success: true, networks: [validNew, { ...validNew, id: netId(7), name: 'WEP', security: 'wep' }] } }, error: 'invalidReply', reason: nets.errInvalidReply },
+      ];
+      const seen = [];
+      let otherView;
+      let backOnView;
+      let during;
+      let duringNotice;
+      let duringFocus;
+      let after;
+      let afterNotice;
+      try {
+        await openNetworkDetail(page, 'Casa');
+        for (const { patch, error, reason } of cases) {
+          const startedAt = Date.now();
+          await configureStub(session, patch);
+          await refreshNetworks(session);
+          await waitForNetworksStale(page, error);
+          const notice = await readNetworksStaleNotice(page);
+          const list = await readManagedList(page);
+          const blocks = await readStateBlocks(page);
+          const detail = await readDetailPane(page, '#networkDetail');
+          const nav = await readNav(page);
+          seen.push({
+            error, reason, startedAt, notice, mode: list.mode,
+            items: list.items.map(({ id, name, props, scope }) => ({ id, name, props, scope })),
+            current: list.items.filter((item) => item.current === 'true').map((item) => item.id),
+            block: blocks.networkList.state, heading: detail.heading, passphrase: detail.facts.passphrase?.value ?? null, navCount: nav.networks.count,
+          });
+        } // End of the loop over the failing re-reads
+        // The notice (above the views) belongs to the Wi-Fi networks view alone
+        await page.click('#navGroups');
+        otherView = await readNetworksStaleNotice(page);
+        await page.click('#navNetworks');
+        backOnView = await readNetworksStaleNotice(page);
+        // Its Retry: held 800 ms, then a good read with one more network
+        await configureStub(session, { networksResult: null, failChannels: [], delays: { 'management:networks': 800 }, networks: [...NETS_NETWORKS, NETS_NEW_NETWORK] });
+        const before = callsTo(await stubState(session), 'management:networks').length;
+        await page.click('#networksStaleRetryBtn');
+        await waitForStubCall(session, 'management:networks', before);
+        during = await readManagedList(page);
+        duringNotice = await readNetworksStaleNotice(page);
+        duringFocus = await readFocus(page);
+        await page.waitForSelector('#networkList .master-item[data-network-name="Nueva"]', { timeout: WAIT_MS });
+        after = await readManagedList(page);
+        afterNotice = await readNetworksStaleNotice(page);
+      } finally {
+        await configureStub(session, { networksResult: null, failChannels: [], delays: {}, networks: NETS_NETWORKS });
+        await refreshNetworks(session);
+        await page.waitForFunction(() => document.querySelector('#networkList .master-item[data-network-name="Nueva"]') === null && document.getElementById('networksStaleNotice').hidden, null, { timeout: WAIT_MS });
+      }
+      const readAt = seen[0]?.notice.readAt ?? null;
+      return verdict(
+        seen.length === cases.length &&
+        seen.every((entry) => entry.mode === 'managedReady' && isDeepStrictEqual(entry.items, expectedManagedItems('es')) && isDeepStrictEqual(entry.current, [netId(1)]) &&
+          entry.block === null && entry.heading === 'Casa' && entry.passphrase === nets.passphraseSet && entry.navCount === '5' &&
+          entry.notice.shown && entry.notice.visible && entry.notice.role === 'status' && entry.notice.error === entry.error && entry.notice.dot &&
+          entry.notice.readAt === readAt && entry.notice.text === fmt(nets.stale, { time: entry.notice.time, reason: entry.reason }) &&
+          entry.notice.retryAction === 'retryNetworks' && entry.notice.retryText === es.retry) &&
+        readAt !== null && readAt < seen[0].startedAt &&
+        !otherView.shown && !otherView.visible && backOnView.shown && backOnView.visible &&
+        during.mode === 'managedReady' && during.items.length === 5 && !duringNotice.shown && duringFocus.id === 'networkSearch' &&
+        after.mode === 'managedReady' && after.items.length === 6 && isDeepStrictEqual(after.items.filter((item) => item.current === 'true').map((item) => item.id), [netId(1)]) &&
+        !afterNotice.shown && afterNotice.text === '' && afterNotice.error === null,
+        { seen, otherView, backOnView, during: during?.items.length, duringNotice, duringFocus, after: after?.items.length, afterNotice }
+      );
+    }); // End of check "[nets] es: a failed RE-READ keeps the last good list..."
+
+    await check('[nets] es: a failed FIRST read shows the §4.6 error state in the list\'s place — once "Probar el acceso de gestión" made the view read its list from scratch: a persistent alert "El controlador no pudo enviar las redes Wi-Fi. (ssids: httpError, HTTP 503)" with "Reintentar" and "Ajustes", no network listed, no stale notice and an empty detail; the sidebar falls back to the internal count (7); "Reintentar" reads again with the session nonce, shows the loading skeleton while it runs (focus moves to the search) and then the list, with Casa selected again', async () => {
+      await configureStub(session, { networksResult: NETS_FAILURE });
+      try {
+        await recheckManagement(page, CAPS_TEXT.es.result.ok);
+        const message = `${nets.errRequestFailed} (${NETS_FAILURE.diagnostic})`;
+        await waitForNetworksError(page, message);
+        const failed = await readManagedList(page);
+        const blocks = await readStateBlocks(page);
+        const detail = await readDetailPane(page, '#networkDetail');
+        const nav = await readNav(page);
+        const notice = await readNetworksStaleNotice(page);
+        await configureStub(session, { networksResult: null, delays: { 'management:networks': 800 } });
+        const before = callsTo(await stubState(session), 'management:networks').length;
+        await page.click('#networkList [data-state-action="retryNetworks"]');
+        await waitForNetworksMode(page, 'managedLoading');
+        const loading = await readStateBlocks(page);
+        const focus = await readFocus(page);
+        await waitForNetworksMode(page, 'managedReady');
+        const ready = await readManagedList(page);
+        const again = await readDetailPane(page, '#networkDetail');
+        const snapshot = await stubState(session);
+        const retries = callsTo(snapshot, 'management:networks').slice(before);
+        return verdict(
+          failed.mode === 'managedFailed' && failed.items.length === 0 &&
+          blocks.networkList.state === 'networksError' && blocks.networkList.text === message && blocks.networkList.alert &&
+          isDeepStrictEqual(blocks.networkList.actions, [['retryNetworks', es.retry], ['settings', es.settings]]) &&
+          detail.heading === null && detail.empty === null && nav.networks.count === '7' && !notice.shown &&
+          loading.networkList.state === 'loading' && loading.networkList.skeletonRows > 0 && loading.networkList.skeletonRole === 'status' &&
+          focus.id === 'networkSearch' &&
+          isDeepStrictEqual(ready.items.map(({ id, name, props, scope }) => ({ id, name, props, scope })), expectedManagedItems('es')) &&
+          isDeepStrictEqual(ready.items.filter((item) => item.current === 'true').map((item) => item.id), [netId(1)]) && again.heading === 'Casa' &&
+          retries.length === 1 && isDeepStrictEqual(retries[0].args, [snapshot.sessionNonce]),
+          { failed, blocks: blocks.networkList, detail, nav: nav.networks, notice, loading: loading.networkList, focus, ready: ready.items.length, again: again.heading, retries: retries.length }
+        );
+      } finally {
+        await configureStub(session, { networksResult: null, delays: {} });
+      }
+    }); // End of check "[nets] es: a failed FIRST read shows the §4.6 error state..."
+
+    await check('[nets] es: never a partial list on a first read — one network\'s malformed detail (main answers "ssid detail: malformedResponse"), a catalog too long to read ("networkListIncomplete") and a reply breaking the DTO contract (one network with an unknown security mode: "La respuesta sobre las redes Wi-Fi no es válida: no se muestra nada de ella.") each show the error state with "Reintentar" and no network at all (the first read from scratch after "Probar el acceso de gestión", the others while the error state holds no list)', async () => {
+      const brokenDetail = NETS_NETWORKS.map((network, index) => (index === 2 ? { ...network, detail: { ...network.detail, id: netId(9) } } : network));
+      const validCasa = { id: netId(1), name: 'Casa', security: 'wpaPersonal', bands: ['band2g'], enabled: true, hasPassphrase: true, scope: 'allAccessPoints', apGroupIds: [] };
+      const cases = [
+        { patch: { networks: brokenDetail }, error: 'requestFailed', text: `${nets.errRequestFailed} (ssid detail: malformedResponse)` },
+        { patch: { networks: NETS_NETWORKS, networksResult: { success: false, error: 'networkListIncomplete', diagnostic: 'ssids 130, over 128' } }, error: 'networkListIncomplete', text: `${nets.errListIncomplete} (ssids 130, over 128)` },
+        { patch: { networksResult: { success: true, networks: [validCasa, { ...validCasa, id: netId(7), name: 'WEP', security: 'wep' }] } }, error: 'invalidReply', text: nets.errInvalidReply },
+      ];
+      const seen = [];
+      try {
+        for (const [index, { patch, error, text }] of cases.entries()) {
+          await configureStub(session, patch);
+          if (index === 0) {
+            await recheckManagement(page, CAPS_TEXT.es.result.ok);
+          } else {
+            await refreshNetworks(session);
+          }
+          await waitForNetworksError(page, text);
+          const list = await readManagedList(page);
+          const blocks = await readStateBlocks(page);
+          const errorCode = await page.evaluate(() => document.querySelector('#networkList .state-block')?.dataset.error ?? null);
+          seen.push({ error, errorCode, items: list.items.length, mode: list.mode, actions: blocks.networkList.actions });
+        } // End of the loop over the failing reads
+      } finally {
+        await configureStub(session, { networks: NETS_NETWORKS, networksResult: null });
+        await refreshNetworks(session);
+        await waitForNetworksMode(page, 'managedReady');
+      }
+      return verdict(
+        seen.length === cases.length &&
+        seen.every((entry) => entry.errorCode === entry.error && entry.items === 0 && entry.mode === 'managedFailed' && entry.actions[0]?.[0] === 'retryNetworks'),
+        seen
+      );
+    }); // End of check "[nets] es: never a partial list..."
+
+    await check('[nets] es: a reply of an older read is discarded — the stub holds one read 2.5 s; a newer read answers at once with one more network ("Nueva", "Todos los puntos de acceso"); when the held read finally answers (with an error) the list stays as the newer read left it, with no error state and no stale notice', async () => {
+      try {
+        await configureStub(session, { delays: { 'management:networks': 2500 } });
+        await refreshNetworks(session);
+        await configureStub(session, { delays: {}, networks: [...NETS_NETWORKS, NETS_NEW_NETWORK] });
+        await refreshNetworks(session);
+        await page.waitForSelector('#networkList .master-item[data-network-name="Nueva"]', { timeout: WAIT_MS });
+        await configureStub(session, { networksResult: NETS_FAILURE });
+        // Let the held read land
+        await page.waitForTimeout(2800);
+        const list = await readManagedList(page);
+        const blocks = await readStateBlocks(page);
+        const notice = await readNetworksStaleNotice(page);
+        const snapshot = await stubState(session);
+        const reads = callsTo(snapshot, 'management:networks').slice(-2);
+        return verdict(
+          list.mode === 'managedReady' && list.items.length === 6 && list.items.some((item) => item.name === 'Nueva' && item.scope === nets.all) &&
+          blocks.networkList.state === null && !notice.shown && reads.length === 2 && reads.every((call) => isDeepStrictEqual(call.args, [snapshot.sessionNonce])),
+          { list: list.items.map((item) => item.name), mode: list.mode, block: blocks.networkList.state, notice, reads: reads.map((call) => call.args) }
+        );
+      } finally {
+        await configureStub(session, { delays: {}, networks: NETS_NETWORKS, networksResult: null });
+        await refreshNetworks(session);
+        await page.waitForFunction(() => document.querySelector('#networkList .master-item[data-network-name="Nueva"]') === null, null, { timeout: WAIT_MS });
+      }
+    }); // End of check "[nets] es: a reply of an older read is discarded..."
+
+    await check('[nets] es: a reply that arrives after a reconnect (old session nonce, answered "superseded") is discarded: the new session\'s managed list stays on screen, with no error state', async () => {
+      const before = await stubState(session);
+      const oldNonce = before.sessionNonce;
+      try {
+        await configureStub(session, { delays: { 'management:networks': 3000 } });
+        await refreshNetworks(session);
+      } finally {
+        await configureStub(session, { delays: {} });
+      }
+      await waitForLoadIdle(page);
+      await page.click('#connectBtn');
+      await waitForStatus(page, es.disconnected);
+      await page.click('#connectBtn');
+      await waitForConnected(page);
+      await waitForNetworksMode(page, 'managedReady');
+      // Let the old reply land
+      await page.waitForTimeout(3300);
+      const list = await readManagedList(page);
+      const blocks = await readStateBlocks(page);
+      const snapshot = await stubState(session);
+      const stale = callsTo(snapshot, 'management:networks').filter((call) => call.args[0] === oldNonce);
+      return verdict(
+        snapshot.sessionNonce !== oldNonce && stale.length >= 1 && list.mode === 'managedReady' && blocks.networkList.state === null &&
+        isDeepStrictEqual(list.items.map(({ id, name, props, scope }) => ({ id, name, props, scope })), expectedManagedItems('es')),
+        { mode: list.mode, block: blocks.networkList.state, stale: stale.length, oldNonce, nonce: snapshot.sessionNonce }
+      );
+    }); // End of check "[nets] es: a reply that arrives after a reconnect..."
+
+    await check('[nets] es: management off or being checked → the 14a view, unchanged — while "Probar el acceso de gestión" re-checks the view falls back to the internal list at once; with a failing check ("siteNotFound") the banner states it and the view is the 14a one (one entry per network name with its 14a scope, no managed values, the sidebar counts 7; Casa\'s detail says security, bands and enabled state need management access) and no managed read is made; when the check passes again the managed list returns', async () => {
+      let checking;
+      let off;
+      let offDetail;
+      let offNav;
+      let notices;
+      let readsWhileOff;
+      try {
+        await configureStub(session, { delays: { 'management:test': 1000 } });
+        await openSettingsWhenIdle(page);
+        await page.click('#testManagementBtn');
+        await page.waitForFunction(() => document.getElementById('readOnlyBanner')?.dataset.reason === 'managementChecking', null, { timeout: WAIT_MS });
+        checking = await readManagedList(page);
+        await waitForTestResult(page, CAPS_TEXT.es.result.ok);
+        await configureStub(session, { delays: {}, managementReason: 'siteNotFound', managementDiagnostic: 'sites 2' });
+        await page.click('#testManagementBtn');
+        await waitForTestResult(page, `${CAPS_TEXT.es.result.siteNotFound} (sites 2)`);
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+        await waitForNetworksMode(page, 'internal');
+        const readsBefore = callsTo(await stubState(session), 'management:networks').length;
+        await waitForLoadIdle(page);
+        await page.click('#refreshBtn');
+        await waitForLoadIdle(page);
+        off = await readManagedList(page);
+        offNav = await readNav(page);
+        notices = await readNotices(page);
+        await openNetworkDetail(page, 'Casa');
+        offDetail = await readDetailPane(page, '#networkDetail');
+        readsWhileOff = callsTo(await stubState(session), 'management:networks').length - readsBefore;
+      } finally {
+        await configureStub(session, { delays: {}, managementReason: null, managementDiagnostic: null });
+        if (await page.isVisible('#settingsModal.visible')) {
+          await page.click('#cancelSettingsBtn');
+          await waitForSettingsClosed(page);
+        }
+        await openSettingsWhenIdle(page);
+        await page.click('#testManagementBtn');
+        await waitForTestResult(page, CAPS_TEXT.es.result.ok);
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+      }
+      await waitForNetworksMode(page, 'managedReady');
+      const on = await readManagedList(page);
+      const expected14a = expectedNetworkItems(NETS_APS, data.wlanGroups, 'es');
+      return verdict(
+        checking.mode === 'internal' && checking.items.every((item) => item.id === null && item.props === null) &&
+        off.mode === 'internal' && isDeepStrictEqual(off.items.map(({ name, label, scope }) => ({ name, label, scope })), expected14a) &&
+        off.items.every((item) => item.id === null && item.props === null) && offNav.networks.count === String(expected14a.length) &&
+        notices.bannerShown && notices.bannerReason === 'siteNotFound' &&
+        offDetail.heading === 'Casa' && isDeepStrictEqual(offDetail.notes, [{ kind: 'managementOnly', text: es.managementOnly }]) &&
+        Object.keys(offDetail.facts).length === 0 && readsWhileOff === 0 &&
+        isDeepStrictEqual(on.items.map(({ id, name, props, scope }) => ({ id, name, props, scope })), expectedManagedItems('es')),
+        { checking, off, offNav: offNav.networks, notices, offDetail, readsWhileOff, on: on.items.length }
+      );
+    }); // End of check "[nets] es: management off or being checked..."
+
+    await check('[nets] es: the Back history survives "Probar el acceso de gestión" — from Casa\'s managed detail its Default link opens AP groups with "Volver a Casa"; while the check runs (the Wi-Fi networks view falls back to its 14a view) and once it passes again "Volver a Casa" stays, and Back opens Casa\'s managed detail (its id selected) with focus on its Default link; when a check fails instead ("siteNotFound": management definitively off) that entry is dropped (the 14a view cannot show a managed network by its id)', async () => {
+      /**
+       * Follows the Default link of the network detail on screen and waits
+       * for Default's detail in AP groups.
+       * @returns {Promise<void>}
+       */
+      const toDefault = async () => {
+        await page.click(`#networkDetail .cross-link[data-link-kind="group"][data-link-target="${GROUP.Default.wlanId}"]`);
+        await page.waitForFunction(() => document.getElementById('groupDetailName')?.textContent === 'Default' && !document.getElementById('viewGroups').hidden, null, { timeout: WAIT_MS });
+      };
+      let toGroup;
+      let checking;
+      let checkingMode;
+      let passed;
+      let back;
+      let backList;
+      let again;
+      let off;
+      let offMode;
+      try {
+        await page.click('#navNetworks');
+        await openNetworkDetail(page, 'Casa');
+        await toDefault();
+        toGroup = await readInventory(page);
+        await configureStub(session, { delays: { 'management:test': 1000 } });
+        await openSettingsWhenIdle(page);
+        await page.click('#testManagementBtn');
+        await page.waitForFunction(() => document.getElementById('readOnlyBanner')?.dataset.reason === 'managementChecking', null, { timeout: WAIT_MS });
+        checking = await readInventory(page);
+        checkingMode = (await readManagedList(page)).mode;
+        await waitForTestResult(page, CAPS_TEXT.es.result.ok);
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+        await waitForNetworksMode(page, 'managedReady');
+        passed = await readInventory(page);
+        await page.click('#backBtn');
+        await page.waitForFunction(() => document.getElementById('networkDetailName')?.textContent === 'Casa' && !document.getElementById('viewNetworks').hidden, null, { timeout: WAIT_MS });
+        back = await readInventory(page);
+        backList = await readManagedList(page);
+        // Once more, then a check that fails: management definitively off
+        await toDefault();
+        again = await readInventory(page);
+        await configureStub(session, { delays: {}, managementReason: 'siteNotFound', managementDiagnostic: 'sites 2' });
+        await recheckManagement(page, `${CAPS_TEXT.es.result.siteNotFound} (sites 2)`);
+        await waitForNetworksMode(page, 'internal');
+        off = await readInventory(page);
+        offMode = (await readManagedList(page)).mode;
+      } finally {
+        await configureStub(session, { delays: {}, managementReason: null, managementDiagnostic: null });
+        if (await page.isVisible('#settingsModal.visible')) {
+          await page.click('#cancelSettingsBtn');
+          await waitForSettingsClosed(page);
+        }
+        await recheckManagement(page, CAPS_TEXT.es.result.ok);
+        await waitForNetworksMode(page, 'managedReady');
+        // The next checks start on the Wi-Fi networks view
+        await page.click('#navNetworks');
+      }
+      const backToCasa = fmt(es.backTo, { target: 'Casa' });
+      return verdict(
+        isDeepStrictEqual(toGroup.shown, ['viewGroups']) && !toGroup.backHidden && toGroup.backLabel === backToCasa &&
+        checkingMode === 'internal' && !checking.backHidden && checking.backLabel === backToCasa &&
+        isDeepStrictEqual(passed.shown, ['viewGroups']) && !passed.backHidden && passed.backLabel === backToCasa &&
+        isDeepStrictEqual(back.shown, ['viewNetworks']) && back.backHidden && back.currentNetwork === 'Casa' &&
+        isDeepStrictEqual(backList.items.filter((item) => item.current === 'true').map((item) => item.id), [netId(1)]) &&
+        back.focus.linkKind === 'group' && back.focus.linkTarget === GROUP.Default.wlanId &&
+        !again.backHidden && again.backLabel === backToCasa &&
+        offMode === 'internal' && isDeepStrictEqual(off.shown, ['viewGroups']) && off.backHidden,
+        { toGroup, checking, checkingMode, passed, back, backList: backList?.items, again, off, offMode }
+      );
+    }); // End of check "[nets] es: the Back history survives..."
+
+    await check('[nets] en: after switching to English (saved, reconnected): Casa "1 group · 4 APs", Invitados "All access points", IoT "2 groups · 1 AP", Oficina "2 groups · 5 APs", Rara "Unknown scope" with "State unknown · Security unknown · Bands unknown"; Casa\'s facts "State Enabled", "Security WPA-Personal", "Bands 2.4 GHz and 5 GHz", "Password Set"; Invitados "Password None" with its note; a failed re-read keeps the list with "Couldn\'t refresh the Wi-Fi networks. Showing the list from hh:mm. The controller could not send the Wi-Fi networks. (ssids: httpError, HTTP 503)" and "Retry"; a failed first read reads "The controller could not send the Wi-Fi networks. (ssids: httpError, HTTP 503)" with "Retry" and "Settings"', async () => {
+      const en = TEXT.en;
+      const netsEn = NETS_TEXT.en;
+      await openSettingsWhenIdle(page);
+      await page.selectOption('#languageSelect', 'en');
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      await waitForConnected(page);
+      await page.waitForFunction(({ selector, text }) => document.querySelector(selector)?.textContent === text, { selector: casaSelector, text: `${en.groupOne} · ${fmt(en.apMany, { count: 4 })}` }, { timeout: WAIT_MS });
+      await waitForNetworksMode(page, 'managedReady');
+      const list = await readManagedList(page);
+      await openNetworkDetail(page, 'Casa');
+      const casa = await readDetailPane(page, '#networkDetail');
+      await openNetworkDetail(page, 'Invitados');
+      const invitados = await readDetailPane(page, '#networkDetail');
+      const reason = `${netsEn.errRequestFailed} (${NETS_FAILURE.diagnostic})`;
+      let stale;
+      let staleList;
+      let blocks;
+      try {
+        await configureStub(session, { networksResult: NETS_FAILURE });
+        await refreshNetworks(session);
+        await waitForNetworksStale(page, 'requestFailed');
+        stale = await readNetworksStaleNotice(page);
+        staleList = await readManagedList(page);
+        await recheckManagement(page, CAPS_TEXT.en.result.ok);
+        await waitForNetworksError(page, reason);
+        blocks = await readStateBlocks(page);
+      } finally {
+        await configureStub(session, { networksResult: null });
+      }
+      return verdict(
+        isDeepStrictEqual(list.items.map(({ id, name, props, scope }) => ({ id, name, props, scope })), expectedManagedItems('en')) &&
+        casa.summary === `${en.groupOne} · ${fmt(en.apMany, { count: 4 })}` &&
+        isDeepStrictEqual(casa.facts, expectedFacts('en', netsEn.enabled, netsEn.wpaPersonal, netsEn.bands2g5g, netsEn.passphraseSet)) &&
+        casa.sections.groups?.title === `${en.groupsTitle.apGroup} (1)` && casa.sections.aps?.title === `${en.accessPoints} (4)` &&
+        invitados.summary === netsEn.all && isDeepStrictEqual(invitados.facts, expectedFacts('en', netsEn.disabled, netsEn.open, netsEn.bandsAll, netsEn.passphraseNone)) &&
+        isDeepStrictEqual(invitados.notes, [{ kind: 'allAccessPoints', text: netsEn.allNote }]) &&
+        stale.shown && stale.text === fmt(netsEn.stale, { time: stale.time, reason }) && stale.retryText === 'Retry' &&
+        isDeepStrictEqual(staleList.items.map(({ id, name, props, scope }) => ({ id, name, props, scope })), expectedManagedItems('en')) &&
+        blocks.networkList.state === 'networksError' && blocks.networkList.alert &&
+        isDeepStrictEqual(blocks.networkList.actions, [['retryNetworks', 'Retry'], ['settings', 'Settings']]),
+        { list: list.items, casa, invitados, stale, staleList: staleList?.items.length, blocks: blocks?.networkList }
+      );
+    }); // End of check "[nets] en: after switching to English..."
+  } finally {
+    session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
+    await session.app.close().catch(() => {});
+  }
+} // End of function runManagedNetworks()
+
+// ============================================================================
 // Whole-run checks
 // ============================================================================
 
@@ -6231,6 +7087,7 @@ async function main() {
       ['mgmt', runManagementAccess],
       ['caps', runManagementCapabilities],
       ['groups', runApGroupManagement],
+      ['nets', runManagedNetworks],
     ]) {
       try {
         await runLaunch(electronInfo);

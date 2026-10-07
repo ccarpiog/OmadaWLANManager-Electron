@@ -25,6 +25,7 @@ import {
   createCrossLink,
   createDetailHeading,
   createDetailSection,
+  createFact,
   createLinkList,
   createNote,
   findCrossLink,
@@ -35,30 +36,6 @@ import { state } from './state';
 
 // Id of the pane's heading (the AP's name)
 const HEADING_ID = 'apDetailsName';
-
-/**
- * Builds one fact row of the pane (a term and its value).
- * @param {string} kind - Its data-fact value.
- * @param {string} label - The term.
- * @param {HTMLElement | string} value - The value (an element or a text).
- * @returns {HTMLDivElement} The row.
- */
-function createFact(kind: string, label: string, value: HTMLElement | string): HTMLDivElement {
-  const row = document.createElement('div');
-  row.className = 'detail-fact';
-  row.dataset.fact = kind;
-  const term = document.createElement('dt');
-  term.textContent = label;
-  const definition = document.createElement('dd');
-  if (typeof value === 'string') {
-    definition.textContent = value;
-  } else {
-    definition.appendChild(value);
-  }
-  row.appendChild(term);
-  row.appendChild(definition);
-  return row;
-} // End of function createFact()
 
 /**
  * The value of the group fact: a cross-link to the group when it resolves to

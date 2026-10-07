@@ -7,9 +7,13 @@
 // a Back history; "Back to <previous item>" pops it and brings that view back
 // as it was, with focus on the link that was followed. The sidebar starts a
 // fresh navigation (the history is emptied). Also re-renders the three
-// read-only views together after a data load or a language change, and
-// then reconciles the Back history with the loaded data (a location whose
-// item is gone is dropped). Pure history helpers: nav-history.ts.
+// read-only views together after a data load or a language change, and the
+// Wi-Fi networks view after its managed source changed, and then reconciles
+// the Back history with the loaded data (a location whose item is gone is
+// dropped). On the Wi-Fi networks view the item is a typed network key — a
+// name ("name:…", the 14a internal data or a cross-link) or an id ("id:…",
+// the managed list) — that networks-view.ts resolves only in its own
+// namespace. Pure history helpers: nav-history.ts.
 // ============================================================================
 
 import { focusApDetailsHeading, renderApDetails } from './ap-details';
@@ -31,13 +35,7 @@ import {
 } from './elements';
 import { focusGroupDetailHeading, renderGroupsView, revealSelectedGroup } from './groups-view';
 import { t, tFormat, tGroup } from './i18n';
-import {
-  buildGroupRows,
-  buildNetworkRows,
-  matchesGroupSearch,
-  matchesNetworkSearch,
-  searchKeepingItem,
-} from './inventory-model';
+import { buildGroupRows, matchesGroupSearch, searchKeepingItem } from './inventory-model';
 import { displayName, findCrossLink } from './inventory-ui';
 import {
   isCurrentLocation,
@@ -51,8 +49,17 @@ import {
   type LinkTarget,
   type NavLocation,
 } from './nav-history';
-import { focusNetworkDetailHeading, renderNetworksView, revealSelectedNetwork } from './networks-view';
-import { showView } from './shell';
+import {
+  applyNetworkItem,
+  currentNetworkItem,
+  focusNetworkDetailHeading,
+  isNetworksSourceSettled,
+  networkItemLabel,
+  networkLinkTarget,
+  renderNetworksView,
+  revealSelectedNetwork,
+} from './networks-view';
+import { renderNavCounts, showView } from './shell';
 import { state } from './state';
 
 /**
@@ -68,14 +75,14 @@ function scrollPanes(view: AppView): { list: HTMLElement; detail: HTMLElement } 
 
 /**
  * Returns the item a view currently shows: the AP whose details are open,
- * the selected group id or the selected network name.
+ * the selected group id or the selected network (currentNetworkItem()).
  * @param {AppView} view - The view.
  * @returns {string | null} The item, or null.
  */
 function currentItem(view: AppView): string | null {
   if (view === 'accessPoints') return state.apDetailsMac;
   if (view === 'groups') return state.selectedGroupId;
-  return state.selectedNetworkName;
+  return currentNetworkItem();
 }
 
 /**
@@ -84,8 +91,8 @@ function currentItem(view: AppView): string | null {
  * @param {AppView} view - The view.
  * @param {string | null} item - The item.
  * @returns {string | null} The name, or null when there is no item or it is
- *   no longer loaded (no AP with that MAC, no group with that id, no group
- *   broadcasting that network).
+ *   no longer loaded (no AP with that MAC, no group with that id, no such
+ *   network: networkItemLabel()).
  */
 function itemName(view: AppView, item: string | null): string | null {
   if (item === null) return null;
@@ -97,8 +104,7 @@ function itemName(view: AppView, item: string | null): string | null {
     const group = state.wlanGroups.find(candidate => candidate.wlanId === item);
     return group ? displayName(group.wlanName) : null;
   }
-  const broadcast = state.wlanGroups.some(group => group.ssidList.some(ssid => ssid.ssidName === item));
-  return broadcast ? displayName(item) : null;
+  return networkItemLabel(item);
 } // End of function itemName()
 
 /**
@@ -129,7 +135,9 @@ function captureLocation(focusLink: LinkTarget | null): NavLocation {
  * Builds the location a link leads to, or null when its target is no longer
  * loaded. The target view keeps its search unless the search would hide the
  * target in its master list, and its list keeps its scroll offset (the
- * target's item is then scrolled into view).
+ * target's item is then scrolled into view). A network link leads where
+ * networkLinkTarget() says (on the managed list a name several networks
+ * share selects none and searches for it).
  * @param {LinkTarget} link - The link.
  * @returns {NavLocation | null} The location, or null.
  */
@@ -144,8 +152,8 @@ function locationForLink(link: LinkTarget): NavLocation | null {
     const row = buildGroupRows(state.wlanGroups, state.accessPoints).find(candidate => candidate.group.wlanId === link.target);
     return row ? { ...base, search: searchKeepingItem(state.groupSearchText, matchesGroupSearch(row, state.groupSearchText)) } : null;
   }
-  const row = buildNetworkRows(state.wlanGroups, state.accessPoints).find(candidate => candidate.name === link.target);
-  return row ? { ...base, search: searchKeepingItem(state.networkSearchText, matchesNetworkSearch(row, state.networkSearchText)) } : null;
+  const target = networkLinkTarget(link.target);
+  return target ? { ...base, item: target.item, search: target.search } : null;
 } // End of function locationForLink()
 
 /**
@@ -172,7 +180,7 @@ function applyLocation(location: NavLocation): void {
   } else {
     state.networkSearchText = location.search;
     networkSearchInput.value = location.search;
-    state.selectedNetworkName = location.item;
+    applyNetworkItem(location.item);
     state.networkDetailOpen = location.item !== null;
     renderNetworksView();
   }
@@ -236,8 +244,11 @@ export function renderBackBar(): void {
 /**
  * Follows a cross-link: pushes the current location on the Back history,
  * opens the target in its view (selected, scrolled into view) and moves
- * focus to the target's detail heading. A link to where the user already is
- * only moves focus; a link whose target is no longer loaded does nothing.
+ * focus to the target's detail heading — or, when the target shows no
+ * detail (a network name several managed networks share, or the managed
+ * list still loading or failed), to the list's Tab stop or first button. A
+ * link to where the user already is only moves focus; a link whose target
+ * is no longer loaded does nothing.
  * @param {LinkTarget} link - The link.
  */
 export function followLink(link: LinkTarget): void {
@@ -253,7 +264,9 @@ export function followLink(link: LinkTarget): void {
   renderBackBar();
   applyLocation(target);
   revealItem(target.view);
-  focusDetailHeading(target.view);
+  if (!focusDetailHeading(target.view)) {
+    scrollPanes(target.view).list.querySelector<HTMLElement>('[tabindex="0"], button')?.focus({ preventScroll: true });
+  }
 } // End of function followLink()
 
 /**
@@ -310,12 +323,31 @@ export function handleCrossLinkClick(e: MouseEvent): void {
  * reconcileHistory()): a location whose AP, group or network is gone is
  * dropped, the remaining item labels follow renames, and nothing on top
  * leads back to where the user is. Runs after the views dropped their own
- * gone selections, so the current place is up to date.
+ * gone selections, so the current place is up to date. While the Wi-Fi
+ * networks view's source is not settled (isNetworksSourceSettled(): its
+ * managed list loading or failed, or its 14a view only the fallback of a
+ * capability check still running) its locations are kept as they are
+ * (nothing to check them against yet).
  */
 function reconcileNavHistory(): void {
   const view = state.currentView;
-  state.navHistory = reconcileHistory(state.navHistory, itemName, { view, item: currentItem(view) });
-}
+  const settled = isNetworksSourceSettled();
+  const history = state.navHistory;
+  /**
+   * The current label of a location's item (its old one for a network
+   * while the networks source is not settled).
+   * @param {AppView} locationView - The location's view.
+   * @param {string} item - Its item.
+   * @returns {string | null} The label, or null when the item is gone.
+   */
+  const labelFor = (locationView: AppView, item: string): string | null => {
+    if (locationView === 'networks' && !settled) {
+      return history.find(location => location.view === 'networks' && location.item === item)?.itemLabel ?? null;
+    }
+    return itemName(locationView, item);
+  };
+  state.navHistory = reconcileHistory(history, labelFor, { view, item: currentItem(view) });
+} // End of function reconcileNavHistory()
 
 /**
  * Re-renders the three read-only parts together (after a data load, a move,
@@ -336,6 +368,21 @@ export function renderInventoryViews(): void {
 } // End of function renderInventoryViews()
 
 /**
+ * Re-renders the Wi-Fi networks view after its managed source changed (a
+ * managed read started, arrived, failed or was forgotten): the view, the
+ * sidebar counts (the managed list's total while it is shown), then — with
+ * data loaded — the Back history reconciled with it, and the Back bar.
+ */
+export function renderNetworksSource(): void {
+  renderNetworksView();
+  renderNavCounts();
+  if (state.lastUpdatedAt !== null) {
+    reconcileNavHistory();
+  }
+  renderBackBar();
+} // End of function renderNetworksSource()
+
+/**
  * Forgets every view selection, search, single-pane drill-in and the Back
  * history (a disconnect or a connection reset), then re-renders the views.
  */
@@ -343,6 +390,7 @@ export function resetInventoryViews(): void {
   state.apDetailsMac = null;
   state.selectedGroupId = null;
   state.selectedNetworkName = null;
+  state.selectedManagedNetworkId = null;
   state.destinationPaneOpen = false;
   state.groupDetailOpen = false;
   state.networkDetailOpen = false;

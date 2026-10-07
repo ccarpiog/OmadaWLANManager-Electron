@@ -118,6 +118,17 @@
           <button type="button" class="btn btn-link notice-action" id="refreshNoticeRetryBtn" data-state-action="retry"></button>
         </div>
 
+        <!-- Refresh error of the Wi-Fi networks view's managed list
+             (networks-view.ts, managed-networks-view.ts): a re-read failed,
+             so the last good list stays on screen, stale; states its time
+             and the reason, with Retry (data-state-action, wired in
+             renderer.ts); shown on that view only -->
+        <div class="view-notice refresh-notice networks-stale-notice" id="networksStaleNotice" role="status" hidden>
+          <span class="stale-dot" aria-hidden="true"></span>
+          <p class="notice-text" id="networksStaleNoticeText"></p>
+          <button type="button" class="btn btn-link notice-action" id="networksStaleRetryBtn" data-state-action="retryNetworks"></button>
+        </div>
+
         <!-- "Back to …" after following a cross-link to an AP, a group or a
              network (navigation.ts); hidden while the history is empty -->
         <div class="back-bar" id="backBar" hidden>

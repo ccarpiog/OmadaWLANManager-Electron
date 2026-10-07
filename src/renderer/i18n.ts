@@ -359,6 +359,49 @@ export interface Translations {
   apGroupErrorGroupListIncomplete: string;
   apGroupErrorRequestFailed: string;
   apGroupErrorFailed: string;
+  // Wi-Fi networks view on the managed (Open API) source (networks-view.ts,
+  // managed-networks-view.ts; todo.md 4.10): the scopes ("All access
+  // points", an explicit unknown scope, bound groups the list does not
+  // have), the enabled state, security mode, bands and passphrase (unknown
+  // is stated, never invented; the passphrase only as set / none), the
+  // detail's facts and notes, and one message per failure of the managed
+  // read (main's codes plus the renderer's own 'invalidReply' and 'failed')
+  scopeAllAccessPoints: string;
+  scopeUnknown: string;
+  scopeUnresolvedGroupsOne: string;
+  scopeUnresolvedGroupsMany: string;
+  networkEnabled: string;
+  networkDisabled: string;
+  networkEnabledUnknown: string;
+  securityOpen: string;
+  securityWpaEnterprise: string;
+  securityWpaPersonal: string;
+  securityPpskWithoutRadius: string;
+  securityPpskWithRadius: string;
+  securityUnknown: string;
+  bandsUnknown: string;
+  passphraseSet: string;
+  passphraseNone: string;
+  networkValueUnknown: string;
+  networkStateLabel: string;
+  networkSecurityLabel: string;
+  networkBandsLabel: string;
+  networkPassphraseLabel: string;
+  networkAllAccessPointsNote: string;
+  networkUnknownScopeNote: string;
+  networkUnresolvedGroupsOne: string;
+  networkUnresolvedGroupsMany: string;
+  networkNoGroups: string;
+  managedNetworksErrorNotConnected: string;
+  managedNetworksErrorSuperseded: string;
+  managedNetworksErrorManagementUnavailable: string;
+  managedNetworksErrorListIncomplete: string;
+  managedNetworksErrorRequestFailed: string;
+  managedNetworksErrorInvalidReply: string;
+  managedNetworksErrorFailed: string;
+  // The managed list kept after a failed re-read (stale): {time} of the
+  // last good read, {reason} one of the managedNetworksError* texts above
+  networksStaleNotice: string;
   // AP status categories (see AP_STATUS in ap-list.ts). Shown as text next to
   // the coloured dot of each AP row and as the status filter's options, so
   // the state is not conveyed by colour alone.
@@ -678,6 +721,40 @@ const translations: Record<Language, Translations> = {
     apGroupErrorGroupListIncomplete: 'No se pudo leer completa la lista de grupos de AP del controlador, así que no se hizo ningún cambio.',
     apGroupErrorRequestFailed: 'El controlador no pudo completar la solicitud.',
     apGroupErrorFailed: 'No se pudo completar la solicitud.',
+    scopeAllAccessPoints: 'Todos los puntos de acceso',
+    scopeUnknown: 'Alcance desconocido',
+    scopeUnresolvedGroupsOne: '1 grupo vinculado no está en la lista de grupos',
+    scopeUnresolvedGroupsMany: '{count} grupos vinculados no están en la lista de grupos',
+    networkEnabled: 'Activada',
+    networkDisabled: 'Desactivada',
+    networkEnabledUnknown: 'Estado desconocido',
+    securityOpen: 'Abierta',
+    securityWpaEnterprise: 'WPA-Enterprise',
+    securityWpaPersonal: 'WPA-Personal',
+    securityPpskWithoutRadius: 'PPSK sin RADIUS',
+    securityPpskWithRadius: 'PPSK con RADIUS',
+    securityUnknown: 'Seguridad desconocida',
+    bandsUnknown: 'Bandas desconocidas',
+    passphraseSet: 'Configurada',
+    passphraseNone: 'Ninguna',
+    networkValueUnknown: 'Se desconoce',
+    networkStateLabel: 'Estado',
+    networkSecurityLabel: 'Seguridad',
+    networkBandsLabel: 'Bandas',
+    networkPassphraseLabel: 'Contraseña',
+    networkAllAccessPointsNote: 'Se emite en todos los puntos de acceso del sitio, también en los que se añadan más adelante.',
+    networkUnknownScopeNote: 'El controlador no indica con claridad dónde se emite esta red, así que no se muestran sus grupos ni sus puntos de acceso.',
+    networkUnresolvedGroupsOne: 'Está vinculada a 1 grupo que no está en la lista de grupos: sus puntos de acceso no se pueden contar.',
+    networkUnresolvedGroupsMany: 'Está vinculada a {count} grupos que no están en la lista de grupos: sus puntos de acceso no se pueden contar.',
+    networkNoGroups: 'No está vinculada a ningún grupo: ningún punto de acceso la emite.',
+    managedNetworksErrorNotConnected: 'No hay conexión con el controlador: no se pueden leer las redes Wi-Fi.',
+    managedNetworksErrorSuperseded: 'La conexión cambió mientras se leían las redes Wi-Fi.',
+    managedNetworksErrorManagementUnavailable: 'El acceso de gestión no está activo en esta conexión: no se pueden leer las redes Wi-Fi.',
+    managedNetworksErrorListIncomplete: 'No se pudo leer la lista completa de redes Wi-Fi (o tiene más de las que la aplicación lee de una vez): no se muestra una lista parcial.',
+    managedNetworksErrorRequestFailed: 'El controlador no pudo enviar las redes Wi-Fi.',
+    managedNetworksErrorInvalidReply: 'La respuesta sobre las redes Wi-Fi no es válida: no se muestra nada de ella.',
+    managedNetworksErrorFailed: 'No se pudieron leer las redes Wi-Fi.',
+    networksStaleNotice: 'No se pudieron actualizar las redes Wi-Fi. Se muestra la lista de las {time}. {reason}',
     statusApConnected: 'Conectado',
     statusApPending: 'Adoptando',
     statusApHeartbeatMissed: 'Sin respuesta',
@@ -992,6 +1069,40 @@ const translations: Record<Language, Translations> = {
     apGroupErrorGroupListIncomplete: 'The controller\'s AP group list could not be read completely, so nothing was changed.',
     apGroupErrorRequestFailed: 'The controller could not complete the request.',
     apGroupErrorFailed: 'The request could not be completed.',
+    scopeAllAccessPoints: 'All access points',
+    scopeUnknown: 'Unknown scope',
+    scopeUnresolvedGroupsOne: '1 bound group is not in the group list',
+    scopeUnresolvedGroupsMany: '{count} bound groups are not in the group list',
+    networkEnabled: 'Enabled',
+    networkDisabled: 'Disabled',
+    networkEnabledUnknown: 'State unknown',
+    securityOpen: 'Open',
+    securityWpaEnterprise: 'WPA-Enterprise',
+    securityWpaPersonal: 'WPA-Personal',
+    securityPpskWithoutRadius: 'PPSK without RADIUS',
+    securityPpskWithRadius: 'PPSK with RADIUS',
+    securityUnknown: 'Security unknown',
+    bandsUnknown: 'Bands unknown',
+    passphraseSet: 'Set',
+    passphraseNone: 'None',
+    networkValueUnknown: 'Unknown',
+    networkStateLabel: 'State',
+    networkSecurityLabel: 'Security',
+    networkBandsLabel: 'Bands',
+    networkPassphraseLabel: 'Password',
+    networkAllAccessPointsNote: 'Broadcast on every access point of the site, including those added later.',
+    networkUnknownScopeNote: 'The controller does not report clearly where this network is broadcast, so its AP groups and access points are not shown.',
+    networkUnresolvedGroupsOne: 'It is bound to 1 group that is not in the group list: its access points cannot be counted.',
+    networkUnresolvedGroupsMany: 'It is bound to {count} groups that are not in the group list: their access points cannot be counted.',
+    networkNoGroups: 'It is not bound to any AP group: no access point broadcasts it.',
+    managedNetworksErrorNotConnected: 'Not connected to the controller: the Wi-Fi networks cannot be read.',
+    managedNetworksErrorSuperseded: 'The connection changed while the Wi-Fi networks were being read.',
+    managedNetworksErrorManagementUnavailable: 'Management access is not active for this connection: the Wi-Fi networks cannot be read.',
+    managedNetworksErrorListIncomplete: 'The complete list of Wi-Fi networks could not be read (or it has more than the app reads at once): a partial list is not shown.',
+    managedNetworksErrorRequestFailed: 'The controller could not send the Wi-Fi networks.',
+    managedNetworksErrorInvalidReply: 'The answer about the Wi-Fi networks is not valid: none of it is shown.',
+    managedNetworksErrorFailed: 'The Wi-Fi networks could not be read.',
+    networksStaleNotice: 'Couldn\'t refresh the Wi-Fi networks. Showing the list from {time}. {reason}',
     statusApConnected: 'Connected',
     statusApPending: 'Adopting',
     statusApHeartbeatMissed: 'Heartbeat missed',

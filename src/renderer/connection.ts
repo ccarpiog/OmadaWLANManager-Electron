@@ -19,6 +19,7 @@ import { renderDestinationList, renderMovePreview } from './destination-pane';
 import { apFilterInput, connectBtn, destinationSearchInput, refreshBtn, settingsBtn } from './elements';
 import { t } from './i18n';
 import { loadManagedGroups, resetManagedGroups } from './managed-groups';
+import { loadManagedNetworks, resetManagedNetworks } from './managed-networks';
 import { beginCapabilityCheck, loadManagementCapabilities } from './management';
 import { isAmbiguousGroup } from './move-plan';
 import { renderInventoryViews, resetInventoryViews } from './navigation';
@@ -250,8 +251,9 @@ async function runCertificateChanged(rawCertificate: unknown, generation: number
  * header — main reports it for single-site controllers and remembered sites
  * too; `fallbackSiteName` (the name picked in the site modal) covers a result
  * without one — and the opaque session nonce of the management-access calls.
- * The management capabilities of the new session, and the fresh Open API
- * view of its AP groups, are unknown until fetched.
+ * The management capabilities of the new session, the fresh Open API view
+ * of its AP groups and the managed list of its Wi-Fi networks are unknown
+ * until fetched.
  * @param {ConnectionResult} result - The successful result.
  * @param {string | null} fallbackSiteName - Site name to use when the result has none.
  */
@@ -260,6 +262,7 @@ function applySessionDetails(result: ConnectionResult, fallbackSiteName: string 
   state.sessionNonce = parseSessionNonce(result.sessionNonce);
   state.managementCapabilities = null;
   resetManagedGroups();
+  resetManagedNetworks();
 }
 
 /**
@@ -425,9 +428,10 @@ function clearData(): void {
   state.controllerVersion = null;
   state.sessionNonce = null;
   state.managementCapabilities = null;
-  // The fresh Open API view of the AP groups goes with the session too (a
-  // read in flight is discarded)
+  // The fresh Open API view of the AP groups and the managed list of the
+  // Wi-Fi networks go with the session too (a read in flight is discarded)
   resetManagedGroups();
+  resetManagedNetworks();
   state.lastUpdatedAt = null;
   state.refreshError = false;
   state.selectedApMacs = new Set<string>();
@@ -674,8 +678,8 @@ export async function loadData(): Promise<void> {
  * refreshing; on failure it stays (re-rendered), the header keeps the
  * previous "Updated hh:mm" time marked as stale, the refresh notice states
  * it (loadData()), and an error toast is shown. A successful refresh also
- * re-reads the fresh Open API view of the AP groups in the background
- * (while AP-group management is on).
+ * re-reads the fresh Open API view of the AP groups and the managed list of
+ * the Wi-Fi networks in the background (while management is on).
  * @returns {Promise<void>}
  */
 export async function refreshData(): Promise<void> {
@@ -684,6 +688,7 @@ export async function refreshData(): Promise<void> {
   try {
     await loadData();
     void loadManagedGroups(state.sessionGeneration);
+    void loadManagedNetworks(state.sessionGeneration);
   } catch (error) {
     // An unreachable controller is an expected outcome, reported by the toast
     console.warn('Error refreshing data:', error);

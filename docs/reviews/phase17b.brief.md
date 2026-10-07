@@ -1,0 +1,17 @@
+# Review brief — phase 17b (todo 4.10, second half)
+
+- **Repo:** the current working directory (Electron + TypeScript app, Omada WLAN Manager). Review the **uncommitted** working tree against `HEAD` (`git diff` + untracked files).
+- **Phase goal:** the Wi-Fi networks view reads the managed (Open API) source when Wi-Fi network management is on. Main side (17a, committed) already serves a secret-free `ManagedNetwork` DTO over the guarded `management:networks` IPC; this phase is renderer + tests only. Spec: `docs/management-design.md` §4.5 (Wi-Fi networks view) and §4.6 (states); `todo.md` 4.10 ("Split", "Done (17a)", "Done (17b)"); 17a narrative `docs/progress-archive/phase-17a.md`.
+- **Changed files:** new `src/renderer/network-management.ts` (pure logic), `src/renderer/managed-networks.ts` (nonce-bound read, stale replies discarded — modelled on 16b's `managed-groups.ts`), `src/renderer/managed-networks-view.ts` (managed list + detail DOM), `tests/unit/renderer-network-management.test.ts`; modified `src/renderer/{networks-view,navigation,state,i18n,management,connection,move-flow,renderer,shell,content-state,inventory-ui,ap-details}.ts`, `styles.css`, `tests/smoke/run-smoke.mjs` (new 7th launch `[nets]`, 13 checks), `README.md`, `todo.md`.
+- **Verification run by the orchestrator:** `npm run build` exit 0; `npm test` exit 0, 759/759; `ELECTRON_PATH=… npm run smoke` 180/180; `npm run tls-probe` exit 0, 25/25; no `innerHTML` in `src/renderer`; compiled preload requires only `electron`.
+- **Risks to probe:**
+  1. Stale-reply handling: a reply for another session nonce, an older read, or arriving after management turned off / a disconnect / a capability re-check must never render. Check every trigger (connect/load, refresh, post-move reload, capability change, Retry) and races between them.
+  2. Never a partial list: one malformed network → whole reply refused; error codes (`requestFailed`, `networkListIncomplete`, `malformedResponse`, `managementUnavailable`, unknown codes) → §4.6 error state with Retry. The worker chose to fail closed on a failed re-read after a successful one (list replaced by the error) instead of keeping stale data as §4.6 does for refresh errors — judge whether that is acceptable.
+  3. Scope text: "All access points" only when the DTO says all; "N groups · M APs"; a lower bound never shown as exact; unknown scope stated, never guessed. Unknown security / bands / enabled stated as unknown, never invented.
+  4. Secrets: only `hasPassphrase` reaches the DOM; nothing else from the reply is rendered unfiltered.
+  5. Management off or still checking → 14a internal view byte-for-byte unchanged in behavior; the worker also tightened the management check to require the 6.3 group model (`readOnlyReason()` returns no reason for a null group model) — check that this does not break the 16b AP groups view gating.
+  6. Cross-navigation and "Back to …" with the managed source (networks identified by id; a cross-link carrying a name selects the one network with that name — what if two networks share a name?). Sidebar count switches between managed total and internal distinct names.
+  7. i18n: every new string in both es and en; no inline styles / `innerHTML` (CSP).
+- **Out of scope:** editing (phase 18), binding editor (phase 19), main-side changes (none were made).
+- **Review file:** `docs/reviews/phase17b.md`.
+- **Time budget:** 15 minutes.

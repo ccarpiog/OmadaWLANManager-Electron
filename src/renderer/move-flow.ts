@@ -24,6 +24,7 @@ import { currentMovePlan, focusDestinationRadio, hideDestinationPane, renderDest
 import { apFilterInput, apList } from './elements';
 import { t } from './i18n';
 import { loadManagedGroups } from './managed-groups';
+import { loadManagedNetworks } from './managed-networks';
 import { openMoveDialog, type MoveDialog } from './move-dialog';
 import { renderInventoryViews } from './navigation';
 import {
@@ -103,8 +104,9 @@ function commitOutcomes(outcomes: readonly MoveOutcome[], destination: WlanGroup
  * Reloads the lists after a run that moved at least one AP. A failed reload
  * is a load error, not a failed move: it is reported as such and the locally
  * updated lists stay. A stale failure is ignored. A successful reload also
- * re-reads the fresh Open API view of the AP groups in the background
- * (their AP counts changed; AP-group management on only).
+ * re-reads the fresh Open API view of the AP groups (their AP counts
+ * changed) and the managed list of the Wi-Fi networks in the background
+ * (management on only).
  * @param {number} generation - The session generation the flow started in.
  * @returns {Promise<void>}
  */
@@ -112,6 +114,7 @@ async function reloadAfterMove(generation: number): Promise<void> {
   try {
     await loadData();
     void loadManagedGroups(generation);
+    void loadManagedNetworks(generation);
   } catch (error) {
     if (generation !== state.sessionGeneration) return;
     console.warn('Error reloading data after a move:', error);

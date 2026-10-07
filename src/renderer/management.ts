@@ -11,9 +11,11 @@
 // the capabilities become unknown ('managementChecking' on the banner) and
 // the AP groups view loses every write action and the capacity until the
 // run's result says management is on (management-form.ts
-// startCapabilityCheck() / settleCapabilityCheck()). Every new answer also
-// re-reads (or forgets) the fresh Open API view of the AP groups
-// (managed-groups.ts). Every await is generation-checked
+// startCapabilityCheck() / settleCapabilityCheck()), and the Wi-Fi
+// networks view falls back to its 14a internal-data view. Every new answer
+// also re-reads (or forgets) the fresh Open API view of the AP groups
+// (managed-groups.ts) and the managed list of the Wi-Fi networks
+// (managed-networks.ts). Every await is generation-checked
 // (state.sessionGeneration) and run-checked (state.managementCheck): a reply
 // for an older session or an older check run changes nothing.
 // ============================================================================
@@ -23,6 +25,7 @@ import { clientIdInput, clientSecretInput, managementTestResult, testManagementB
 import { renderGroupsView } from './groups-view';
 import { t, type Translations } from './i18n';
 import { loadManagedGroups, resetManagedGroups } from './managed-groups';
+import { forgetManagedNetworks, loadManagedNetworks } from './managed-networks';
 import {
   hasUnsavedManagementChanges,
   managementTestOutcome,
@@ -31,6 +34,8 @@ import {
   type CapabilityCheckState,
   type ManagementTestOutcome,
 } from './management-form';
+import { renderNetworksSource } from './navigation';
+import { isNetworkManagementOn } from './networks-view';
 import { renderNotices } from './notices';
 import { state } from './state';
 import { isManagementReason, isSameControllerUrl, parseManagementResult, type ParsedManagementResult } from './validation';
@@ -77,17 +82,24 @@ function toneOf(display: ManagementTestDisplay): 'ok' | 'off' | 'busy' | 'info' 
 
 /**
  * Takes new capabilities for the session on screen: the banner follows, the
- * AP groups view's actions follow (renderGroupsView()), and the fresh Open
- * API view of the AP groups is read again (or forgotten when management is
- * off now).
+ * AP groups view's actions follow (renderGroupsView()), the fresh Open API
+ * view of the AP groups is read again (or forgotten when management is off
+ * now), and so is the managed list of the Wi-Fi networks (in the
+ * background: nothing waits for it). With Wi-Fi network management off now,
+ * the Wi-Fi networks view's 14a source is settled (no longer a check's
+ * fallback): it is re-rendered so its Back history is reconciled with it.
  * @param {ManagementCapabilities} capabilities - The capabilities.
  * @param {number} generation - The session generation they belong to.
- * @returns {Promise<void>} Settles once the fresh view was read.
+ * @returns {Promise<void>} Settles once the fresh view of the AP groups was read.
  */
 function applyCapabilities(capabilities: ManagementCapabilities, generation: number): Promise<void> {
   state.managementCapabilities = capabilities;
   renderNotices();
   renderGroupsView();
+  if (!isNetworkManagementOn()) {
+    renderNetworksSource();
+  }
+  void loadManagedNetworks(generation);
   return loadManagedGroups(generation);
 }
 
@@ -102,10 +114,11 @@ function checkState(): CapabilityCheckState {
 /**
  * Starts a check run for the session on screen (startCapabilityCheck()) and
  * returns its number. When the capabilities on screen are cleared (a run
- * that may change the verdict), the fresh Open API view goes with them (a
- * read in flight is discarded) and the banner ('managementChecking') and the
- * AP groups view follow at once: no write action is shown or enabled until
- * the run's result says management is on. Exported for connect() too, whose
+ * that may change the verdict), the fresh Open API view of the AP groups and
+ * the managed list of the Wi-Fi networks go with them (a read in flight is
+ * discarded) and the banner ('managementChecking'), the AP groups view and
+ * the Wi-Fi networks view (back to its 14a view) follow at once: no write
+ * action is shown or enabled until the run's result says management is on. Exported for connect() too, whose
  * new session starts its own checks in main.
  * @param {boolean} [keepCurrent] - True to keep known capabilities while main is asked again.
  * @returns {number} The run's number (state.managementCheck).
@@ -118,6 +131,7 @@ export function beginCapabilityCheck(keepCurrent = false): number {
     resetManagedGroups();
     renderNotices();
     renderGroupsView();
+    forgetManagedNetworks();
   }
   return started.check;
 } // End of function beginCapabilityCheck()

@@ -50,13 +50,14 @@ export function currentContentState(): ContentState {
 }
 
 /**
- * Builds one action button of a state block.
+ * Builds one action button of a state block (also used by the Wi-Fi
+ * networks view's managed-read error, managed-networks-view.ts).
  * @param {string} action - Its data-state-action value.
  * @param {string} label - Its text.
  * @param {string} variant - Its button class (e.g. 'btn-primary').
  * @returns {HTMLButtonElement} The button.
  */
-function createStateAction(action: string, label: string, variant: string): HTMLButtonElement {
+export function createStateAction(action: string, label: string, variant: string): HTMLButtonElement {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `btn ${variant} btn-compact state-action`;

@@ -68,6 +68,10 @@ export const networkList = document.getElementById('networkList') as HTMLElement
 export const networkListSummary = document.getElementById('networkListSummary') as HTMLElement;
 export const networkDetailPanelTitle = document.getElementById('networkDetailPanelTitle') as HTMLElement;
 export const networkDetail = document.getElementById('networkDetail') as HTMLElement;
+// The managed list's refresh-error notice (stale after a failed re-read)
+export const networksStaleNotice = document.getElementById('networksStaleNotice') as HTMLElement;
+export const networksStaleNoticeText = document.getElementById('networksStaleNoticeText') as HTMLElement;
+export const networksStaleRetryBtn = document.getElementById('networksStaleRetryBtn') as HTMLButtonElement;
 
 // Access points panel: list, filters, selection toolbar and summary, and the
 // single-pane layout's "Choose destination"

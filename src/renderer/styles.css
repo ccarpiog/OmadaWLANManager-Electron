@@ -771,8 +771,11 @@ body.platform-darwin .title-bar {
 }
 
 /* A network's scope wraps instead of being cut: a lower bound carries its
-   reason ("at least 4 APs; 1 AP's group cannot be identified") */
-.master-item .network-scope {
+   reason ("at least 4 APs; 1 AP's group cannot be identified"); so does the
+   managed list's enabled state / security / bands line, whose unknown values
+   are stated in full ("State unknown · Security unknown · Bands unknown") */
+.master-item .network-scope,
+.master-item .network-properties {
   white-space: normal;
 }
 
@@ -2049,6 +2052,16 @@ body.platform-darwin .title-bar {
 /* Retry right after the text (not under the toasts of the top-right corner) */
 .refresh-notice .notice-text {
   flex: 0 1 auto;
+}
+
+/* The managed Wi-Fi networks list kept after a failed re-read is stale: the
+   same amber dot as the stale "Updated hh:mm" (the notice says it in words) */
+.stale-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning-color);
 }
 
 .notice-action {

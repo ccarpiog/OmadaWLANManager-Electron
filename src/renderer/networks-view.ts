@@ -1,31 +1,48 @@
 // ============================================================================
-// Wi-Fi networks view (docs/management-design.md §4.5), read-only from the
-// internal data: a master list of the distinct network names (the sidebar's
-// count) with each network's scope "N groups · M APs" (a lower bound, with
-// the reason, while some APs' groups cannot be identified), its own search
-// over network AND group names, and the selected network's detail: the
-// groups broadcasting it and the APs that broadcast it, as cross-links. The
-// internal data has no security, bands or enabled state, so the detail says
-// they need management access instead of inventing them; there are no edit
-// controls (phases 17–19). Until data is loaded the list shows the §4.6
-// state (content-state.ts). In the single-pane layout (700–799 px) picking a
-// network drills into its detail, whose Back returns to the list
-// (layout.ts). Pure logic: inventory-model.ts.
+// Wi-Fi networks view (docs/management-design.md §4.5), read-only, from one
+// of two sources:
+// - the internal data (phase 14a; management off, or its capabilities still
+//   unknown / being checked): a master list of the distinct network names
+//   (the sidebar's count) with each network's scope "N groups · M APs" (a
+//   lower bound, with the reason, while some APs' groups cannot be
+//   identified), its own search over network AND group names, and the
+//   selected network's detail: the groups broadcasting it and the APs that
+//   broadcast it, as cross-links. The internal data has no security, bands
+//   or enabled state, so the detail says they need management access
+//   instead of inventing them;
+// - the managed (Open API) list while Wi-Fi network management is on
+//   (phase 17b, read by managed-networks.ts): one entry per network with
+//   its enabled state, security, bands and scope ("All access points", "N
+//   groups · M APs" or an explicit unknown scope), the same search, and a
+//   detail with those facts, whether a password is set (never a key) and
+//   the bound groups and their APs as cross-links. While its first read
+//   runs the list shows the loading skeleton; a failed first read shows the
+//   §4.6 error state with Retry and Settings instead of any list (never a
+//   partial one); a failed re-read keeps the last good list, stale, with
+//   the §4.6 refresh-error notice above the views while this view is on
+//   screen (its time, the reason, Retry). Networks are told apart by id
+//   there.
+// There are no edit controls (phases 18–19). Until data is loaded the list
+// shows the §4.6 state (content-state.ts). In the single-pane layout
+// (700–799 px) picking a network drills into its detail, whose Back returns
+// to the list (layout.ts). Pure logic: inventory-model.ts (internal),
+// network-management.ts (managed); the managed DOM blocks:
+// managed-networks-view.ts.
 // ============================================================================
 
-import { createStatusElement } from './ap-status';
-import { createStateBlock, currentContentState } from './content-state';
+import { countDistinctSsids } from './ap-selection';
+import { createSkeletonState, createStateBlock, currentContentState } from './content-state';
 import { createEmptyState } from './dom-helpers';
 import { networkDetail, networkList, networkListSummary, networkSearchInput } from './elements';
 import { t, tFormat, tGroup } from './i18n';
 import {
-  apLink,
   buildNetworkRows,
   filterNetworkRows,
   groupLink,
   groupMembers,
+  matchesNetworkSearch,
   networkBroadcasters,
-  type NetworkBroadcasters,
+  searchKeepingItem,
   type NetworkRow,
 } from './inventory-model';
 import {
@@ -48,6 +65,31 @@ import {
   setLiveText,
 } from './inventory-ui';
 import { applyPaneLayout, isSinglePane } from './layout';
+import type { LinkTarget } from './nav-history';
+import {
+  buildManagedNetworkDetail,
+  createBroadcastingApsSection,
+  createManagedNetworkItem,
+  createManagedNetworksFailure,
+  renderManagedNetworksStaleNotice,
+} from './managed-networks-view';
+import {
+  buildManagedNetworkRows,
+  filterManagedNetworkRows,
+  findManagedNetwork,
+  isManagedListStale,
+  managedNetworkScope,
+  matchesManagedNetworkSearch,
+  networkHistoryItem,
+  networkManagementChecking,
+  networkManagementOn,
+  networksSourceSettled,
+  networksViewMode,
+  parseNetworkHistoryItem,
+  resolveManagedSelection,
+  type NetworkManagementInput,
+  type NetworksViewMode,
+} from './network-management';
 import { state } from './state';
 
 // Id of the detail's heading (the network's name)
@@ -85,23 +127,78 @@ function createNetworkItem(row: NetworkRow): HTMLLIElement {
 } // End of function createNetworkItem()
 
 /**
- * Renders the master list for the current data and search, and the aria-live
- * results summary ("Showing N of M" while a search narrows the list). Before
- * any data is loaded it shows the view's §4.6 state (first run,
- * disconnected, loading skeleton or initial-load error, with its action).
- * Keyboard focus on an item survives the re-render.
+ * The renderer state the managed source is decided from.
+ * @returns {NetworkManagementInput} The input of networkManagementOn() / networkManagementChecking().
  */
-export function renderNetworkList(): void {
-  const active = document.activeElement;
-  const focusedName = active instanceof HTMLButtonElement && networkList.contains(active) ? active.dataset.networkName ?? null : null;
-  networkList.setAttribute('aria-label', t('wifiNetworks'));
+function managementInput(): NetworkManagementInput {
+  return {
+    isConnected: state.isConnected,
+    hasSessionNonce: state.sessionNonce !== null,
+    hasData: state.lastUpdatedAt !== null,
+    groupModel: state.groupModel,
+    capabilities: state.managementCapabilities,
+  };
+}
 
-  const contentState = currentContentState();
-  if (contentState !== 'ready') {
-    networkList.replaceChildren(createStateBlock('networks', contentState));
-    setLiveText(networkListSummary, '');
+/**
+ * Tells whether the Wi-Fi networks view reads the managed source for the
+ * session on screen (networkManagementOn(): connected with a session nonce
+ * and data, no read-only reason, Wi-Fi network management on).
+ * @returns {boolean} True while the managed source is used.
+ */
+export function isNetworkManagementOn(): boolean {
+  return networkManagementOn(managementInput());
+}
+
+/**
+ * What the view shows once data is loaded (networksViewMode()): the 14a
+ * view, or the managed list, its loading skeleton or its error state.
+ * @returns {NetworksViewMode} The mode now.
+ */
+export function currentNetworksMode(): NetworksViewMode {
+  return networksViewMode(isNetworkManagementOn(), state.managedNetworksStatus, state.managedNetworks !== null);
+}
+
+/**
+ * The Wi-Fi networks total for the sidebar: the managed list's length while
+ * it is shown, else the distinct network names of the internal data.
+ * @returns {number} The count.
+ */
+export function networksNavCount(): number {
+  if (state.managedNetworks !== null && currentNetworksMode() === 'managedReady') {
+    return state.managedNetworks.length;
+  }
+  return countDistinctSsids(state.wlanGroups);
+}
+
+/**
+ * Brings the selection in line with the source on screen: on the 14a view
+ * no managed id is held; on the managed list the selection is resolved (by
+ * its id — selected there or waiting from Back —, else by its unique name —
+ * a cross-link or the 14a view's selection; resolveManagedSelection()) and
+ * the selected network's name is mirrored, or the selection is cleared when
+ * it designates no network; while the managed list is loading or failed,
+ * the selection waits.
+ * @param {NetworksViewMode} mode - The view's mode.
+ */
+function syncNetworkSelection(mode: NetworksViewMode): void {
+  if (mode === 'internal') {
+    state.selectedManagedNetworkId = null;
     return;
   }
+  if (mode !== 'managedReady' || state.managedNetworks === null) return;
+  const network = resolveManagedSelection(state.managedNetworks, state.selectedManagedNetworkId, state.selectedNetworkName);
+  state.selectedManagedNetworkId = network === null ? null : network.id;
+  state.selectedNetworkName = network === null ? null : network.name;
+} // End of function syncNetworkSelection()
+
+/**
+ * Renders the 14a master list from the internal data and the search, and
+ * the aria-live results summary ("Showing N of M" while a search narrows
+ * the list).
+ * @param {string | null} focusedName - The network whose item had keyboard focus, or null.
+ */
+function renderInternalNetworkList(focusedName: string | null): void {
   const rows = buildNetworkRows(state.wlanGroups, state.accessPoints);
   if (rows.length === 0) {
     networkList.replaceChildren(createEmptyState(t('noNetworks')));
@@ -127,53 +224,112 @@ export function renderNetworkList(): void {
     const button = Array.from(networkList.querySelectorAll<HTMLButtonElement>('.master-item')).find(item => item.dataset.networkName === focusedName);
     if (button) focusMasterItem(networkList, button);
   }
+} // End of function renderInternalNetworkList()
+
+/**
+ * Renders the managed master list: the loading skeleton while the first
+ * read runs, the error state with Retry after a failed first read,
+ * otherwise the networks matching the search (or "no networks" / "no
+ * results") with the aria-live results summary — also a stale list kept
+ * after a failed re-read (its notice is rendered by renderNetworkList()).
+ * @param {NetworksViewMode} mode - The view's managed mode.
+ * @param {string | null} focusedId - The network whose item had keyboard focus, or null.
+ */
+function renderManagedNetworkList(mode: NetworksViewMode, focusedId: string | null): void {
+  if (mode === 'managedLoading' || mode === 'managedFailed' || state.managedNetworks === null) {
+    networkList.replaceChildren(mode === 'managedFailed' ? createManagedNetworksFailure(state.managedNetworksFailure) : createSkeletonState());
+    setLiveText(networkListSummary, '');
+    return;
+  }
+  const rows = buildManagedNetworkRows(state.managedNetworks, state.wlanGroups, state.accessPoints);
+  if (rows.length === 0) {
+    networkList.replaceChildren(createEmptyState(t('noNetworks')));
+    setLiveText(networkListSummary, '');
+    return;
+  }
+
+  const visible = filterManagedNetworkRows(rows, state.networkSearchText);
+  if (visible.length === 0) {
+    const message = tFormat('noMatchingNetworks', { query: state.networkSearchText.trim() });
+    networkList.replaceChildren(createSearchNoResults(message, 'clearNetworkSearchBtn', clearNetworkSearch));
+  } else {
+    const list = document.createElement('ul');
+    list.className = 'master-items';
+    list.replaceChildren(...visible.map(row => createManagedNetworkItem(row, state.selectedManagedNetworkId)));
+    networkList.replaceChildren(list);
+    applyMasterRovingTabindex(networkList);
+  }
+  const searching = state.networkSearchText.trim() !== '';
+  setLiveText(networkListSummary, searching ? tFormat('searchResultsCount', { shown: String(visible.length), total: String(rows.length) }) : '');
+
+  if (focusedId !== null) {
+    const button = Array.from(networkList.querySelectorAll<HTMLButtonElement>('.master-item')).find(item => item.dataset.networkId === focusedId);
+    if (button) focusMasterItem(networkList, button);
+  }
+} // End of function renderManagedNetworkList()
+
+/**
+ * Renders the refresh-error notice of the managed list above the views
+ * (renderManagedNetworksStaleNotice()): shown while the Wi-Fi networks view
+ * is the one on screen and its managed list is stale (a failed re-read kept
+ * the last good list), hidden otherwise. Called by renderNetworkList() and
+ * on every view switch (showView() in shell.ts).
+ */
+export function renderNetworksStaleNotice(): void {
+  const stale = state.currentView === 'networks' && currentContentState() === 'ready' && isManagedListStale(currentNetworksMode(), state.managedNetworksStatus);
+  renderManagedNetworksStaleNotice(stale ? state.managedNetworksFailure : null, stale ? (state.managedNetworksStamp?.readAt ?? null) : null);
+}
+
+/**
+ * Renders the master list for the current source, data and search. Before
+ * any data is loaded it shows the view's §4.6 state (first run,
+ * disconnected, loading skeleton or initial-load error, with its action).
+ * The list carries the mode as data-networks-mode ('internal',
+ * 'managedLoading', 'managedReady' or 'managedFailed'), and the
+ * refresh-error notice above the view follows (renderNetworksStaleNotice()).
+ * Keyboard focus on an item survives the re-render.
+ */
+export function renderNetworkList(): void {
+  const active = document.activeElement;
+  const focused = active instanceof HTMLButtonElement && networkList.contains(active) ? active : null;
+  networkList.setAttribute('aria-label', t('wifiNetworks'));
+
+  renderNetworksStaleNotice();
+  const contentState = currentContentState();
+  if (contentState !== 'ready') {
+    delete networkList.dataset.networksMode;
+    networkList.replaceChildren(createStateBlock('networks', contentState));
+    setLiveText(networkListSummary, '');
+    return;
+  }
+  const mode = currentNetworksMode();
+  syncNetworkSelection(mode);
+  networkList.dataset.networksMode = mode;
+  if (mode === 'internal') {
+    renderInternalNetworkList(focused?.dataset.networkName ?? null);
+  } else {
+    renderManagedNetworkList(mode, focused?.dataset.networkId ?? null);
+  }
 } // End of function renderNetworkList()
 
 /**
- * Builds the APs section of a network's detail: the APs that broadcast it
- * as cross-links with their status, then — when some APs may broadcast it
- * but their group cannot be identified — a note saying how many (the
- * title then carries no count, and "no access points" is never stated);
- * with every AP placed and none broadcasting it, the no-APs note.
- * @param {NetworkBroadcasters} broadcasters - The network's broadcasters.
- * @returns {HTMLElement} The section.
+ * Renders the selected network's detail from the internal data (a prompt
+ * while none is selected; nothing before data is loaded): its scope, the
+ * groups broadcasting it (each with its AP count), the APs that broadcast
+ * it with the APs whose group cannot be identified stated in the same
+ * section, and that security, bands and enabled state need management
+ * access. A selection no group broadcasts any more is cleared (the
+ * single-pane layout then shows the list again).
+ * @param {LinkTarget | null} focusLink - The cross-link that had keyboard focus, or null.
+ * @param {boolean} headingFocused - The heading had keyboard focus.
  */
-function createApsSection(broadcasters: NetworkBroadcasters): HTMLElement {
-  const { aps, unknownApCount } = broadcasters;
-  const content: HTMLElement[] = [];
-  if (aps.length > 0) {
-    content.push(createLinkList(aps.map(ap => [createCrossLink(apLink(ap), ap.name), createStatusElement(ap.statusCategory)])));
-  }
-  if (unknownApCount > 0) {
-    const note = unknownApCount === 1 ? t('networkUnknownApsOne') : tFormat('networkUnknownApsMany', { count: String(unknownApCount) });
-    content.push(createNote(note, 'unknownAps'));
-    return createDetailSection('aps', t('accessPoints'), content);
-  }
-  if (aps.length === 0) {
-    content.push(createNote(t('networkNoAps'), 'noAps'));
-  }
-  return createDetailSection('aps', `${t('accessPoints')} (${aps.length})`, content);
-} // End of function createApsSection()
-
-/**
- * Renders the selected network's detail (a prompt while none is selected;
- * nothing before data is loaded): its scope, the groups broadcasting it
- * (each with its AP count), the APs that broadcast it with the APs whose
- * group cannot be identified stated in the same section, and that
- * security, bands and enabled state need management access. A selection no
- * group broadcasts any more is cleared (the single-pane layout then shows
- * the list again). Keyboard focus on a cross-link or the heading survives
- * the re-render.
- */
-export function renderNetworkDetail(): void {
+function renderInternalNetworkDetail(focusLink: LinkTarget | null, headingFocused: boolean): void {
   const name = state.selectedNetworkName;
   const broadcasters = name === null ? null : networkBroadcasters(name, state.wlanGroups, state.accessPoints);
   if (broadcasters === null) {
     state.selectedNetworkName = null;
   }
   applyPaneLayout();
-  const focusLink = focusedCrossLink(networkDetail);
-  const headingFocused = document.activeElement?.id === HEADING_ID;
 
   if (broadcasters === null) {
     const loaded = state.lastUpdatedAt !== null && buildNetworkRows(state.wlanGroups, []).length > 0;
@@ -195,15 +351,71 @@ export function renderNetworkDetail(): void {
     createDetailHeading(HEADING_ID, broadcasters.name),
     scope,
     groupsSection,
-    createApsSection(broadcasters),
+    createBroadcastingApsSection(broadcasters.aps, broadcasters.unknownApCount),
     createNote(t('networkManagementOnly'), 'managementOnly'),
   );
+  restoreDetailFocus(focusLink, headingFocused);
+} // End of function renderInternalNetworkDetail()
 
+/**
+ * Renders the selected network's detail from the managed list (a prompt
+ * while none is selected): its name, scope, facts (enabled state,
+ * security, bands, whether a password is set), and by scope the bound
+ * groups and their APs as cross-links or the scope's note. While the
+ * managed list is loading or failed the detail is empty and the
+ * single-pane layout shows the list's state (the drill-in is closed; the
+ * selection waits for the list).
+ * @param {NetworksViewMode} mode - The view's managed mode.
+ * @param {LinkTarget | null} focusLink - The cross-link that had keyboard focus, or null.
+ * @param {boolean} headingFocused - The heading had keyboard focus.
+ */
+function renderManagedNetworkDetail(mode: NetworksViewMode, focusLink: LinkTarget | null, headingFocused: boolean): void {
+  if (mode !== 'managedReady' || state.managedNetworks === null) {
+    state.networkDetailOpen = false;
+    applyPaneLayout();
+    networkDetail.replaceChildren();
+    return;
+  }
+  const network = state.managedNetworks.find(candidate => candidate.id === state.selectedManagedNetworkId) ?? null;
+  applyPaneLayout();
+  if (network === null) {
+    networkDetail.replaceChildren(...(state.managedNetworks.length > 0 ? [createEmptyState(t('networkDetailPrompt'))] : []));
+    return;
+  }
+  const row = { network, scope: managedNetworkScope(network, state.wlanGroups, state.accessPoints) };
+  networkDetail.replaceChildren(createDetailHeading(HEADING_ID, network.name), ...buildManagedNetworkDetail(row));
+  restoreDetailFocus(focusLink, headingFocused);
+} // End of function renderManagedNetworkDetail()
+
+/**
+ * Gives keyboard focus back after the detail was re-rendered: to the same
+ * cross-link, else to the heading when it had focus.
+ * @param {LinkTarget | null} focusLink - The cross-link that had focus, or null.
+ * @param {boolean} headingFocused - The heading had focus.
+ */
+function restoreDetailFocus(focusLink: LinkTarget | null, headingFocused: boolean): void {
   const link = focusLink === null ? null : findCrossLink(networkDetail, focusLink);
   if (link) {
     link.focus({ preventScroll: true });
   } else if (headingFocused) {
     focusById(HEADING_ID);
+  }
+}
+
+/**
+ * Renders the selected network's detail for the current source (the 14a
+ * internal data or the managed list; see the two renderers above). Keyboard
+ * focus on a cross-link or the heading survives the re-render.
+ */
+export function renderNetworkDetail(): void {
+  const focusLink = focusedCrossLink(networkDetail);
+  const headingFocused = document.activeElement?.id === HEADING_ID;
+  const mode = currentContentState() === 'ready' ? currentNetworksMode() : 'internal';
+  syncNetworkSelection(mode);
+  if (mode === 'internal') {
+    renderInternalNetworkDetail(focusLink, headingFocused);
+  } else {
+    renderManagedNetworkDetail(mode, focusLink, headingFocused);
   }
 } // End of function renderNetworkDetail()
 
@@ -216,34 +428,60 @@ export function renderNetworksView(): void {
 }
 
 /**
- * Selects a network (or none): marks its master item as current (the list
- * is not re-rendered, so focus stays put) and renders its detail.
- * @param {string | null} name - The network name, or null.
+ * Marks the master item of the selection as current (the list is not
+ * re-rendered, so focus stays put) and renders the detail.
+ * @param {(item: HTMLButtonElement) => boolean} isSelected - Whether an item is the selected one.
  */
-export function selectNetwork(name: string | null): void {
-  state.selectedNetworkName = name;
+function markSelectedItem(isSelected: (item: HTMLButtonElement) => boolean): void {
   for (const item of networkList.querySelectorAll<HTMLButtonElement>('.master-item')) {
-    if (item.dataset.networkName === name) {
+    if (isSelected(item)) {
       item.setAttribute('aria-current', 'true');
     } else {
       item.removeAttribute('aria-current');
     }
   }
   renderNetworkDetail();
-} // End of function selectNetwork()
+}
+
+/**
+ * Selects a network of the 14a view by name (or none).
+ * @param {string | null} name - The network name, or null.
+ */
+export function selectNetwork(name: string | null): void {
+  state.selectedNetworkName = name;
+  state.selectedManagedNetworkId = null;
+  markSelectedItem(item => item.dataset.networkName === name);
+}
+
+/**
+ * Selects a network of the managed list by id (its name is mirrored for
+ * the layout and a later switch to the 14a view).
+ * @param {string} id - The network's id.
+ */
+function selectManagedNetwork(id: string): void {
+  const network = state.managedNetworks?.find(candidate => candidate.id === id) ?? null;
+  state.selectedManagedNetworkId = network === null ? null : network.id;
+  state.selectedNetworkName = network === null ? null : network.name;
+  markSelectedItem(item => network !== null && item.dataset.networkId === network.id);
+}
 
 /**
  * Delegated click handler of the master list (Enter and Space too: the
- * items are buttons): a click on an item selects its network, and it stays
- * the list's Tab stop. In the single-pane layout the network's detail
- * replaces the list, with focus on its heading.
+ * items are buttons): a click on an item selects its network (by id on the
+ * managed list, by name on the 14a view), and it stays the list's Tab stop.
+ * In the single-pane layout the network's detail replaces the list, with
+ * focus on its heading.
  * @param {MouseEvent} e - The click event.
  */
 export function handleNetworkListClick(e: MouseEvent): void {
   const item = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('.master-item') : null;
   if (!item || !networkList.contains(item) || item.dataset.networkName === undefined) return;
   state.networkDetailOpen = true;
-  selectNetwork(item.dataset.networkName);
+  if (item.dataset.networkId !== undefined) {
+    selectManagedNetwork(item.dataset.networkId);
+  } else {
+    selectNetwork(item.dataset.networkName);
+  }
   if (isSinglePane()) {
     for (const other of networkList.querySelectorAll<HTMLButtonElement>('.master-item')) {
       other.tabIndex = other === item ? 0 : -1;
@@ -321,4 +559,103 @@ export function focusNetworkDetailHeading(): boolean {
 export function revealSelectedNetwork(): void {
   const item = networkList.querySelector<HTMLButtonElement>('.master-item[aria-current="true"]');
   item?.scrollIntoView({ block: 'nearest' });
+}
+
+// ============================================================================
+// Cross-navigation (navigation.ts): the view's item in the Back history is a
+// typed network key (networkHistoryItem(): "name:<name>" on the 14a view or
+// for a name still waiting to be resolved, "id:<id>" on the managed list),
+// so an id and a name are never resolved as each other
+// ============================================================================
+
+/**
+ * The item the view shows, for the Back history: on the managed source the
+ * selected network's id when one is held (selected, or waiting from Back);
+ * otherwise the selected network's name (the 14a view, or a name waiting
+ * to be resolved on the managed list), or null.
+ * @returns {string | null} The item ("id:…" or "name:…"), or null.
+ */
+export function currentNetworkItem(): string | null {
+  const managed = currentContentState() === 'ready' && currentNetworksMode() !== 'internal';
+  if (managed && state.selectedManagedNetworkId !== null) {
+    return networkHistoryItem({ kind: 'id', value: state.selectedManagedNetworkId });
+  }
+  return state.selectedNetworkName === null ? null : networkHistoryItem({ kind: 'name', value: state.selectedNetworkName });
+}
+
+/**
+ * The display name of a Back-history item of this view as the data on
+ * screen has it now, or null when it is gone: on the 14a view a network
+ * name some group broadcasts (an id cannot be shown there); on the managed
+ * list the network with that id, or the one network with that name
+ * (findManagedNetwork(): each key only in its own namespace); null while
+ * the managed list is loading or failed.
+ * @param {string} item - The item ("id:…" or "name:…").
+ * @returns {string | null} The name, or null.
+ */
+export function networkItemLabel(item: string): string | null {
+  const key = parseNetworkHistoryItem(item);
+  if (key === null) return null;
+  const mode = currentNetworksMode();
+  if (mode === 'internal') {
+    if (key.kind !== 'name') return null;
+    const broadcast = state.wlanGroups.some(group => group.ssidList.some(ssid => ssid.ssidName === key.value));
+    return broadcast ? displayName(key.value) : null;
+  }
+  if (mode !== 'managedReady' || state.managedNetworks === null) return null;
+  const network = findManagedNetwork(state.managedNetworks, key);
+  return network === null ? null : displayName(network.name);
+} // End of function networkItemLabel()
+
+/**
+ * Tells whether the view's source is settled — the managed list on screen,
+ * or the 14a view once management is definitively off — so its
+ * Back-history items can be checked against it (networksSourceSettled():
+ * not while the managed list is loading or failed, nor while the 14a view
+ * is only the fallback of a capability check still running).
+ * @returns {boolean} True when settled.
+ */
+export function isNetworksSourceSettled(): boolean {
+  return networksSourceSettled(currentNetworksMode(), networkManagementChecking(managementInput()));
+}
+
+/**
+ * Where a cross-link to a network (links name networks: the internal data
+ * has no ids) leads in this view: the item to select and the search to keep
+ * (cleared when it would hide the item), or null when the network is not
+ * listed. On the managed list a name several networks share selects none
+ * and searches for it instead (all of them listed, none picked); while the
+ * managed list is loading or failed the name waits to be resolved.
+ * @param {string} name - The network name.
+ * @returns {{ item: string | null; search: string } | null} The target (its item "id:…" or "name:…"), or null.
+ */
+export function networkLinkTarget(name: string): { item: string | null; search: string } | null {
+  const mode = currentNetworksMode();
+  if (mode === 'internal') {
+    const row = buildNetworkRows(state.wlanGroups, state.accessPoints).find(candidate => candidate.name === name);
+    if (!row) return null;
+    return { item: networkHistoryItem({ kind: 'name', value: row.name }), search: searchKeepingItem(state.networkSearchText, matchesNetworkSearch(row, state.networkSearchText)) };
+  }
+  if (mode !== 'managedReady' || state.managedNetworks === null) {
+    return { item: networkHistoryItem({ kind: 'name', value: name }), search: '' };
+  }
+  const rows = buildManagedNetworkRows(state.managedNetworks, state.wlanGroups, state.accessPoints).filter(row => row.network.name === name);
+  if (rows.length === 0) return null;
+  if (rows.length > 1) return { item: null, search: name };
+  const search = searchKeepingItem(state.networkSearchText, matchesManagedNetworkSearch(rows[0], state.networkSearchText));
+  return { item: networkHistoryItem({ kind: 'id', value: rows[0].network.id }), search };
+} // End of function networkLinkTarget()
+
+/**
+ * Takes the item of a Back-history location or a followed link as the
+ * selection, each key in its own field: a name as the selected name (the
+ * 14a view's selection, or resolved by name on the managed list), an id as
+ * the managed selection's id (resolved by id only when the managed list
+ * renders: syncNetworkSelection()).
+ * @param {string | null} item - The item ("id:…" or "name:…"), or null for none.
+ */
+export function applyNetworkItem(item: string | null): void {
+  const key = item === null ? null : parseNetworkHistoryItem(item);
+  state.selectedNetworkName = key?.kind === 'name' ? key.value : null;
+  state.selectedManagedNetworkId = key?.kind === 'id' ? key.value : null;
 }

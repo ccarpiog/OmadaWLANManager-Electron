@@ -35,8 +35,9 @@ export interface LinkTarget {
 export interface NavLocation {
   view: AppView;
   // The item the view showed: the MAC of the AP whose details pane was open
-  // (accessPoints), the selected group id (groups) or the selected network
-  // name (networks); null when none was
+  // (accessPoints), the selected group id (groups) or the selected network's
+  // typed key, "name:<name>" or "id:<id>" (networks; networkHistoryItem() in
+  // network-management.ts); null when none was
   item: string | null;
   // The item's display name when the location was left (shown as "Back to
   // <name>"); null when no item was shown (the view's name is used instead)

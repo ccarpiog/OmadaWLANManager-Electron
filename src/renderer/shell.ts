@@ -9,7 +9,6 @@
 // (layout.ts), which name the views' lists.
 // ============================================================================
 
-import { countDistinctSsids } from './ap-selection';
 import {
   apDetailsBackBtn,
   destinationBackBtn,
@@ -28,6 +27,7 @@ import {
 } from './elements';
 import { t, tGroup } from './i18n';
 import { setDrillBackLabel } from './layout';
+import { networksNavCount, renderNetworksStaleNotice } from './networks-view';
 import { renderReadOnlyBanner } from './notices';
 import { state, type AppView } from './state';
 
@@ -51,7 +51,8 @@ export function isAppView(value: string | undefined): value is AppView {
  * Shows one view and hides the others; the sidebar button of the shown view
  * carries aria-current="page". Navigation works connected or not (spec §4.6:
  * "Disconnected: navigation stays"). The read-only banner follows the view
- * (it belongs to the AP groups and Wi-Fi networks views).
+ * (it belongs to the AP groups and Wi-Fi networks views), and so does the
+ * managed Wi-Fi networks list's refresh-error notice (that view's alone).
  * @param {AppView} view - The view to show.
  */
 export function showView(view: AppView): void {
@@ -66,6 +67,7 @@ export function showView(view: AppView): void {
     }
   }
   renderReadOnlyBanner();
+  renderNetworksStaleNotice();
 } // End of function showView()
 
 /**
@@ -82,15 +84,17 @@ function setNavCount(button: HTMLButtonElement, count: number | null): void {
 
 /**
  * Renders the sidebar's TOTAL counts (never the filtered ones): access
- * points, groups (empty groups included) and distinct Wi-Fi network names
- * across the group listing. Hidden until data has loaded; a failed refresh
- * keeps the previous totals, like the data on screen.
+ * points, groups (empty groups included) and the Wi-Fi networks — the
+ * managed list's networks while the Wi-Fi networks view shows it, else the
+ * distinct network names across the group listing (networksNavCount()).
+ * Hidden until data has loaded; a failed refresh keeps the previous totals,
+ * like the data on screen.
  */
 export function renderNavCounts(): void {
   const loaded = state.lastUpdatedAt !== null;
   setNavCount(navAccessPointsBtn, loaded ? state.accessPoints.length : null);
   setNavCount(navGroupsBtn, loaded ? state.wlanGroups.length : null);
-  setNavCount(navNetworksBtn, loaded ? countDistinctSsids(state.wlanGroups) : null);
+  setNavCount(navNetworksBtn, loaded ? networksNavCount() : null);
 }
 
 /**

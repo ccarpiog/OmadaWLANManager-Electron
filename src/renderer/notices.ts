@@ -8,6 +8,9 @@
 //   - the refresh-error notice: the data on screen is stale (a refresh or the
 //     reload after a move failed); it states the last-updated time and
 //     offers Retry (data-state-action="retry", wired in renderer.ts).
+// (The Wi-Fi networks view's own refresh-error notice — its managed list
+// kept, stale, after a failed re-read — follows the same pattern and is
+// rendered by renderNetworksStaleNotice() in networks-view.ts.)
 // ============================================================================
 
 import { readOnlyBanner, readOnlyBannerText, refreshNotice, refreshNoticeRetryBtn, refreshNoticeText } from './elements';

@@ -3,11 +3,12 @@
 // modules read and write `state.<field>` instead of reassigning their own
 // `let`s. Nothing else in src/renderer declares module-level mutable state.
 
-import type { AccessPoint, ApGroupSsidLimits, GroupModel, Language, ManagedApGroup, ManagementCapabilities, WlanGroup } from '../shared/types';
+import type { AccessPoint, ApGroupSsidLimits, GroupModel, Language, ManagedApGroup, ManagedNetwork, ManagementCapabilities, WlanGroup } from '../shared/types';
 import { GROUP_FILTER_ALL, STATUS_FILTER_ALL } from './ap-selection';
 import { apDetailsContent, apList, destinationList, groupDetail, groupList, networkDetail, networkList, refreshBtn } from './elements';
 import type { GroupFailure, ManagedGroupsStatus } from './group-management';
 import type { AppView, NavLocation } from './nav-history';
+import type { ManagedNetworksStatus, NetworkFailureDetail, NetworkReadStamp } from './network-management';
 
 // The three views of the app shell (docs/management-design.md §4.2), defined
 // with the navigation history (nav-history.ts); the Access points view is the
@@ -63,8 +64,16 @@ export interface RendererState {
   groupSearchText: string;
   // Wi-Fi networks view (networks-view.ts): the selected network's name
   // (null = none; the internal API identifies networks by name only) and the
-  // view's own search text (network and group names)
+  // view's own search text (network and group names). On the managed source
+  // (Wi-Fi network management on) networks are told apart by id:
+  // `selectedManagedNetworkId` is the selected one (its name is mirrored in
+  // `selectedNetworkName`), or an id waiting to be resolved on the managed
+  // list (Back); null while a selection by name (a cross-link, the 14a
+  // view's selection) waits to be resolved there; always null on the 14a
+  // view. Each field holds only its own kind of key (an id is never stored
+  // as a name): the managed list resolves them by networkSelectionKey()
   selectedNetworkName: string | null;
+  selectedManagedNetworkId: string | null;
   networkSearchText: string;
   // Single-pane layout (700–799 px windows, layout.ts): whether the
   // destination picker of the Access points view, the AP groups view's
@@ -112,6 +121,24 @@ export interface RendererState {
   managedGroupsStatus: ManagedGroupsStatus;
   managedGroupsFailure: { error: GroupFailure; diagnostic: string | null } | null;
   managedGroupsRequest: number;
+  // The managed (Open API) list of the site's Wi-Fi networks
+  // (managed-networks.ts), read with the session nonce while Wi-Fi network
+  // management is on: the secret-free DTOs main built (never a passphrase).
+  // `managedNetworks` is null until read, and after a failed first read
+  // (whose code is `managedNetworksFailure`: the view shows its error state
+  // with Retry, never a partial list); a re-read keeps the previous list on
+  // screen until the new one arrives, and a failed re-read keeps it, stale
+  // (status 'failed' with a list: the view's refresh-error notice states the
+  // failure and the list's time). `managedNetworksStamp` is the session the
+  // held list was read for and when (null with no list): a list is only
+  // ever kept for the same session. `managedNetworksRequest` numbers the
+  // reads: a reply that is not the latest read's (or arrives for another
+  // session or nonce) is discarded
+  managedNetworks: ManagedNetwork[] | null;
+  managedNetworksStamp: NetworkReadStamp | null;
+  managedNetworksStatus: ManagedNetworksStatus;
+  managedNetworksFailure: NetworkFailureDetail | null;
+  managedNetworksRequest: number;
   // True while loadData() is fetching (drives the Refresh button/spinners)
   isLoadingData: boolean;
   // True when a controller URL is stored; before first configuration the
@@ -200,6 +227,7 @@ export const state: RendererState = {
   selectedGroupId: null,
   groupSearchText: '',
   selectedNetworkName: null,
+  selectedManagedNetworkId: null,
   networkSearchText: '',
   destinationPaneOpen: false,
   groupDetailOpen: false,
@@ -216,6 +244,11 @@ export const state: RendererState = {
   managedGroupsStatus: 'idle',
   managedGroupsFailure: null,
   managedGroupsRequest: 0,
+  managedNetworks: null,
+  managedNetworksStamp: null,
+  managedNetworksStatus: 'idle',
+  managedNetworksFailure: null,
+  managedNetworksRequest: 0,
   isLoadingData: false,
   hasStoredConfig: false,
   loadError: null,

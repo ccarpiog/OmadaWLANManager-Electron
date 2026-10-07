@@ -2,10 +2,11 @@
 // Shared building blocks of the read-only AP groups and Wi-Fi networks views
 // and of the AP details pane: localized count texts, cross-links (native
 // buttons carrying data-link-kind / data-link-target, followed by the
-// delegated handler in navigation.ts), badges, notes, detail headings and
-// sections, and the master lists' keyboard model (one Tab stop; ArrowUp /
-// ArrowDown / Home / End move between the items). Everything is built with
-// DOM APIs (createElement / textContent), never HTML strings.
+// delegated handler in navigation.ts), badges, notes, detail headings,
+// fact rows and sections, and the master lists' keyboard model (one Tab
+// stop; ArrowUp / ArrowDown / Home / End move between the items).
+// Everything is built with DOM APIs (createElement / textContent), never
+// HTML strings.
 // ============================================================================
 
 import { createEmptyState } from './dom-helpers';
@@ -178,6 +179,30 @@ export function createDetailSection(kind: string, title: string, content: HTMLEl
   section.append(...content);
   return section;
 } // End of function createDetailSection()
+
+/**
+ * Builds one fact row of a detail pane's fact list (a term and its value).
+ * @param {string} kind - Its data-fact value.
+ * @param {string} label - The term.
+ * @param {HTMLElement | string} value - The value (an element or a text).
+ * @returns {HTMLDivElement} The row.
+ */
+export function createFact(kind: string, label: string, value: HTMLElement | string): HTMLDivElement {
+  const row = document.createElement('div');
+  row.className = 'detail-fact';
+  row.dataset.fact = kind;
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const definition = document.createElement('dd');
+  if (typeof value === 'string') {
+    definition.textContent = value;
+  } else {
+    definition.appendChild(value);
+  }
+  row.appendChild(term);
+  row.appendChild(definition);
+  return row;
+} // End of function createFact()
 
 /**
  * Builds the list of a detail section: one row per linked item.

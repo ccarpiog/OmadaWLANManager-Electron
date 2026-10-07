@@ -45,7 +45,18 @@
 //   group-dialog.ts       New group / Rename / Delete dialog
 //   group-flow.ts         the AP-group write flows (dialog, write, reload,
 //                         focus) and "Move access points here"
-//   networks-view.ts      Wi-Fi networks view (read-only master list + detail)
+//   networks-view.ts      Wi-Fi networks view (read-only master list +
+//                         detail; the 14a internal data, or the managed
+//                         list while Wi-Fi network management is on)
+//   network-management.ts pure managed-networks logic: source and view
+//                         mode, stale-reply check, settling a reply (a
+//                         failed re-read keeps the list, stale), reply
+//                         validation, scopes, typed selection keys, value
+//                         and failure message keys
+//   managed-networks-view.ts the managed list's items, detail, scope text,
+//                         error state (Retry, Settings) and stale notice
+//   managed-networks.ts   the managed list of the Wi-Fi networks (read with
+//                         the session nonce, late replies discarded)
 //   nav-history.ts        pure Back-history helpers
 //   navigation.ts         cross-links, "Back to …", re-rendering the views
 //   move-plan.ts          pure move planning (gains/losses, mixed
@@ -146,6 +157,7 @@ import {
 import { setLanguage, t } from './i18n';
 import { handleGlobalKeydown } from './keyboard';
 import { installResponsiveLayout } from './layout';
+import { retryManagedNetworks } from './managed-networks';
 import { runManagementTest } from './management';
 import { startMove } from './move-flow';
 import { goBack, handleCrossLinkClick, navigateToView } from './navigation';
@@ -202,9 +214,10 @@ backBtn.addEventListener('click', goBack);
 // destination pane back, focus returns to the AP's checkbox
 closeApDetailsBtn.addEventListener('click', () => closeApDetails(true));
 
-// §4.6 state actions inside the views (content-state.ts, notices.ts):
-// "Configure connection" and Settings open the settings modal, "Connect to
-// controller" connects, Retry reloads (or reconnects)
+// §4.6 state actions inside the views (content-state.ts, notices.ts,
+// managed-networks-view.ts): "Configure connection" and Settings open the
+// settings modal, "Connect to controller" connects, Retry reloads (or
+// reconnects), the Wi-Fi networks view's Retry reads its managed list again
 viewArea.addEventListener('click', (e) => {
   const button = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('[data-state-action]') : null;
   switch (button?.dataset.stateAction) {
@@ -217,6 +230,9 @@ viewArea.addEventListener('click', (e) => {
       break;
     case 'retry':
       retryLoad();
+      break;
+    case 'retryNetworks':
+      retryManagedNetworks();
       break;
     default:
       break;

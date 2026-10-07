@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T05:23:21Z",
+ "updated": "2026-10-07T06:29:58Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -192,9 +192,9 @@
   {
    "id": "17",
    "title": "Wi-Fi network read model",
-   "status": "in_progress",
+   "status": "done",
    "risk": "high",
-   "summary": "Split into 17a (main-side Open API read model, secret stripping, guarded IPC) and 17b (networks view on the managed source, smoke)."
+   "summary": "Split into 17a (main-side Open API read model, secret stripping, guarded IPC) and 17b (networks view on the managed source, smoke); both done."
   },
   {
    "id": "17a",
@@ -209,9 +209,11 @@
   {
    "id": "17b",
    "title": "Wi-Fi networks view on the managed source",
-   "status": "queued",
+   "status": "done",
    "risk": "routine",
-   "summary": "Shows the Open API network list with All access points and N groups scopes in the Wi-Fi networks view when management is on."
+   "summary": "Shows the Open API network list with All access points, N groups and unknown scopes when management is on, discarding stale replies.",
+   "review": "docs/reviews/phase17b.md",
+   "narrative": "docs/progress-archive/phase-17b.md"
   },
   {
    "id": "18",
