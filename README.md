@@ -2,11 +2,17 @@
 
 A modern desktop application for moving TP-Link Omada Controller access points between AP groups
 (Omada 6.3 and later) or WLAN groups (older controllers) and, with optional management access on
-Omada 6.3 and later, for managing the AP groups and Wi-Fi networks themselves.
+Omada 6.3 and later, for managing the AP groups and Wi-Fi networks themselves. Optionally, a TP-Link
+cloud account also reaches the account's remote controllers through TP-Link's cloud (see
+[TP-Link cloud controllers](#tp-link-cloud-controllers-optional)).
 
 ## Features
 
 - Connect to TP-Link Omada Controller
+- Optional TP-Link cloud access: remote Omada controllers (for example OC200s on another
+  network) reached through TP-Link's Account Level Open API, beside the directly connected local
+  controller, in one controller switcher; **Connect through TP-Link cloud** when the local
+  controller does not answer ([details](#tp-link-cloud-controllers-optional))
 - View all access points with their status, group, number of Wi-Fi networks and
   connected clients; search and filter them by status and group; click one to see its
   details (status, MAC, group, clients and the Wi-Fi networks its group broadcasts)
@@ -50,6 +56,11 @@ Omada 6.3 and later, for managing the AP groups and Wi-Fi networks themselves.
   smoke-tested on fixtures only. They have not been verified on a live
   controller yet: that is the manual [live-test checklist](docs/live-test-checklist.md),
   which has not been run
+- Optional TP-Link cloud access: an Account Level Open API (beta) credential from TP-Link's
+  Omada cloud portal (TP-Link may not have enabled that page for your account yet) and
+  controllers on Omada 6.3 or later that are online in the TP-Link cloud. It is implemented
+  against TP-Link's documented API and tested on fixtures only; Part C of the live-test
+  checklist, which checks it, has not been run
 
 Toolchain: Electron 44 (Chromium 152, Node.js 24), TypeScript 7, esbuild,
 electron-builder 26, Playwright (`playwright-core`) for the GUI smoke test.
@@ -85,6 +96,10 @@ interface term in English and Spanish. In short:
      (Omada 6.3 or later, an access token, and the connected site and its AP
      groups must match what the controller reports), and **Test management
      access** shows the precise result
+   - **TP-Link cloud (optional)**: the **Region**, **Client ID** and **Client Secret** of a
+     TP-Link Account Level Open API credential, for controllers reached through TP-Link's cloud;
+     see [TP-Link cloud controllers](#tp-link-cloud-controllers-optional), which also covers a
+     setup without a local controller
 3. Click **Connect** to connect to the controller. The first time, the app
    shows the controller certificate's SHA-256 fingerprint: compare it with the
    certificate of your controller and choose **Trust and connect** (no password
@@ -179,16 +194,124 @@ interface term in English and Spanish. In short:
     time (the move pane, AP details and a group's or network's details open in
     the list's place, each with **←** back to the list)
 
+## TP-Link cloud controllers (optional)
+
+The app normally talks to one Omada controller on your network, directly. With a TP-Link cloud
+account it can also reach the account's other on-premises controllers — for example OC200 hardware
+controllers on a network you cannot reach directly — through TP-Link's **Account Level Open API**
+(beta), which tunnels each controller's Open API through Cloud Access. The local controller keeps its
+direct connection (internal API, pinned certificate); one controller switcher lists all of them, and
+the app works with one controller at a time.
+
+**The credential.** In TP-Link's Omada cloud portal, open *On Premise Systems → Open API* (Account
+Level Open API) and create a credential in client credentials mode: choose its validity, the
+organizations (controllers) it may reach, and its access — **full access** is needed for any change;
+with **view only** the app can only show data. Copy its Client ID and Client Secret. TP-Link shows that
+page only once it has enabled the feature for the account: as of 2026-10-07 it had not for the
+author's account, so nothing here has been checked against TP-Link yet (see the limits below).
+
+**Settings → TP-Link cloud (optional):**
+
+- **Region**: Asia-Pacific (APS), Europe (EUW, the default) or United States (USE), the region of your
+  TP-Link account.
+- **Client ID** and **Client Secret**: the secret is never shown again (the field reads "(unchanged)");
+  a new region or Client ID needs it again. It is stored encrypted only when the computer has a real
+  secret store; otherwise it is never written to disk but kept until you quit the app, and Settings
+  says so (see [Configuration](#configuration)).
+- **Test cloud access** uses the saved credential (save first; no controller connection is needed). It
+  lists the account's controllers, each "Available" or with the reason it cannot be used (offline,
+  older than Omada 6.3, no valid version, not an Omada controller, incomplete data from TP-Link, or a
+  cloud server the app does not support), and marks the cloud entry of your local controller "This
+  network". When it fails it says why: a wrong, expired, deleted or disabled credential, the rate
+  limit, no answer, and so on.
+- **Remove cloud access** asks for confirmation and deletes the region, the Client ID and the Client
+  Secret when you save (**Keep cloud access** undoes it before saving).
+- While a cloud credential is saved, the certificate section notes that the certificates of TP-Link
+  cloud controllers are verified normally.
+
+**The controller switcher.** While a cloud credential is saved, the top of the sidebar shows
+**Controller** and the controller in use. Its list starts with **This network** (the local controller,
+with its host), then the cloud controllers by name, each with a **Cloud** tag and its Omada version.
+The cloud entry of the local controller itself is hidden (it has the same controller id, which the app
+learns when it connects directly), so that controller is listed once. Controllers that cannot be used
+are listed but disabled, with the reason under them; if the list cannot be read, the reason shows under
+the entries and **This network** still works. The switcher is disabled while a move, an AP-group,
+Wi-Fi network or Broadcast on change, a connection, a disconnection, a settings save or a certificate
+reset is running. Choosing a controller clears everything on screen (selection, destination, filters,
+searches, details, Back history), connects to it and loads its data; the header shows its name. The
+choice is remembered: the app starts on it next time (on the local controller if the cloud credential
+is gone), and each cloud controller remembers its site. The list is read when the app starts, after
+each Settings save and before offering "Connect through TP-Link cloud". Without a cloud credential the
+switcher is hidden and the app works as before.
+
+**Connect through TP-Link cloud.** When a direct connection to the local controller fails because the
+controller does not answer at all (for example, you are away from its network) — not a refused
+password or a certificate problem — and the cloud account lists that same controller online and
+usable, the error shows **Connect through TP-Link cloud** between **Retry** and **Settings**. It
+connects to the same controller through the cloud; **This network** then carries the **Cloud** tag,
+and choosing it again connects directly.
+
+**Cloud only.** Without a local controller, leave **URL**, **Username** and **Password** empty, fill in
+only the TP-Link cloud section and save (management access belongs to a local controller and is
+refused there). The views then ask you to choose a cloud controller (**Choose controller** opens the
+switcher), every controller of the account is listed (none is "This network"), and the next start
+reconnects to the one you chose.
+
+**Removing cloud access while a cloud controller is in use** returns the app to the local controller in
+the same save (it reconnects directly), or, in a cloud-only setup, to the first-run state.
+
+**Certificates.** Cloud controllers are reached through TP-Link's cloud servers, whose certificates get
+Chromium's normal verification in a separate Electron session: no fingerprint dialog and no pinning,
+and the pinned session of the local controller is not involved. Cloud requests (and the access token)
+go only to the three regional API hosts (`aps1-`, `euw1-` and `use1-omada-northbound.tplinkcloud.com`),
+and redirects are refused; a controller that TP-Link lists on any other server cannot be chosen.
+
+**Limits and differences on a cloud controller:**
+
+- **Not verified live.** The cloud access was built against TP-Link's documented Account Level Open
+  API ([contract](docs/omada-cloud-openapi.md)) and tested on fixtures and a stubbed main process only;
+  its live checks are Part C of the [live-test checklist](docs/live-test-checklist.md), not run yet.
+- **Omada 6.3 or later, online in the TP-Link cloud.** Older controllers are listed but cannot be
+  chosen: there is no WLAN-group (legacy) mode through the cloud.
+- **Open API only** (no internal API): the access points come from the Open API's AP-group listing, and
+  what it does not report reads as unknown, never as a guess — "Unknown status", "Unknown group"
+  (instead of "Unassigned"), client counts "Not reported by the controller", and "Networks unknown"
+  for a group whose networks are not reported (a move to or from such a group says "Network change
+  unknown for N APs" instead of listing the networks gained and lost).
+- **Moves** use the Open API call `PATCH …/aps/{mac}/wlan-group`. An access point counts as moved only
+  when a re-read of the list (up to 3 reads, one second apart) shows it in the destination group;
+  otherwise it is **Failed** with a reason that starts with `moveRequestFailed`, `moveNotConfirmed` or
+  `moveUnverified`, and **Retry failed** works as usual.
+- **Management** (AP groups, Wi-Fi networks, Broadcast on) uses the cloud credential, not Settings →
+  Management access (that one belongs to the local controller). It is on when the cloud token works and
+  the site is listed: the check that compares the Open API's AP groups with the controller's internal
+  list cannot run through the cloud. **Test management access** runs these checks on a cloud controller
+  too. Changes need a full-access credential; a view-only credential's refusals show TP-Link's code and
+  message.
+- **Rate limit.** TP-Link allows 10 requests per second per credential and answers `-7132` (or HTTP
+  429) beyond that. The app starts at most 5 per second per credential, shared by Test cloud access,
+  the switcher's list and the cloud controller in use; a `-7132` or 429 holds them back (1 s, then 2, 4
+  and 8 s while it repeats), and a request is retried at most 3 times before "TP-Link is receiving too
+  many requests for this credential (rate limit)" shows. A cloud controller is therefore slower than a
+  direct one, especially for bulk moves.
+- **Incomplete lists are never used as complete.** A site, access-point or group list that TP-Link
+  does not deliver completely fails the connection or the read instead of showing part of it; while
+  the controller list may be incomplete, Test cloud access and the switcher say so and no cloud
+  controller can be connected.
+
 ## Documentation
 
 - [User guide](docs/user-guide.md): how to use the app, with every interface term
   in English and Spanish
 - [Live-test checklist](docs/live-test-checklist.md): the manual run, not done
   yet, that checks the management features' unverified controller behaviors on a
-  real Omada 6.3 controller with disposable `__OWM_TEST_` resources only; its
-  cross-reference table says which behaviors a run covers and which it cannot
+  real Omada 6.3 controller with disposable `__OWM_TEST_` resources only, and, in
+  its Part C, the TP-Link cloud access with a real Account Level Open API
+  credential; its cross-reference table says which behaviors a run covers and
+  which it cannot
 - [Design spec](docs/management-design.md), [Omada 6.3 API findings](docs/omada-6.3-api-findings.md),
-  [Open API operations](docs/omada-openapi-ops.md) and the
+  [Open API operations](docs/omada-openapi-ops.md),
+  [TP-Link cloud (Account Level Open API) contract](docs/omada-cloud-openapi.md) and the
   [security audit](docs/security-audit.md)
 
 ## Controller versions
@@ -205,8 +328,14 @@ The app reads the controller version from `/api/info` when it connects:
   not offer it, shows the groups that have Wi-Fi networks, as earlier versions
   of the app did. Management access is not available on them.
 
-Moving an access point always uses the same controller call (`PATCH
-eaps/{mac}` with the group id), whatever the version.
+Moving an access point on a directly connected controller always uses the same
+controller call (`PATCH eaps/{mac}` with the group id), whatever the version.
+
+A **TP-Link cloud controller** reports its version in the cloud account's
+controller list rather than through `/api/info`; the app needs 6.3 or later
+there and lists an older one, or one without a valid version, as not usable.
+It moves access points with the Open API call described in
+[TP-Link cloud controllers](#tp-link-cloud-controllers-optional).
 
 ## Building for Distribution
 
@@ -250,6 +379,17 @@ compatible with the old Python version of this application.
   the new controller's password. Leaving the password blank keeps it only while the URL is unchanged.
   Saving a different URL also closes the current connection: a connection
   attempt or site choice still in progress for the old controller is discarded.
+  It also drops the local controller's id (`localOmadacId`), but keeps the
+  TP-Link cloud credential, which is not tied to a controller.
+- **TP-Link cloud access (optional):** the region and the cloud Client ID in
+  plain text, the cloud Client Secret only encrypted with `safeStorage` (kept
+  in memory until the app quits when the OS offers no real secret store, as
+  for the management Client Secret). A different region or Client ID drops
+  the stored secret, so it must be typed again. Also stored: the controller in
+  use (`activeController`, `local` or a cloud controller), the site chosen on
+  each cloud controller (`cloudSites`), and the local controller's id, learned
+  on a direct connection, which hides its cloud duplicate. **Remove cloud
+  access** deletes all of it except the local controller's id when you save.
 - **Trusted certificate:** the SHA-256 fingerprint you confirmed on the first
   connection, with the controller origin and the time you trusted it. Settings
   shows it, and **Reset trusted certificate** forgets it and closes the current
@@ -330,9 +470,11 @@ npm run tls-probe # build, then the opt-in certificate-pinning probe (local HTTP
   directory. The smoke stub refuses to start with the real home, keeps
   Electron's profile inside the temp dir, never loads the real main process,
   cancels every non-`file:` request and writes no files. Neither command
-  contacts a controller or touches `~/.omada-wlan-manager/`.
-- **Live controller:** no automated test contacts a real controller. The
-  management features' controller behaviors are to be checked by hand with
+  contacts a controller or any TP-Link cloud host, or touches
+  `~/.omada-wlan-manager/`.
+- **Live controller:** no automated test contacts a real controller or
+  TP-Link's cloud. The management features' controller behaviors and the
+  TP-Link cloud access (its Part C) are to be checked by hand with
   [`docs/live-test-checklist.md`](docs/live-test-checklist.md), which has not
   been run yet.
 
@@ -355,15 +497,16 @@ omada-electron/
 │   │   │   cert-pinning.ts, config-model.ts, controller-version.ts, redact.ts,
 │   │   │   ap-group-policy.ts, ipc-guards.ts, ipc-trust.ts, wifi-network-model.ts,
 │   │   │   wifi-network-write.ts, network-binding-plan.ts
+│   │   ├── cloud-*.ts, connection-target.ts # Optional TP-Link cloud access (account client, throttle, host allowlist, transport, cloud controller session, connection targets)
 │   │   └── preload.ts  # Preload script for secure IPC
 │   ├── renderer/       # Renderer process (Browser), bundled by esbuild
 │   │   ├── index.html  # Main HTML
 │   │   ├── styles.css  # Styles with dark mode support
 │   │   ├── renderer.ts # Entry module: event wiring and startup
-│   │   └── *.ts        # UI modules (state, i18n, lists, modals, connection, ...)
+│   │   └── *.ts        # UI modules (state, i18n, lists, modals, connection, controller switcher, cloud settings, ...)
 │   └── shared/         # Shared types
 │       └── types.ts    # TypeScript interfaces
-├── docs/               # User guide, live-test checklist, design spec, API notes, security audit
+├── docs/               # User guide, live-test checklist, design spec, API notes (incl. the TP-Link cloud contract), security audit
 ├── scripts/            # Build and test scripts (renderer bundle, unit-test runner)
 ├── tests/              # unit/ (node:test), smoke/ (Playwright GUI smoke), tls-probe/ (opt-in), fixtures/ (JSON)
 ├── assets/             # Icons and resources
@@ -378,6 +521,10 @@ omada-electron/
   trusted (trust on first use). Other hosts and CA-issued certificates get
   Chromium's normal verification. The first request is already gated, so the
   password is never sent to an unconfirmed or changed certificate
+- TP-Link cloud requests (optional) use their own Electron session with Chromium's normal
+  certificate verification and go only to the three regional TP-Link API hosts, with redirects
+  refused; the cloud Client Secret and access tokens never reach the window, an IPC reply or a
+  log line
 - The application uses Electron's `contextIsolation` and disables `nodeIntegration` for security
 - IPC communication is limited to specific, validated channels: every channel
   accepts calls only from the app's own window, checks the shape of its

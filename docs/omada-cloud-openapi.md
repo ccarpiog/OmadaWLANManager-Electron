@@ -3,8 +3,8 @@
 Inbox item I-1 (spec: `autoclaude/processed/10-tplink-cloud-controllers.md`, user decisions D5–D7). This file is the
 contract the main-process code of phases I-1a (`src/main/cloud-*.ts`, the `OpenApiClient` cloud route), I-1b1 (the
 cloud controller session, §12) and I-1b2b1 (the connection targets, §13) follows. Every
-detail marked **UNVERIFIED** is taken from the documentation only and is a live-test item (I-1c adds them to
-`docs/live-test-checklist.md`).
+detail marked **UNVERIFIED** is taken from the documentation only and is a live-test item: §11 lists them, and
+`docs/live-test-checklist.md` Part C checks them.
 
 ## 1. Sources and status
 
@@ -119,7 +119,8 @@ first, so `offline` means "would be connectable once online":
 | `versionTooOld` | `orgVersion` below 6.3 (listed, not connectable) |
 | `offline` | `online` is not `true` |
 
-Hiding a cloud entry whose `omadacId` equals the local controller's (`localOmadacId`) is phase I-1c's job.
+The controller switcher hides a cloud entry whose `omadacId` equals the local controller's (`localOmadacId`), and
+Settings' Test result marks it "This network" (phases I-1c2a / I-1c2b, §10).
 
 ## 6. Controller calls through Cloud Access
 
@@ -282,6 +283,8 @@ Other outcomes:
 
 ## 11. Unverified behaviors (live-test checklist items)
 
+Each item is checked by `docs/live-test-checklist.md` Part C (its cross-reference rows `C11-1` to `C11-12`).
+
 1. The portal's Open API page and credential creation (account flag `showAccountOpenApi`), and full versus view-only
    access.
 2. `get_tokens` on each region with a real credential: the answer's shape, `expiresIn`, and the codes for a wrong,
@@ -390,9 +393,8 @@ It is Electron-free and unit-tested on fixtures (`tests/unit/cloud-controller-se
 
 `ConnectionManager` (`src/main/connection-manager.ts`) connects to a target (`src/main/connection-target.ts`):
 `{kind: 'local'}` (the configured controller, reached directly; the default) or `{kind: 'cloud', omadacId}`.
-Electron-free, unit-tested in `tests/unit/connection-targets.test.ts`. The renderer switches it through
-`omada:switch-controller`, and the app starts on the stored target (both below). No switcher UI exists yet (phase
-I-1c).
+Electron-free, unit-tested in `tests/unit/connection-targets.test.ts`. The renderer's controller switcher (phase
+I-1c2b) switches it through `omada:switch-controller`, and the app starts on the stored target (both below).
 
 - **`switchTarget(target)`:** in one synchronous step, before any await, the target changes and the transition of a
   URL change runs (`invalidateControllerState()`): every in-flight connect, the pending site choice and trust
@@ -446,8 +448,8 @@ I-1c).
 - **Switch IPC** (`omada:switch-controller`, preload `switchController(target)`, reply: the new target's
   `ConnectionResult`): the trusted sender, then `parseControllerTargetRequest()` (`ipc-guards.ts`), which accepts
   exactly `{kind: 'local'}` or `{kind: 'cloud', omadacId}` (a plain object, no other key, `isOmadacId()`) and
-  rejects anything else before any state changes; then `switchTarget()` as above. The renderer must drop its
-  session (generation and nonce) before calling it (phase I-1c builds the switcher).
+  rejects anything else before any state changes; then `switchTarget()` as above. The renderer drops its
+  session (generation and nonce) before calling it (the switcher, phase I-1c2b).
 - **Session nonces on the data channels:** `omada:get-aps`, `omada:get-wlans` and `omada:set-wlan` carry the
   session nonce of the connect result first, for local and cloud sessions alike. A missing or malformed nonce is
   rejected by the guard. Then `sessionDataReply()` (`controller-session.ts`) refuses, before any controller call, a

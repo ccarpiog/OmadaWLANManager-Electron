@@ -3,7 +3,8 @@
 Omada WLAN Manager moves TP-Link Omada access points between AP groups. On Omada Controller 6.3
 or later, optional **management access** also lets it create, rename and delete AP groups and
 create, edit, enable, disable and delete Wi-Fi networks, and choose which AP groups broadcast each
-network.
+network. With an optional TP-Link cloud account it also reaches controllers that are not on your
+network (section 9).
 
 The app's interface is in Spanish or English (choose it in Settings). This guide is in English and
 gives every interface term in both languages: in the table below, and in the text as bold
@@ -50,6 +51,14 @@ English / Spanish pairs, such as **Settings** / **Ajustes**.
 | Unknown scope | Alcance desconocido |
 | Trust and connect | Confiar y conectar |
 | Reset trusted certificate | Restablecer certificado de confianza |
+| TP-Link cloud (optional) | Nube de TP-Link (opcional) |
+| Test cloud access | Probar el acceso a la nube |
+| Remove cloud access | Quitar el acceso a la nube |
+| Controller | Controlador |
+| This network | Esta red |
+| Cloud | Nube |
+| Connect through TP-Link cloud | Conectar a través de la nube de TP-Link |
+| Choose controller | Elegir controlador |
 
 ## 1. Connecting
 
@@ -70,11 +79,13 @@ English / Spanish pairs, such as **Settings** / **Ajustes**.
 
 Credentials belong to one controller URL: saving a different URL drops the stored password, the
 management credentials, the chosen site and the trusted certificate, and asks for the new
-controller's password.
+controller's password. The optional TP-Link cloud credential is not tied to it, and with one you can
+also leave the controller fields empty and use cloud controllers only (section 9).
 
 ## 2. The three views
 
-The sidebar switches between three views; each count is a total, not a filtered count:
+The sidebar switches between three views; each count is a total, not a filtered count. While a
+TP-Link cloud credential is saved, the controller switcher sits above them (section 9).
 
 - **Access points** / **Puntos de acceso** — the landing view: select access points and move them.
 - **AP groups** / **Grupos de AP** (on controllers older than 6.3: **WLAN groups (legacy)** /
@@ -135,9 +146,13 @@ Open API application:
    Client ID and Client Secret.
 2. In the app, open **Settings** / **Ajustes**, section **Management access (optional)** /
    **Acceso de gestión (opcional)**. Fill in **Client ID** / **Client ID** and **Client Secret** /
-   **Client Secret** and click **Save** / **Guardar**. The secret is stored encrypted and never
-   shown again: the field then reads **(unchanged)** / **(sin cambios)**, and leaving it blank keeps
-   it. When the computer cannot store it securely, Settings says it is kept only until you quit.
+   **Client Secret** and click **Save** / **Guardar**. The secret is never shown again: the field
+   then reads **(unchanged)** / **(sin cambios)**, and leaving it blank keeps it. It is stored
+   encrypted only when the computer can store it securely (the macOS Keychain, DPAPI on Windows, a
+   secret service such as GNOME Keyring or KWallet on Linux). Otherwise it is never written to disk:
+   it is kept only until you quit the app, and Settings says so:
+   **This computer cannot store the Client Secret securely: it is kept only until you quit the app, and you will need to enter it again next time.** /
+   **Este equipo no puede guardar el Client Secret de forma segura: solo se conserva hasta que cierres la aplicación y tendrás que volver a introducirlo la próxima vez.**
 3. While connected, click **Test management access** / **Probar el acceso de gestión** (save first:
    the test uses the saved settings). It checks, in order, the controller version, the credentials,
    an access token, that the Open API sees the connected site, and that it reports exactly the same
@@ -300,8 +315,103 @@ first use and pins it:
   de confianza**, confirm with **Reset** / **Restablecer**, and connect again.
 - Settings shows the pinned fingerprint under **Trusted certificate (SHA-256)** /
   **Certificado de confianza (SHA-256)**.
+- TP-Link cloud controllers (section 9) are reached through TP-Link's servers, whose certificates are
+  verified normally: no dialog, no pinning. While a cloud credential is saved, Settings says so:
+  **TP-Link cloud controllers are reached through TP-Link's cloud: their certificate is verified normally, with no pinning and no prompt.** /
+  **Los controladores de la nube de TP-Link se alcanzan a través de la nube de TP-Link: su certificado se verifica de la forma habitual, sin fijarlo ni preguntar.**
 
-## 9. Keyboard shortcuts
+## 9. TP-Link cloud controllers (optional)
+
+With a TP-Link cloud account, the app can also reach Omada controllers that are not on your network
+(for example OC200 controllers at another site) through TP-Link's cloud, beside the controller it
+connects to directly. It uses TP-Link's Account Level Open API (beta). Like management access, it was
+built against the documentation and has not been verified live yet.
+
+1. In TP-Link's Omada cloud portal, open *On Premise Systems → Open API* and create a credential in
+   **client credentials** mode: choose its validity, the controllers it may reach and its access
+   (changes need **full access**; with view-only access the app can only show data). If the page is
+   missing, TP-Link has not enabled it for your account yet.
+2. In **Settings** / **Ajustes**, section **TP-Link cloud (optional)** /
+   **Nube de TP-Link (opcional)**, pick the **Region** / **Región** of your account (the default is
+   **Europe (EUW)** / **Europa (EUW)**), fill in **Client ID** / **Client ID** and
+   **Client Secret** / **Client Secret**, and click **Save** / **Guardar**. The secret is never
+   shown again; a new region or Client ID needs it again
+   (**(required for the new region)** / **(obligatorio para la nueva región)**). As with the
+   management Client Secret (section 4), it is stored encrypted only when the computer can store it
+   securely; otherwise it is never written to disk but kept only until you quit the app, and
+   Settings says so:
+   **This computer cannot store the cloud Client Secret securely: it is kept only until you quit the app, and you will need to enter it again next time.** /
+   **Este equipo no puede guardar el Client Secret de la nube de forma segura: solo se conserva hasta que cierres la aplicación y tendrás que volver a introducirlo la próxima vez.**
+3. **Test cloud access** / **Probar el acceso a la nube** (save first; no connection is needed)
+   lists the account's controllers, for example
+   **Cloud access works: 3 controllers found.** /
+   **El acceso a la nube funciona: se encontraron 3 controladores.**, each with its version and
+   **Available** / **Disponible** or the reason it cannot be used, and marks your local controller's
+   own entry **This network** / **Esta red**. A failed test names the problem, for example
+   **TP-Link says this credential has expired or no longer exists. Create a new one in the TP-Link Omada cloud portal and save it here.** /
+   **TP-Link indica que esta credencial ha caducado o ya no existe. Crea otra en el portal de Omada en la nube de TP-Link y guárdala aquí.**
+4. **Remove cloud access** / **Quitar el acceso a la nube** deletes the region, the Client ID and
+   the Client Secret when you save; **Keep cloud access** / **Mantener el acceso a la nube** undoes
+   it before saving.
+
+**The controller switcher.** While a cloud credential is saved, the top of the sidebar shows
+**Controller** / **Controlador** and the controller in use. Click it (or press Enter on it) to list
+**This network** / **Esta red** (the controller on your network, with its address) and then the
+cloud controllers by name, each with the **Cloud** / **Nube** tag and its version. Your local
+controller's own cloud entry is not listed a second time. A controller that cannot be used is listed
+but disabled, with the reason under it, such as
+**Offline: the controller is not online in the TP-Link cloud.** /
+**Sin conexión: el controlador no está en línea en la nube de TP-Link.** or
+**Cannot be used: it runs a version older than Omada 6.3.** /
+**No se puede usar: es anterior a Omada 6.3.** While a move, a group or network change, a
+connection or a settings save is running, the switcher is disabled:
+**Wait for the current operation to finish before switching controllers.** /
+**Espera a que termine la operación en curso para cambiar de controlador.** The list is read when
+the app starts and after each settings save.
+
+Choosing a controller clears what is on screen (selection, destination, filters, searches, details,
+Back history), connects to it and loads its data; the header shows its name. The app remembers the
+choice and starts on it next time, and each cloud controller remembers its site.
+
+**When the local controller does not answer** (you are away from its network, for example) and the
+cloud lists it online, the error shows **Connect through TP-Link cloud** /
+**Conectar a través de la nube de TP-Link** beside **Retry** / **Reintentar** and **Settings** /
+**Ajustes**. It reaches the same controller through the cloud, and **This network** /
+**Esta red** then carries the **Cloud** / **Nube** tag; choose **This network** / **Esta red**
+again to connect directly once you are back.
+
+**Without a local controller,** leave **Controller URL** / **URL del controlador**, **Username** /
+**Usuario** and **Password** / **Contraseña** empty and fill in only the cloud section (management
+access belongs to a controller on your network, so it is refused there). The views then show
+**Choose a TP-Link cloud controller to get started** /
+**Elige un controlador de la nube de TP-Link para empezar** with **Choose controller** /
+**Elegir controlador**, which opens the switcher; your controllers are all listed, with no
+**This network** / **Esta red**.
+
+**Removing cloud access** while a cloud controller is in use takes the app back to the local
+controller, or, without one, to the first launch's **Configure connection** /
+**Configurar la conexión**.
+
+**On a cloud controller** the app uses the Open API only:
+
+- What TP-Link does not report reads as unknown, such as **Unknown status** /
+  **Estado desconocido**, **Unknown group** / **Grupo desconocido** or **Networks unknown** /
+  **Redes desconocidas**; the app never guesses.
+- An access point counts as **Moved** / **Movido** only once the controller lists it in the new group
+  (the app reads the list again up to three times); otherwise it is **Failed** / **Error** with the
+  reason, and **Retry failed** / **Reintentar los fallidos** works as usual.
+- Management uses the cloud credential, not **Management access (optional)** /
+  **Acceso de gestión (opcional)**: it is on when TP-Link accepts the credential and lists the site.
+  Changes need full access; a view-only credential's refusals show TP-Link's code and message.
+- The controller must run Omada 6.3 or later and be online in the TP-Link cloud.
+- TP-Link accepts at most 10 requests per second for a credential; the app sends at most 5 and waits
+  when TP-Link asks it to, so a cloud controller is slower than a direct one. When TP-Link refuses
+  anyway, the app says
+  **TP-Link is receiving too many requests for this credential (rate limit). Wait a moment and try again.** /
+  **TP-Link está recibiendo demasiadas solicitudes con esta credencial (límite de frecuencia). Espera un momento y vuelve a intentarlo.**
+- Their certificates are verified normally (see section 8).
+
+## 10. Keyboard shortcuts
 
 | Keys | Action |
 |---|---|
@@ -312,16 +422,20 @@ first use and pins it:
 | Shift-click, `Shift` + arrow keys | Select a range of access points. |
 | `Enter` on an access point's checkbox | Open its details. |
 | `Enter` on a destination | Review the move to it. |
+| `Enter` on the controller switcher | Open its list; arrow keys, `Home` and `End` move through it, `Escape` closes it. |
 
 Destructive confirmations always open on Cancel, never on the destructive button.
 
-## 10. Good to know
+## 11. Good to know
 
 - The app never invents a value: what the controller does not report clearly reads as unknown, and
   the actions that would depend on it are refused with the reason.
 - Moves use the controller's internal API (the same call the Omada web interface makes); management
-  uses the Open API. The management features were built against the controller's documented API and
-  tested on fixtures; they have not been verified on a live controller yet (that is the manual
-  [live-test checklist](live-test-checklist.md), not run so far).
-- Configuration lives in `~/.omada-wlan-manager/config.json`; the password and the Client Secret are
-  stored encrypted (see the README).
+  uses the Open API. On a TP-Link cloud controller both use the Open API (section 9). The management
+  features and the TP-Link cloud access were built against the documented APIs and tested on
+  fixtures; they have not been verified live yet (that is the manual
+  [live-test checklist](live-test-checklist.md), with Part C for the cloud, not run so far).
+- Configuration lives in `~/.omada-wlan-manager/config.json`. The password is stored encrypted (in
+  plain text only when the system offers no encryption at all). Both Client Secrets (management and
+  TP-Link cloud) are stored encrypted only when the computer can store them securely; otherwise they
+  are never written to disk and are kept only until you quit the app (see the README).

@@ -9,6 +9,11 @@ production controller. It follows the order of spec §6. The [cross-reference ta
 at the end maps every item to the steps that observe it, says whether a run covers it fully, partly
 or not at all (and why), and has a column for your result.
 
+[Part C](#part-c--tp-link-cloud-controllers) is a separate run for the optional TP-Link cloud access
+(inbox item I-1): the remote controllers reached through TP-Link's Account Level Open API (beta), the
+controller switcher and "Connect through TP-Link cloud". It needs a credential from TP-Link's Omada
+cloud portal, whose Open API page TP-Link had not enabled for the account as of 2026-10-07.
+
 UI terms are given as bold English / Spanish pairs, such as **Settings** / **Ajustes**: run the app
 in either language. A quoted message with "…" stands for the name the app inserts there.
 
@@ -24,7 +29,8 @@ in either language. A quoted message with "…" stands for the name the app inse
 3. **Never touch production groups or networks** (e.g. `zNinguna`, or EAP Carpio's own group):
    they are only read. EAP Carpio is the only access point that moves, and only between its own
    group and the test group (spec §6): that move and its restore are the only changes this run
-   makes outside `__OWM_TEST_` resources. A test network is never put on "All access points" and
+   makes outside `__OWM_TEST_` resources (Part C adds its own rules for the cloud controllers,
+   C.0). A test network is never put on "All access points" and
    never sent an empty AP-group list, since either could bind it to every production group.
 4. **Restore in all cases.** If anything goes wrong after EAP Carpio has moved, run
    [Emergency restore](#r-emergency-restore-and-clean-up) at once.
@@ -1179,6 +1185,766 @@ run `capture <kind> <id>` for each one before `ndisable` or `gdelete`. Never del
 `leftovers` does not list; `gdelete` refuses an id that was not captured in this run, is in the
 baseline, or is not named like this run's test resources.
 
+## Part C — TP-Link cloud controllers
+
+A separate run for the optional TP-Link cloud access (inbox item I-1): TP-Link's Account Level Open
+API (beta), which reaches the account's on-premises controllers through its Cloud Access tunnel —
+here "OC200 Planta 3" and "OC200 Planta 4", on a network you cannot reach directly, and "Omada red
+antigua (Proxmox)", the controller of Steps 1–9. It was built against TP-Link's documented contract,
+`docs/omada-cloud-openapi.md`, and tested on fixtures and a stubbed main process only: no test, smoke
+run or probe of the app contacts any `tplinkcloud.com` host (decision D4, extended by D5–D7). These
+steps are for you to run by hand. They check every item of the contract's §11 ("Unverified
+behaviors") and the controller switcher's live steps; the [cross-reference](#cross-reference) rows
+`C11-…` and `I-1…` map them. Part C needs neither the probe kit of 0.2 nor the baselines of 1.2, so
+it can run on its own or after Step 9.
+
+**It needs the portal page.** As of 2026-10-07 TP-Link had not enabled the Open API page of its
+Omada cloud portal for the account, so no real credential exists. If C.1 finds no page, record that
+and stop: nothing else in Part C can run.
+
+### C.0 Safety rules for the cloud controllers
+
+1. **Disposable resources only**, as in the [safety rules](#safety-rules): every group and network
+   Part C creates on a cloud controller is named `__OWM_TEST_<TS>` plus a suffix and is deleted at
+   the end of C.11 ([C.R](#cr-clean-up-and-close-always) catches anything left).
+2. **One remote access point, optional.** The moves through the tunnel (C.10) use one access point
+   of the cloud controller under test that you may silence for a minute (`CAP_NAME`), moved only
+   into the empty test group and back. Skip C.10 if the site has none.
+3. **A way back.** Before the first write (C.9), open the cloud controller's own web interface from
+   the TP-Link cloud portal, so that you can restore `CAP_NAME`'s group and delete test resources
+   there if the app cannot.
+4. **Secrets.** The cloud kit (C.3) follows the probe kit's rules: the Client Secret and the access
+   token live in plain shell variables, typed at a hidden prompt or set by the kit, never exported,
+   never on a command line and never in a file of the working directory. It sends the token only to
+   the three TP-Link API hosts the app allows, verifies TP-Link's certificates normally (no `-k`, no
+   pin) and follows no redirect. Its only write is the optional no-op of C.10.
+5. **The configuration file.** Only C.16 touches `~/.omada-wlan-manager/`: it sets `config.json`
+   aside for a cloud-only start under a guard that puts it back on every way out of its terminal
+   window, and C.R item 5 puts back a backup that is left.
+
+| Item | Value |
+|---|---|
+| Date, app commit (`git rev-parse --short HEAD`) | |
+| Region and its base URL (`CB`) | |
+| Credentials `owm-full`, `owm-view`, `owm-throwaway`: validity, organizations, access (C.1) | |
+| Each organization: name, `deviceType`, `orgVersion`, `serverHost`, `online` (C.5) | |
+| Cloud controller under test (`CORG`) and its site (`CSITE`) | |
+| `CAP_NAME`, its MAC (`CAP_MAC`) and its group (`CAP_GROUP`) | |
+| Test resources created on the cloud controller | |
+
+### C.1 The portal page and the credentials (§11 item 1)
+
+- *Web UI (TP-Link cloud portal):* sign in with the account that lists the three controllers and
+  open *On Premise Systems → Open API* (Account Level Open API).
+- **If it is missing:** record it and stop Part C.
+- *Web UI:* create three credentials in client credentials mode and keep each Client ID and Client
+  Secret in your password manager (never in this checklist or a file):
+  - `owm-full`: access **full**, organizations **all**;
+  - `owm-view`: access **view only**, organizations **selected**: only the controller you will test
+    (`CORG`, e.g. "OC200 Planta 4");
+  - `owm-throwaway`: any access, the shortest validity; C.4 deletes it.
+- **Observe:** the settings the page offers (documented: name, description, validity 30 / 90 days,
+  half a year, one year or permanent; organizations all or selected; access full or view only) and
+  whether it shows an `AK-…` API key once (the app does not use one).
+- **Record:** the page's path, its settings, each credential's validity and organizations, and each
+  Client ID's length and characters (the app accepts 1–128 letters, digits, dots, hyphens and
+  underscores). ☐ pass ☐ fail
+
+### C.2 Settings and Test cloud access
+
+- **Do:** connect to the local controller once (**Connect** / **Conectar**): that is how the app
+  learns its controller id. Open **Settings** / **Ajustes**, section
+  **TP-Link cloud (optional)** / **Nube de TP-Link (opcional)**: **Region** / **Región** of your
+  account (e.g. **Europe (EUW)** / **Europa (EUW)**), **Client ID** / **Client ID** and
+  **Client Secret** / **Client Secret** of `owm-full`, **Save** / **Guardar**. Reopen Settings and
+  click **Test cloud access** / **Probar el acceso a la nube**. (With unsaved cloud edits it answers
+  **Save your changes first: the test uses the saved cloud credential.** /
+  **Guarda primero los cambios: la prueba usa la credencial de la nube guardada.** and sends
+  nothing.)
+- **Observe:**
+  - The secret field reads **(unchanged)** / **(sin cambios)**. On a computer without secure
+    storage, Settings shows the session-only note and the save the toast
+    **The cloud Client Secret is kept for this session only.** /
+    **El Client Secret de la nube solo se conserva durante esta sesión.**
+  - The test reads, for example,
+    **Cloud access works: 3 controllers found.** /
+    **El acceso a la nube funciona: se encontraron 3 controladores.**, with one row per controller:
+    its name, its version (e.g. **Omada 6.3.0.45** / **Omada 6.3.0.45**) and **Available** /
+    **Disponible** or the reason it cannot be used.
+  - "Omada red antigua (Proxmox)" is marked **This network** / **Esta red**: the local controller's
+    `/api/info` id equals its cloud organization's `omadacId` (user decision D6; the switcher hides
+    that entry).
+  - The certificate section now has the note
+    **TP-Link cloud controllers are reached through TP-Link's cloud: their certificate is verified normally, with no pinning and no prompt.** /
+    **Los controladores de la nube de TP-Link se alcanzan a través de la nube de TP-Link: su certificado se verifica de la forma habitual, sin fijarlo ni preguntar.**
+- **If the test fails:** record its line verbatim, with the codes in parentheses; C.4 shows the raw
+  answer.
+- **Record:** the result line and each row; whether **This network** / **Esta red** marks the right
+  controller. ☐ pass ☐ fail
+
+### C.3 The cloud kit (terminal)
+
+Like the probe kit of 0.2, a set of shell functions (zsh or bash, with `curl` and `jq`) that shows
+the raw answers the app never shows. Every function reads, except the token requests and the
+optional no-op write `csamegroup` (C.10). Open a new terminal window (in zsh, run
+`setopt interactivecomments` first), then:
+
+1. The settings (edit `CB` for your region: `aps1-`, `euw1-` or `use1-omada-northbound`):
+
+   ```sh
+   umask 077
+   case "$-" in *a*) printf 'STOP: allexport is on; run  set +a  first\n';; esac
+   CB='https://euw1-omada-northbound.tplinkcloud.com'   # the account's region (C.2)
+   CORG='OC200 Planta 4'                                # the cloud controller under test
+   TS="$(date +%Y%m%d%H%M)"; T="__OWM_TEST_$TS"
+   mkdir -p "$HOME/owm-live-$TS" && cd "$HOME/owm-live-$TS"
+   OWM_CTMP="$(mktemp -d "${TMPDIR:-/tmp}/owm-secrets.XXXXXX")"; A="$OWM_CTMP/answer.json"
+   printf 'private directory: %s\n' "$OWM_CTMP"
+   ```
+
+2. Paste the functions:
+
+   ```sh
+   # A credential's Client ID and Client Secret, typed at a prompt (the secret is not echoed)
+   ccred() {
+     unset CTOKEN
+     printf 'Cloud Client ID: ';     read -r CCID
+     printf 'Cloud Client Secret: '; IFS= read -rs CCSECRET; echo
+   }
+
+   # Every request: https only, TP-Link's certificate verified normally, no redirect followed
+   ccurl() { curl -sS --proto '=https' --max-time 60 "$@"; }
+
+   # The app's serverHost allowlist: exactly one of the three regional API hosts, default port
+   cnorm() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's#/$##' -e 's#:443$##'; }
+   callowed() {
+     case "$1" in
+       https://aps1-omada-northbound.tplinkcloud.com) return 0;;
+       https://euw1-omada-northbound.tplinkcloud.com) return 0;;
+       https://use1-omada-northbound.tplinkcloud.com) return 0;;
+     esac
+     return 1
+   }
+
+   # The account token (get_tokens): prints the answer's codes, keys and expiresIn, never the token
+   ctoken() {
+     local out
+     callowed "$CB" || { printf 'REFUSED: CB is not a TP-Link API host the app allows\n' >&2; return 1; }
+     if ! out="$(CCID="$CCID" CCSECRET="$CCSECRET" jq -nc '{client_id: env.CCID, client_secret: env.CCSECRET}' |
+         ccurl -H 'Content-Type: application/json' --data-binary @- "$CB/authorize/account/token?type=get_tokens")"; then
+       printf 'token request failed\n'; return 1
+     fi
+     CTOKEN="$(printf '%s' "$out" | jq -r 'if .errorCode == 0 then (.result.accessToken // "") else "" end')"
+     printf '%s' "$out" | jq -c '{errorCode, msg, resultKeys: ((.result | keys?) // null),
+       tokenType: .result.tokenType?, expiresIn: .result.expiresIn?}'
+     [ -n "$CTOKEN" ]
+   }
+   # A token request that keeps no token: ctokentry wrong-secret, wrong-id or region <aps1|euw1|use1>
+   ctokentry() {
+     local base="$CB" body
+     case "$1" in
+       wrong-secret) body="$(CCID="$CCID" jq -nc '{client_id: env.CCID, client_secret: "wrong-secret"}')";;
+       wrong-id) body="$(CCSECRET="$CCSECRET" jq -nc '{client_id: "wrong-client-id", client_secret: env.CCSECRET}')";;
+       region)
+         base="https://$2-omada-northbound.tplinkcloud.com"
+         body="$(CCID="$CCID" CCSECRET="$CCSECRET" jq -nc '{client_id: env.CCID, client_secret: env.CCSECRET}')";;
+       *) printf 'REFUSED: use ctokentry wrong-secret, wrong-id or region <aps1|euw1|use1>\n' >&2; return 1;;
+     esac
+     callowed "$base" || { printf 'REFUSED: %s is not a TP-Link API host the app allows\n' "$base" >&2; return 1; }
+     printf '%s' "$body" | ccurl -o "$A" -w 'HTTP %{http_code}: ' -H 'Content-Type: application/json' \
+       --data-binary @- "$base/authorize/account/token?type=get_tokens" || return 1
+     jq -c '{errorCode, msg, resultKeys: ((.result | keys?) // null)}' "$A"
+     rm -f "$A"
+   }
+
+   # Account-level calls: ccall <path> [curl options]
+   ccall() {
+     local p="$1"; shift
+     [ -n "$CTOKEN" ] || { printf 'REFUSED: no cloud access token (run ctoken)\n' >&2; return 1; }
+     callowed "$CB" || { printf 'REFUSED: CB is not a TP-Link API host the app allows\n' >&2; return 1; }
+     ccurl -H @<(printf 'Authorization: AccessToken=%s\n' "$CTOKEN") "$@" "$CB/$p"
+   }
+   orgs() { ccall "v1/organizations?page=${1:-1}&pageSize=${2:-100}"; }
+
+   # corg "<organization name>": selects it for the tunnel calls (OMID, DEVID, SH)
+   corg() {
+     local row
+     OMID=''; DEVID=''; SH=''
+     row="$(orgs | jq -c --arg n "$1" '[.result.data[]? | select(.orgName == $n)] |
+              if length == 1 then .[0] else empty end')"
+     [ -n "$row" ] || { printf 'REFUSED: not exactly one organization named %s\n' "$1"; return 1; }
+     OMID="$(printf '%s' "$row" | jq -r '.omadacId // ""')"
+     DEVID="$(printf '%s' "$row" | jq -r '.deviceId // ""')"
+     SH="$(cnorm "$(printf '%s' "$row" | jq -r '.serverHost // ""')")"
+     case "$OMID" in ""|*[!0-9A-Za-z_-]*) printf 'REFUSED: unexpected omadacId\n'; SH=''; return 1;; esac
+     case "$DEVID" in ""|*[!0-9A-Za-z_-]*) printf 'REFUSED: unexpected deviceId\n'; SH=''; return 1;; esac
+     if ! callowed "$SH"; then
+       printf 'REFUSED: serverHost %s is not a TP-Link API host the app allows\n' "$SH"; SH=''; return 1
+     fi
+     printf 'selected %s (serverHost %s)\n' "$1" "$SH"
+   }
+
+   # Controller calls through the tunnel: tcall <path after /openapi/> [curl options]
+   tcall() {
+     local p="$1"; shift
+     [ -n "$CTOKEN" ] || { printf 'REFUSED: no cloud access token (run ctoken)\n' >&2; return 1; }
+     callowed "$SH" || { printf 'REFUSED: no organization selected (run corg)\n' >&2; return 1; }
+     ccurl -H @<(printf 'Authorization: AccessToken=%s\n' "$CTOKEN") "$@" "$SH/v1/cloudaccess/$DEVID/openapi/$p"
+   }
+   csites()  { tcall "v1/$OMID/sites?page=1&pageSize=100"; }
+   caps()    { tcall "v1/$OMID/sites/$CSITE/ap-groups/aps?page=${1:-1}&pageSize=${2:-100}"; }
+   cgroups() { tcall "v1/$OMID/sites/$CSITE/ap-groups?page=1&pageSize=100"; }
+   cnets()   { tcall "v2/$OMID/sites/$CSITE/wireless-network/ssids?page=1&pageSize=100"; }
+
+   # Rate limit (C.13): cburst <n> [tunnel] sends n reads at once (the token header sits in the
+   # private directory while they run)
+   cburst() {
+     local i n="${1:-15}" url="$CB/v1/organizations?page=1&pageSize=1" h="$OWM_CTMP/auth-header"
+     [ -n "$CTOKEN" ] || { printf 'REFUSED: no cloud access token (run ctoken)\n' >&2; return 1; }
+     callowed "$CB" || { printf 'REFUSED: CB is not a TP-Link API host the app allows\n' >&2; return 1; }
+     if [ "$2" = tunnel ]; then
+       callowed "$SH" || { printf 'REFUSED: no organization selected (run corg)\n' >&2; return 1; }
+       url="$SH/v1/cloudaccess/$DEVID/openapi/v1/$OMID/sites?page=1&pageSize=1"
+     fi
+     printf 'Authorization: AccessToken=%s\n' "$CTOKEN" > "$h" || return 1
+     for i in $(seq 1 "$n"); do
+       ccurl -o "$OWM_CTMP/burst-$i.json" -w "read $i: HTTP %{http_code}\n" -H @"$h" "$url" &
+     done
+     wait
+     rm -f "$h"
+     for i in $(seq 1 "$n"); do jq -c --arg i "$i" '{i: $i, errorCode, msg}' "$OWM_CTMP/burst-$i.json"; done
+     rm -f "$OWM_CTMP"/burst-*.json
+   }
+   # cmixburst: 8 list reads and 4 token requests at once (do token requests count?)
+   cmixburst() {
+     local i h="$OWM_CTMP/auth-header"
+     [ -n "$CTOKEN" ] || { printf 'REFUSED: no cloud access token (run ctoken)\n' >&2; return 1; }
+     callowed "$CB" || { printf 'REFUSED: CB is not a TP-Link API host the app allows\n' >&2; return 1; }
+     printf 'Authorization: AccessToken=%s\n' "$CTOKEN" > "$h" || return 1
+     for i in 1 2 3 4 5 6 7 8; do
+       ccurl -o "$OWM_CTMP/mix-read-$i.json" -w "read $i: HTTP %{http_code}\n" -H @"$h" \
+         "$CB/v1/organizations?page=1&pageSize=1" &
+     done
+     for i in 1 2 3 4; do
+       CCID="$CCID" CCSECRET="$CCSECRET" jq -nc '{client_id: env.CCID, client_secret: env.CCSECRET}' |
+         ccurl -o "$OWM_CTMP/mix-token-$i.json" -w "token $i: HTTP %{http_code}\n" \
+           -H 'Content-Type: application/json' --data-binary @- "$CB/authorize/account/token?type=get_tokens" &
+     done
+     wait
+     rm -f "$h"
+     for i in "$OWM_CTMP"/mix-*.json; do jq -c --arg f "${i##*/}" '{f: $f, errorCode, msg}' "$i"; done
+     rm -f "$OWM_CTMP"/mix-*.json
+   }
+
+   # The only cloud write (C.10, optional): sends an access point's CURRENT group id again, read
+   # fresh from the controller, so nothing can change
+   csamegroup() {
+     local mac gid out
+     mac="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr ':' '-')"
+     case "$mac" in
+       [0-9A-F][0-9A-F]-[0-9A-F][0-9A-F]-[0-9A-F][0-9A-F]-[0-9A-F][0-9A-F]-[0-9A-F][0-9A-F]-[0-9A-F][0-9A-F]) ;;
+       *) printf 'REFUSED: not a MAC address: %s\n' "$1"; return 1;;
+     esac
+     case "$CSITE" in ""|*[!0-9A-Za-z_-]*) printf 'REFUSED: CSITE is not set (C.8)\n'; return 1;; esac
+     gid="$(caps | jq -r --arg mac "$mac" '[.result.data[]? | select((.mac // "" | ascii_upcase | gsub(":"; "-")) == $mac)] |
+              if length == 1 then (.[0].apGroupId // "") else "" end')"
+     case "$gid" in ""|*[!0-9A-Za-z_-]*) printf 'REFUSED: the access point or its current group id was not read\n'; return 1;; esac
+     if ! out="$(jq -nc --arg id "$gid" '{wlanGroupId: $id}' |
+         tcall "v1/$OMID/sites/$CSITE/aps/$mac/wlan-group" -X PATCH -H 'Content-Type: application/json' --data-binary @-)"; then
+       printf 'PATCH failed (see the curl error)\n'; return 1
+     fi
+     printf '%s\n' "$out" | jq -c '{errorCode, msg}'
+   }
+
+   # Close: delete the private directory, forget every secret and every helper
+   ckitclose() {
+     case "$OWM_CTMP" in *owm-secrets.*) [ -d "$OWM_CTMP" ] && rm -rf "$OWM_CTMP";; esac
+     unset CCID CCSECRET CTOKEN COLD OWM_CTMP A OMID DEVID SH CSITE
+     unset -f ccred ccurl cnorm callowed ctoken ctokentry ccall orgs corg tcall csites caps cgroups cnets \
+       cburst cmixburst csamegroup ckitclose
+     printf 'cloud kit closed\n'
+   }
+   ```
+
+3. Run `ccred` with `owm-full`'s values, then `ctoken`. Run `ccred`, `ctoken` and `corg` on their
+   own, never in a pipeline (they set shell variables). An answer with a token error later in the
+   run: `ctoken` again.
+
+- **Record:** nothing yet. ☐ pass ☐ fail
+
+### C.4 The account token (§11 item 2)
+
+- *Probe:*
+
+  ```sh
+  ctoken                     # errorCode, msg, the answer's keys, tokenType and expiresIn; never the token
+  ctokentry wrong-secret     # HTTP status, errorCode and msg of each failure
+  ctokentry wrong-id
+  ctokentry region aps1; ctokentry region euw1; ctokentry region use1   # the same credential on each region
+  ```
+
+- **Deleted credential:** `ccred` with `owm-throwaway`'s values and `ctoken` (it works); *web UI:*
+  delete `owm-throwaway`; `ctoken` again. In the app, save `owm-throwaway` in Settings and run
+  **Test cloud access** / **Probar el acceso a la nube**: expected
+  **TP-Link says this credential has expired or no longer exists. Create a new one in the TP-Link Omada cloud portal and save it here.** /
+  **TP-Link indica que esta credencial ha caducado o ya no existe. Crea otra en el portal de Omada en la nube de TP-Link y guárdala aquí.**
+- **Disabled credential, if the portal can disable one:** disable `owm-view`, `ccred` with its
+  values, `ctoken`, then enable it again. The app's line for TP-Link's -90113 is
+  **TP-Link says this credential is disabled. Enable it in the TP-Link Omada cloud portal, or create a new one.** /
+  **TP-Link indica que esta credencial está desactivada. Actívala en el portal de Omada en la nube de TP-Link o crea otra.**
+- **Wrong secret in the app:** save `owm-full`'s Client ID with a wrong Client Secret and run
+  **Test cloud access** / **Probar el acceso a la nube**: expected
+  **TP-Link rejected the Client ID or the Client Secret. Check that both were copied correctly and that the region is right.** /
+  **TP-Link rechazó el Client ID o el Client Secret. Comprueba que los copiaste bien y que la región es la correcta.**
+  (TP-Link's -90106) or
+  **TP-Link rejected the credential (wrong, expired, deleted or disabled). Check it in the TP-Link Omada cloud portal, and check the region.** /
+  **TP-Link rechazó la credencial (incorrecta, caducada, eliminada o desactivada). Revísala en el portal de Omada en la nube de TP-Link y comprueba la región.**
+  (any other refusal). Save `owm-full` again, then `ccred` with its values and `ctoken`.
+- **Observe:** the app expects `result.accessToken`, `tokenType` "bearer" and `expiresIn` 7200 (it
+  renews the token by running `get_tokens` again, 60 s before it expires, and never uses the refresh
+  token). Documented codes: -90106 wrong Client ID or Client Secret, -52602 / -90112 expired or
+  deleted (-52602 is the only one seen so far), -90113 disabled.
+- **Record:** the answer's keys, `tokenType` and `expiresIn`; the HTTP status and `errorCode` of the
+  wrong secret, the wrong Client ID, each region, the deleted and the disabled credential; the app's
+  lines. ☐ pass ☐ fail
+
+### C.5 The organization list (§11 item 3)
+
+- *Probe:*
+
+  ```sh
+  orgs | jq -c '{errorCode, msg, totalRows: .result.totalRows, currentPage: .result.currentPage,
+    currentSize: .result.currentSize, rows: (.result.data | length?)}'
+  orgs | jq -c '.result.data[]? | {orgName, online, deviceType, orgVersion, serverHost,
+    omadacIdOk: ((.omadacId // "") | tostring | test("^[A-Za-z0-9_-]{1,64}$")),
+    deviceIdLength: ((.deviceId // "") | tostring | length)}'
+  orgs 2 1 | jq -c '{errorCode, totalRows: .result.totalRows, currentPage: .result.currentPage,
+    rows: (.result.data | length?)}'
+  corg "$CORG"
+  ```
+
+- **Observe:** `errorCode` 0 with `pageSize=100`; `totalRows` equals `rows`, and the app showed as
+  many controllers in C.2; page 2 of one row each has `currentPage` 2 and the same `totalRows`. For
+  each organization: `deviceType` (the app accepts any `SMB.OMADA.*CONTROLLER`, in any case; what
+  do the OC200s report?), the `orgVersion` form (the app accepts a dotted version such as
+  `6.3.0.45`), `serverHost` (one of the three hosts; normally your region's), `online`, and
+  `omadacIdOk` true. If Part 0's kit is open in another window, its `OMADAC` equals "Omada red
+  antigua (Proxmox)"'s `omadacId` (C.2's **This network** / **Esta red** mark says the same).
+  `corg` prints `selected …`.
+- **Optional, a stopped controller:** stop the local software controller (its VM or service: the
+  access points keep broadcasting, but nothing can be managed meanwhile) and wait until the portal
+  shows it offline. `orgs | jq -c '.result.data[]? | {orgName, online}'`; in the app,
+  **Test cloud access** / **Probar el acceso a la nube** lists it with
+  **Offline: the controller is not online in the TP-Link cloud.** /
+  **Sin conexión: el controlador no está en línea en la nube de TP-Link.**, and **Connect** /
+  **Conectar** fails without offering **Connect through TP-Link cloud** /
+  **Conectar a través de la nube de TP-Link** (its cloud entry is offline). Start it again and wait
+  until it is online.
+- **Record:** the counts, each organization's fields (record sheet), page 2, and the optional
+  offline observation. ☐ pass ☐ fail
+
+### C.6 TLS certificates of the cloud (§11 item 7)
+
+- *Probe:*
+
+  ```sh
+  for h in "$CB" "$SH"; do
+    printf '%s: ' "$h"
+    ccurl -o /dev/null -w 'verify result %{ssl_verify_result}, HTTP %{http_code}\n' "$h/"
+    openssl s_client -connect "${h#https://}:443" -servername "${h#https://}" </dev/null 2>/dev/null |
+      openssl x509 -noout -subject -issuer -enddate
+  done
+  ```
+
+- **Observe:** `verify result 0` for both (curl checks the chain against the system's CAs; any HTTP
+  status is fine), and a public CA as issuer. In the app, C.2 needed no certificate dialog: the
+  cloud session uses Chromium's normal verification, so a working test proves the chain verifies in
+  Electron as well.
+- **Record:** the verify results, the issuers and the expiry dates. ☐ pass ☐ fail
+
+### C.7 The controller switcher
+
+The switcher reads the cloud controller list when the app starts and after every Settings save
+(restart the app, or save Settings, to read it again).
+
+- **Do:** with the local controller connected and `owm-full` saved, look at the top of the sidebar
+  (above **Access points** / **Puntos de acceso**) and open the switcher: click it, or Tab to it and
+  press Enter.
+- **Observe (visibility, the duplicate hidden):** the toggle shows **Controller** / **Controlador**
+  and **This network** / **Esta red**. The list starts with **This network** / **Esta red** and the
+  controller's host, marked as the current one, then "OC200 Planta 3" and "OC200 Planta 4" by name,
+  each with **Cloud** / **Nube** and its version. "Omada red antigua (Proxmox)" is not listed: it is
+  this network. The arrow keys, Home and End move between the entries; Escape closes the list and
+  puts the focus back on the toggle. At a window width between 800 and 1000 px only the toggle's
+  icon shows, with the tooltip **Controller: …** / **Controlador: …**.
+- **Observe (disabled entries and their reasons):** a controller that cannot be used is still
+  listed and focusable, but choosing it does nothing; its reason is under it, e.g.
+  **Offline: the controller is not online in the TP-Link cloud.** /
+  **Sin conexión: el controlador no está en línea en la nube de TP-Link.** or
+  **Cannot be used: it runs a version older than Omada 6.3.** /
+  **No se puede usar: es anterior a Omada 6.3.** On 2026-10-07 all three controllers ran 6.3.0.45:
+  if none is disabled, record "none disabled". For the offline reason,
+  an OC200 has to be offline (someone at its site may unplug it for a few minutes; then restart the
+  app): its entry shows the reason, and the other one stays usable.
+- **Do (a switch and back):** choose `CORG`.
+- **Observe:** while it connects, the toggle is disabled with the tooltip
+  **Wait for the current operation to finish before switching controllers.** /
+  **Espera a que termine la operación en curso para cambiar de controlador.**; the views show their
+  loading placeholders; nothing of the local controller is left (selection, destination, filters,
+  searches, details, **Back to …** / **Volver a …** history). With several sites, **Select site** /
+  **Seleccionar sitio** asks for one. Then the header shows `CORG`'s name, its site and version, the
+  toggle shows `CORG` with the **Cloud** / **Nube** tag, and the three views load its data.
+- **Do:** choose **This network** / **Esta red**: the app connects directly again (the header shows
+  the host). Choose `CORG` again, quit the app and start it again.
+- **Observe:** the app starts on `CORG` without asking (its site remembered, no site dialog).
+- **Record:** the time each switch took, the site question, anything left over from the other
+  controller, the restart. ☐ pass ☐ fail
+
+### C.8 Data through the tunnel (§11 items 8 and 12)
+
+- **Do:** connected to `CORG`, go through **Access points** / **Puntos de acceso** (open two
+  **AP details** / **Detalles del AP**), **AP groups** / **Grupos de AP** and **Wi-Fi networks** /
+  **Redes Wi-Fi**, and compare with the controller's own web interface (opened from the portal).
+- **Observe:** names, status, group and client counts match the web interface. A value the Open API
+  does not report reads as unknown, never as a guess: **Unknown status** / **Estado desconocido**,
+  **Unknown group** / **Grupo desconocido** (in the details:
+  **Unknown: the controller did not report this AP's group** /
+  **Desconocido: el controlador no informó del grupo de este AP**), clients
+  **Not reported by the controller** / **El controlador no informa de ellos**, and
+  **Networks unknown** / **Redes desconocidas** for a group whose networks are not reported.
+  Gateways and switches are not listed.
+- *Probe:*
+
+  ```sh
+  csites | jq -c '{errorCode, totalRows: .result.totalRows, sites: [.result.data[]? |
+    {siteId, name, idOk: ((.siteId // "") | tostring | test("^[A-Za-z0-9_-]{1,64}$"))}]}'
+  CSITE='…'   # siteId of the site the app connected to
+  caps | jq -c '{errorCode, totalRows: .result.totalRows, rows: (.result.data | length?),
+    fields: ([.result.data[]? | keys[]] | unique), deviceTypes: ([.result.data[]?.deviceType] | unique),
+    statusCategories: ([.result.data[]?.statusCategory] | unique), macSample: .result.data[0].mac?,
+    withGroupId: ([.result.data[]? | select(.apGroupId != null)] | length),
+    withGroupName: ([.result.data[]? | select(.apGroupName != null)] | length),
+    withClientNum: ([.result.data[]? | select(.clientNum != null)] | length)}'
+  caps 2 1 | jq -c '{errorCode, totalRows: .result.totalRows, currentPage: .result.currentPage,
+    rows: (.result.data | length?)}'
+  cgroups | jq -c '{errorCode, totalRows: .result.totalRows, groups: [.result.data[]? |
+    {id, name, primary, apNum, ssids: (.ssidNameList | if type == "array" then length else type end)}]}'
+  ```
+
+- **Observe:** every `idOk` is true (the app's site-id guard); the access-point listing's
+  `totalRows` equals `rows`; the field names (the app reads `mac`, `name`, `apGroupId`,
+  `apGroupName`, `clientNum`, `statusCategory` and `deviceType`); the MAC form (the app accepts
+  `AA-BB-CC-DD-EE-FF` and `aa:bb:cc:dd:ee:ff`); which `deviceType` values the site has (gateway and
+  switch rows are left out); page 2 of one row each works when the site has two devices or more;
+  every group reports `ssidNameList` as a list.
+- **Record:** the site ids, the field names, the device types, the counts and anything the app shows
+  as unknown. ☐ pass ☐ fail
+
+### C.9 Management through the tunnel (§11 item 6)
+
+On a cloud controller, management access comes from the cloud credential, not from
+**Management access (optional)** / **Acceso de gestión (opcional)**: it is on when the cloud token
+works and the site is listed (the comparison with the controller's internal AP-group list cannot
+run through the cloud).
+
+- **Do:** connected to `CORG` with `owm-full`, open **Settings** / **Ajustes** and click
+  **Test management access** / **Probar el acceso de gestión**.
+- **Observe:** **Management access works: every check passed.** /
+  **El acceso de gestión funciona: se superaron todas las comprobaciones.**; no read-only banner;
+  **AP groups** / **Grupos de AP** offers **New group** / **Nuevo grupo**; **Wi-Fi networks** /
+  **Redes Wi-Fi** lists the networks with their state, security, bands and scope (the `/openapi/v2/`
+  catalog and the v1 details and bindings through the tunnel). *Probe:*
+  `cnets | jq -c '{errorCode, msg, totalRows: .result.totalRows?, rows: (.result.data | length?)}'`
+- **Do (writes on disposable resources only, as Steps 2–4 do them locally):**
+  `printf '%s' "$T" | pbcopy`, then
+  1. **New group** / **Nuevo grupo** `$T` → **Create group** / **Crear grupo**; the same for
+     `${T}_B`;
+  2. **Rename** / **Cambiar nombre** `$T` to `${T}_R`, then back to `$T`;
+  3. **New network** / **Nueva red** `$T`: WPA-Personal, a throwaway password, bound only to `$T`,
+     **Enable after creating** / **Activar después de crearla** unticked → **Create network** /
+     **Crear red**;
+  4. **Edit** / **Editar**: rename it to `${T}_E` → **Review changes** / **Revisar los cambios** →
+     **Save changes** / **Guardar cambios** (it asks for the password again);
+  5. **Change password** / **Cambiar contraseña**;
+  6. **Enable** / **Activar**, then **Disable** / **Desactivar** (its only group is empty, so
+     nothing broadcasts it);
+  7. **Change AP groups** / **Cambiar grupos de AP**: tick `${T}_B` → **Review the change** /
+     **Revisar el cambio** → **Save AP groups** / **Guardar grupos de AP**; then untick it again the
+     same way (both groups are empty).
+
+  Keep `$T`, `${T}_B` and `${T}_E` for C.10 and C.11.
+- **Observe:** each step's toast, as in Steps 2–4, and the same result in the web interface. A
+  refusal's line carries the codes and, on a cloud controller, TP-Link's message: record it.
+- **Record:** the test line, each write's result, any call that fails through the tunnel (v1 or v2).
+  ☐ pass ☐ fail
+
+### C.10 Moves through the tunnel (§11 items 9 and 11; optional)
+
+Only with a `CAP_NAME` (C.0 rule 2). A move through the cloud is the Open API call
+`PATCH …/aps/{mac}/wlan-group`; the app counts it as moved only when a re-read of the access-point
+list shows the access point in the destination group (up to 3 reads, 1 s apart).
+
+- **Do:** in **Access points** / **Puntos de acceso**, note `CAP_NAME`'s group (`CAP_GROUP`) and its
+  MAC (`CAP_MAC`, in its details). Tick it alone, pick `$T` in **Move selected APs** /
+  **Mover los AP seleccionados**, click **Move AP** / **Mover AP** and confirm in
+  **Review the move** / **Revisar el movimiento**. While it runs, the switcher is disabled
+  (**Wait for the current operation to finish before switching controllers.** /
+  **Espera a que termine la operación en curso para cambiar de controlador.**).
+- **Observe:** **Move results** / **Resultado del movimiento** shows **Moved** / **Movido**, or
+  **Failed** / **Error** with a reason that starts with `moveRequestFailed`, `moveNotConfirmed` or
+  `moveUnverified`: record it verbatim. Note how long the move took. *Probe:*
+  `caps | jq -c --arg mac "$CAP_MAC" '.result.data[]? | select((.mac // "" | ascii_upcase | gsub(":"; "-")) == ($mac | ascii_upcase | gsub(":"; "-"))) | {name, mac, apGroupId, apGroupName}'`
+  shows `$T`.
+- **Do (always):** move `CAP_NAME` back to `CAP_GROUP` the same way (the web interface if the app
+  cannot, C.R).
+- **Optional write probe, the current group:** the app never sends a move into the access point's
+  current group (it skips access points already there). `csamegroup "$CAP_MAC"` reads its current
+  group id fresh and sends exactly that id, so nothing can change; record `errorCode` and `msg` (the
+  documented answer is "cannot be the current wlan group").
+- **Optional, a bulk move:** only if the site has a second access point you may silence for a
+  minute: move both into `$T` and back, and note whether one fails with the rate-limit reason (each
+  move is one request plus one to three paged reads, all through the credential's throttle).
+- **Record:** the result, the time, `CAP_NAME` back in `CAP_GROUP`, the probe's answer.
+  ☐ pass ☐ fail
+
+### C.11 A view-only credential, and an organization outside it (§11 items 6 and 10)
+
+- *Probe (an organization `owm-view` does not include):*
+
+  ```sh
+  corg 'OC200 Planta 3'        # not CORG; still owm-full's token: keeps that controller's tunnel ids
+  ccred                        # owm-view's values
+  ctoken
+  orgs | jq -c '{errorCode, names: [.result.data[]?.orgName]}'
+  tcall "v1/$OMID/sites?page=1&pageSize=1" -o "$A" -w 'HTTP %{http_code}\n'; jq -c '{errorCode, msg}' "$A"
+  ```
+
+- **Observe:** `owm-view` lists `CORG` only; the call to "OC200 Planta 3" with its token is refused
+  (documented: -44121, "no permission to access this organization").
+- **Do (app):** save `owm-view` in the TP-Link cloud section (the app reconnects to `CORG` with it)
+  and try, on the disposable resources only: **Rename** / **Cambiar nombre** `$T` to `${T}_V`;
+  **New group** / **Nuevo grupo** `${T}_V2`; **Enable** / **Activar** on `${T}_E` (bound to the
+  empty `$T`); and, if C.10 ran, the move of `CAP_NAME` into `$T`.
+- **Observe:** reads work; each write is refused with TP-Link's code and message in the error line.
+  Anything `owm-view` is unexpectedly allowed happened to a disposable resource: undo it with
+  `owm-full` (rename back, delete `${T}_V2`, disable the network, move `CAP_NAME` back at once).
+- **Do:** save `owm-full` again in Settings; in the terminal `ccred` (its values), `ctoken`,
+  `corg "$CORG"`.
+- **Do (the test resources are no longer needed):** with `owm-full`, delete the network `${T}_E`
+  (**Delete** / **Eliminar** → **Delete network** / **Eliminar red**), then the groups `$T`,
+  `${T}_B` and, if it exists, `${T}_V2` (**Delete group** / **Eliminar grupo**); the probe of C.R
+  step 2 prints `[]` twice.
+- **Record:** the organizations `owm-view` lists, the probe's answer, each write's refusal (code and
+  message), the deletions. ☐ pass ☐ fail
+
+### C.12 Token errors on the list and through the tunnel (§11 item 4)
+
+- *Probe:*
+
+  ```sh
+  COLD="$CTOKEN"; CTOKEN='AT-not-a-valid-token'
+  ccall "v1/organizations?page=1&pageSize=1" -o "$A" -w 'list: HTTP %{http_code}\n'; jq -c '{errorCode, msg}' "$A"
+  tcall "v1/$OMID/sites?page=1&pageSize=1" -o "$A" -w 'tunnel: HTTP %{http_code}\n'; jq -c '{errorCode, msg}' "$A"
+  CTOKEN="$COLD"
+  ```
+
+- **Optional, an expired token:** `COLD="$CTOKEN"`, wait `expiresIn` seconds (C.4) plus a minute,
+  run the two calls with `CTOKEN="$COLD"` instead of the invalid one, then `ctoken`.
+- **Observe:** the list answered HTTP 401 with -44116 on 2026-10-07; the tunnel's answer is new. The
+  app treats HTTP 401, -44112, -44113 and -44116 as a rejected token: it gets a new one once and
+  retries, and only a second rejection shows
+  **TP-Link rejected the access token even after renewing it. Try again later.** /
+  **TP-Link rechazó el token de acceso incluso después de renovarlo. Vuelve a intentarlo más tarde.**
+- **Record:** the HTTP status and `errorCode` of each call (and of the optional expired token).
+  ☐ pass ☐ fail
+
+### C.13 The rate limit (§11 items 5 and 11; -7132 by rapid switching)
+
+TP-Link allows 10 requests per second per credential. The app starts at most 5 per second per
+credential (its token requests, the controller list and every tunnel call share the budget); a
+-7132 or HTTP 429 holds all of them back (1 s, then 2, 4 and 8 s while the answers repeat), and a
+request is retried at most 3 times before the rate-limit line shows.
+
+- *Probe:* `cburst 15`, then `cburst 15 tunnel` (the shell prints a line per background job, then
+  one `HTTP` line and one `errorCode` line per request).
+- **Optional, token requests:** `cburst 8`, then `cmixburst` (8 reads and 4 token requests at
+  once). A -7132 or 429 with `cmixburst` but not with `cburst 8` means token requests count. It asks
+  for 4 tokens at once: TP-Link may answer -90114 (too many authentications) and hold the credential
+  back for a while.
+- **Do (app, rapid switching):** switch between "OC200 Planta 3" and `CORG` ten times, each as soon
+  as the previous one has loaded; then once more while `cburst 15` runs in the terminal.
+- **Observe:** each switch loads, maybe slowly, or its error shows
+  **TP-Link is receiving too many requests for this credential (rate limit). Wait a moment and try again.** /
+  **TP-Link está recibiendo demasiadas solicitudes con esta credencial (límite de frecuencia). Espera un momento y vuelve a intentarlo.**
+  with the codes in parentheses and **Retry** / **Reintentar**, which works after a few seconds; a
+  view never shows part of a list.
+- **Record:** which bursts got -7132 or HTTP 429 (list, tunnel, tokens), the switch that showed the
+  rate-limit line, if any, and the slowest switch. ☐ pass ☐ fail
+
+### C.14 Connect through TP-Link cloud (the local controller out of reach)
+
+- **Do:** choose **This network** / **Esta red**, then **Disconnect** / **Desconectar**. Take the
+  computer off the local network but keep it online, e.g. on a phone's hotspot (Ethernet unplugged),
+  while the local controller stays on its network and online in the TP-Link cloud. Click
+  **Connect** / **Conectar**.
+- **Observe:** when the connection fails (possibly only at its timeout), the error offers
+  **Retry** / **Reintentar**,
+  **Connect through TP-Link cloud** / **Conectar a través de la nube de TP-Link** and
+  **Settings** / **Ajustes** (the app reads the cloud list once to decide). Click
+  **Connect through TP-Link cloud** / **Conectar a través de la nube de TP-Link**: the same
+  controller connects through the cloud; the header shows its cloud name, "Omada red antigua
+  (Proxmox)", and the switcher's **This network** / **Esta red** carries the **Cloud** / **Nube**
+  tag. The views show the same groups and access points as the direct connection.
+- **Do:** back on the local network, choose **This network** / **Esta red** in the switcher.
+- **Observe:** it connects directly (the header shows the host, no **Cloud** / **Nube** tag).
+- **Record:** the time until the error, the offer, the data through the cloud, the way back.
+  ☐ pass ☐ fail
+
+### C.15 Remove cloud access while a cloud controller is in use (with a local controller)
+
+- **Do:** choose `CORG`. **Settings** / **Ajustes** → **Remove cloud access** /
+  **Quitar el acceso a la nube** → **Remove** / **Quitar**; Settings shows
+  **Cloud access will be removed when you save.** / **El acceso a la nube se quitará al guardar.**
+  (**Keep cloud access** / **Mantener el acceso a la nube** would undo it). Click **Save** /
+  **Guardar**.
+- **Observe:** the app reconnects to the local controller directly (the header shows its host); the
+  switcher is gone from the sidebar; the TP-Link cloud fields are empty and the certificate section
+  has no cloud note. Quit and start the app: it starts on the local controller.
+- **Record:** the result. ☐ pass ☐ fail
+
+### C.16 Cloud only (no local controller)
+
+This step sets the configuration aside, starts the app with none, and puts it back. A guard in its
+own terminal window does both, and puts the configuration back on every way out of that window, not
+only when you ask it to.
+
+- **Do:** quit the app. Open a new terminal window (in zsh, run `setopt interactivecomments` first)
+  and paste the guard. It refuses to start while `config.json` is missing or a backup from an
+  earlier run is left (then see C.R item 5). Otherwise it copies `config.json` to a backup with a
+  new, unique name next to it (`config.json.owm-live-backup.` and six random characters, mode
+  `0600`, never over an earlier file), checks the copy with `cmp`, and only then removes
+  `config.json`. The backup stays in the app's own private directory, and the secrets it holds are
+  encrypted with the macOS Keychain key, which does not change.
+
+  ```sh
+  (
+    d="$HOME/.omada-wlan-manager"; cfg="$d/config.json"; ok=0
+    # Refuse to start without a configuration, or while a backup from an earlier run is left (C.R item 5)
+    [ -f "$cfg" ] || { printf 'STOP: %s is missing: see C.R item 5\n' "$cfg"; exit 1; }
+    for f in "$d"/config.json*; do
+      case "$f" in "$d"/config.json.owm-live-backup.*) printf 'STOP: %s is left: see C.R item 5\n' "$f"; exit 1;; esac
+    done
+    # A backup under a new unique name (mode 0600), verified before anything is removed
+    bak="$(mktemp "$d/config.json.owm-live-backup.XXXXXX")" || exit 1
+    if ! { cp -fp "$cfg" "$bak" && cmp -s "$cfg" "$bak"; }; then
+      rm -f "$bak"; printf 'STOP: the backup failed; nothing was changed\n'; exit 1
+    fi
+    # Puts the backup back and verifies it, ignoring Ctrl-C and hang-ups meanwhile. The backup
+    # goes only after a verified restore you asked for; an interrupted run keeps it (C.R item 5)
+    owmrestore() {
+      trap '' HUP INT TERM
+      if cp -fp "$bak" "$cfg" && cmp -s "$bak" "$cfg"; then
+        if [ "$ok" = 1 ]; then
+          rm -f "$bak"; printf 'Configuration restored and verified.\n'
+        else
+          printf 'INTERRUPTED: configuration restored and verified; backup kept: %s\n' "$bak"
+          printf 'Quit the app without changing anything, then see C.R item 5.\n'
+        fi
+        return 0
+      fi
+      printf 'STOP: the restore failed; the configuration is in %s (C.R item 5)\n' "$bak"
+      return 1
+    }
+    trap owmrestore EXIT
+    trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+    rm -f "$cfg" || exit 1
+    printf 'Configuration set aside; backup: %s\n' "$bak"
+    ans=
+    until [ "$ans" = restore ]; do
+      printf 'Keep this window open. After the last step, quit the app and type  restore  here: '
+      read -r ans || exit 1
+    done
+    ok=1
+    owmrestore && trap - EXIT HUP INT TERM
+  )
+  ```
+
+  It prints `Configuration set aside; backup: …` and waits for `restore`; anything else, an empty
+  line or `exit` included, only asks again. Keep the window open until the end of the step. If the
+  window is closed, Ctrl-C is pressed in it, or its shell gets a hang-up or a `kill`, the guard puts
+  the configuration back at once, checks it with `cmp`, keeps the backup and prints
+  `INTERRUPTED: configuration restored and verified; backup kept: …`. Then quit the app without
+  changing anything (it still holds the cloud-only configuration, and its next save would write
+  that over the restored file) and follow C.R item 5.
+
+- **Do:** start the app: Settings opens, as on a first launch. Leave **Controller URL** /
+  **URL del controlador**, **Username** / **Usuario** and **Password** / **Contraseña** empty, fill
+  in the TP-Link cloud section with `owm-full` and click **Save** / **Guardar**. (A Client ID under
+  **Management access (optional)** / **Acceso de gestión (opcional)** is refused here with
+  **Management access belongs to a controller on this network: enter its URL, username and password first, or leave the Client ID and Client Secret empty.** /
+  **El acceso de gestión pertenece a un controlador de esta red: introduce primero su URL, usuario y contraseña, o deja vacíos el Client ID y el Client Secret.**)
+- **Observe:** the views show **Choose a TP-Link cloud controller to get started** /
+  **Elige un controlador de la nube de TP-Link para empezar** with **Choose controller** /
+  **Elegir controlador**, which opens the switcher; the toggle shows **None chosen** /
+  **Ninguno elegido**; the list has no **This network** / **Esta red** and lists all three
+  controllers, "Omada red antigua (Proxmox)" included (without a local controller it is one more
+  cloud controller).
+- **Do:** choose `CORG`; once it has loaded, quit and start the app.
+- **Observe:** it starts on `CORG` without asking.
+- **Do:** **Settings** / **Ajustes** → **Remove cloud access** / **Quitar el acceso a la nube** →
+  **Remove** / **Quitar** → **Save** / **Guardar**, while connected to `CORG`.
+- **Observe:** the app lands in the first-launch state: no data, **Connect** / **Conectar**
+  disabled, no switcher, and the views show **Set up the connection in Settings to get started** /
+  **Configura la conexión en Ajustes para empezar** with **Configure connection** /
+  **Configurar la conexión**.
+- **Do (always):** quit the app (its next save would otherwise write over the restored file), then
+  type `restore` in the guard's window and press Enter. The guard puts the configuration back,
+  checks it with `cmp`, and only then deletes the backup and prints
+  `Configuration restored and verified.` (A `STOP: the restore failed; …` line instead: C.R item 5.)
+  Close the window and start the app: it connects to the local controller as before.
+- **Record:** each observation. ☐ pass ☐ fail
+
+### C.R Clean-up and close (always)
+
+1. **`CAP_NAME` back in `CAP_GROUP`:** the app (C.10) or the controller's web interface.
+2. **Test resources on `CORG`** (C.11 deleted them): delete anything `__OWM_TEST_` that is left,
+   networks before groups, in the controller's web interface or in the app with `owm-full` saved
+   (C.15 removed it from Settings). *Probe (with `owm-full`'s token, `corg "$CORG"` and `CSITE`):*
+
+   ```sh
+   cgroups | jq -c '[.result.data[]? | select((.name // "") | ascii_downcase | startswith("__owm_test_")) | {id, name}]'
+   cnets | jq -c '[.result.data[]? | select((.name // "") | ascii_downcase | startswith("__owm_test_")) | {id, name}]'
+   ```
+
+   Both print `[]`.
+3. **Credentials:** *web UI:* delete `owm-view`, and `owm-full` unless the app keeps cloud access
+   (then save it in Settings once more); `owm-throwaway` is gone since C.4.
+4. **Close the cloud kit:** `ckitclose`. It deletes the private directory, unsets the secrets
+   (`CCSECRET`, `CTOKEN`, `COLD`, `CCID`) and every helper; then close the terminal window. If the
+   window was closed first, delete the private directory printed in C.3 (`owm-secrets.…`) by hand.
+5. **The configuration, if C.16 did not end with `Configuration restored and verified.`:** quit the
+   app and list its directory:
+
+   ```sh
+   ls -l "$HOME/.omada-wlan-manager/"
+   ```
+
+   No `config.json.owm-live-backup.…` file: nothing to do. Otherwise that file is the configuration
+   C.16 set aside (the guard refuses to start while one is left, so there is at most one). The
+   guard keeps it when it was interrupted, after putting the configuration back; and it is all that
+   is left when the guard's shell ended without running its trap (a forced kill, a crash, or a
+   terminal that kills its processes outright when the window closes): `config.json` is then
+   missing or is the cloud-only one. Either way, put it back, with the six characters from the
+   list in place of `XXXXXX`:
+
+   ```sh
+   mv -f "$HOME/.omada-wlan-manager/config.json.owm-live-backup.XXXXXX" "$HOME/.omada-wlan-manager/config.json"
+   ```
+
+   Start the app: it connects to the local controller as before.
+
+- **Record:** the result. ☐ pass ☐ fail
+
 ## Feedback (optional)
 
 Design questions recorded during phases 13–20 that only you can answer:
@@ -1193,15 +1959,18 @@ Design questions recorded during phases 13–20 that only you can answer:
 ## Cross-reference
 
 Every row of spec §5 and every "unverified live" item recorded in phases 12–20a, with how far a run
-of this checklist covers it. Sources: `todo.md` 4.5–4.13 "Done" entries,
-`docs/progress-archive/phase-*.md`, and the leftovers under "Open risks" in `PROGRESS.md`. Coverage:
+of this checklist covers it; for Part C, every item of `docs/omada-cloud-openapi.md` §11 (rows
+`C11-…`, "cloud contract") and the live steps recorded in inbox phases I-1a to I-1c2b (rows
+`I-1…`). Sources: `todo.md` 4.5–4.13 and §5 "Done" entries, `docs/progress-archive/phase-*.md`,
+and the leftovers under "Open risks" in `PROGRESS.md`. Coverage:
 
 - *Covered (steps)*: the steps observe the behavior on this controller.
 - *Partly covered (steps)*: what the steps observe, and what they do not.
 - *Deferred*: not provoked on a production controller, with the reason.
 
-An item that depends on an optional step, or on something the site may not have (an "All access
-points" network, a disconnected access point, a per-AP override), is at most partly covered.
+An item that depends on an optional step, or on something the site or the account may not have (an
+"All access points" network, a disconnected access point, a per-AP override, a cloud controller older
+than 6.3), is at most partly covered.
 
 | ID | Unverified behavior | Recorded in | Coverage | Result |
 |---|---|---|---|---|
@@ -1283,6 +2052,25 @@ points" network, a disconnected access point, a per-AP override), is at most par
 | 19b-5 | (UI) Adding groups to an MLO network is refused only at Save | todo 4.12 Done (19b); phase-19b.md; PROGRESS (19b) | Partly covered (5.8, optional): only if the web interface offers MLO for the test network | |
 | 19b-6 | (UI) The editor's access-point counts come from internal data, not `apNum` | todo 4.12 Done (19b); phase-19b.md; PROGRESS (19b) | Covered (6.1) | |
 | 20a-1 | None recorded: the remaining risks of `docs/security-audit.md` §7 are code-level, not controller behaviors | todo 4.13 Done (20a); phase-20a.md | Not applicable | |
+| C11-1 | The portal's Open API page (account flag `showAccountOpenApi`), creating a credential, full versus view-only access | cloud contract §11 (1), §2; spec I-1 "Unknowns" | Covered (C.1, C.11) once TP-Link enables the page for the account; until then no step of Part C can run | |
+| C11-2 | `get_tokens` on each region: the answer, `expiresIn`, the codes for a wrong, expired, deleted or disabled credential (only -52602 seen) | cloud contract §11 (2), §4, §9; todo §5 Done (I-1a) | Partly covered (C.4): the answer, a wrong secret and Client ID, each region, a deleted credential, and a disabled one if the portal can disable it. An expired credential needs its validity (30 days at least) to run out | |
+| C11-3 | `/v1/organizations`: `pageSize=100`, `totalRows`, the OC200's `deviceType`, the `orgVersion` form, `online` for a controller that is off, the reported `serverHost` | cloud contract §11 (3), §5; todo §5 Done (I-1a) | Covered (C.5); `online` only with C.5's optional stopped controller. A walk over full pages of 100 needs more than 100 organizations (C.5 pages by one row instead) | |
+| C11-4 | A bad or expired token on the list and through the tunnel (HTTP 401 and -44116 seen on the list) | cloud contract §11 (4), §6 | Partly covered (C.12): an invalid token on both. An expired one only with the optional wait | |
+| C11-5 | The rate limit: do token requests count; -7132 versus HTTP 429; the tunnel's answer | cloud contract §11 (5), §7; todo §5 Done (I-1a) | Partly covered (C.13): what a burst gets on the list and through the tunnel. Token requests only with the optional `cmixburst`, and a one-second window measured from a shell is approximate | |
+| C11-6 | The tunnel: every v1 path the app uses, the `/openapi/v2/…` paths, writes with a full and a view-only credential, -44121 for an organization outside the credential | cloud contract §11 (6), §6; spec I-1 "Unknowns" | Covered (C.7–C.11): a connect's reads, the three views, the v2 catalog, every write kind of C.9 (group create / rename / delete, network create / edit / password / enable / disable / binding / delete), the view-only refusals and -44121 (C.11); the move path is C11-9 | |
+| C11-7 | The cloud's TLS certificates verify normally in Electron (expected: a public CA) | cloud contract §11 (7), §8 | Covered (C.2, C.6) | |
+| C11-8 | `GET …/ap-groups/aps` through the tunnel: the fields, the MAC form, the `deviceType` values, paging and `totalRows` | cloud contract §11 (8), §12; phase-i-1b1.md | Covered (C.8); `deviceType` values only for the device kinds the site has, and full pages of 100 only with more than 100 devices | |
+| C11-9 | `PATCH …/aps/{apMac}/wlan-group`: an AP-group id accepted, the MAC form, how soon the re-read shows the move, the code for the current group | cloud contract §11 (9), §12; phase-i-1b1.md | Partly covered (C.10, optional): needs an access point that may be silenced; the current-group code only with its optional write probe | |
+| C11-10 | What a view-only credential answers for each write | cloud contract §11 (10), §2 | Partly covered (C.11): a group rename and create, a network's enable and, after C.10, a move. Not observed: the other network writes and the deletes with a view-only credential | |
+| C11-11 | A bulk move stays under the rate limit (each move is 1 PATCH plus 1–3 paged reads) | cloud contract §11 (11) | Partly covered (C.10, optional): only with a second access point that may be silenced; otherwise deferred | |
+| C11-12 | The tunnel's site ids pass the IPC site-id guard `[A-Za-z0-9_-]{1,64}` | cloud contract §11 (12), §12 | Covered (C.7, C.8) | |
+| I-1c2a-1 | The local controller's `/api/info` `omadacId` equals its cloud organization's (how the duplicate is hidden, D6) | todo §5 Done (I-1c2a); phase-i-1c2a.md | Covered (C.2, C.5, C.7) | |
+| I-1c2a-2 | A local controller that does not answer at all is told apart from other failures on a real network (`unreachable`) | todo §5 Done (I-1c2a); phase-i-1c2a.md | Covered (C.14; C.5's optional stopped controller adds an offline duplicate, which gets no offer) | |
+| I-1c2b-1 | The switcher with a real account: the duplicate hidden, the offline and below-6.3 reasons, a switch and back | todo §5 Done (I-1c2b), "For I-1c3" | Partly covered (C.7): the reasons only for a controller that is offline or older than 6.3 at the time | |
+| I-1c2b-2 | "Connect through TP-Link cloud" with the local controller out of reach | todo §5 Done (I-1c2b), "For I-1c3" | Covered (C.14) | |
+| I-1c2b-3 | -7132 by rapid switching | todo §5 Done (I-1c2b), "For I-1c3"; phase-i-1c2b.md | Partly covered (C.13): the app's own throttle may keep TP-Link from ever answering -7132 | |
+| I-1c2b-4 | Remove cloud access while a cloud controller is in use, with and without a local controller | todo §5 Done (I-1c2b), "For I-1c3" | Covered (C.15, C.16) | |
+| I-1c2b-5 | A real restart starts on the stored cloud controller (the smoke plays restarts as window reloads) | phase-i-1c2b.md | Covered (C.7, C.16) | |
 
 ### Not verified by this checklist
 
@@ -1304,6 +2092,13 @@ Even a complete run that passes every step leaves these unobserved:
   17a-4), a disconnected access point (16a-5), per-AP override fields (14a-1), an expired token
   (15a-3), MLO (18a-16, 19a-4, 19b-5), Enterprise / PPSK (18b-5, 19a-8), live clients (18a-12,
   18a-15, 18b-4, 19a-9) and the Enhanced IoT condition (18a-17).
+- Part C: an expired cloud credential and, unless you wait, an expired cloud token (C11-2, C11-4);
+  whether token requests count against the rate limit, which a shell measures only roughly (C11-5);
+  the switcher reasons other than the ones the account happens to show — older than 6.3, unknown
+  version, not a controller, incomplete entry, unsupported cloud server (I-1c2b-1); full pages of 100
+  organizations or devices (C11-3, C11-8); the move, its current-group code and a bulk move without an
+  access point you may silence (C11-9, C11-11); a view-only credential's answer to the other network
+  writes and to the deletes (C11-10); a -7132 the app's own throttle never provokes (I-1c2b-3).
 
 ### Leftovers that are not live unknowns
 
@@ -1336,3 +2131,12 @@ controller run settles them; they are listed so that nothing is silently dropped
   confirmation (Feedback above), polite error toasts, detail actions at short heights, inline
   confirmations during a reset; the move channels' session nonce and the `refreshData()` generation
   were closed by inbox phase I-1b2b2).
+- **I-1 (TP-Link cloud):** the `config:save` cloud invalidation order has no automated regression
+  test (I-1a); a moved access point keeps its old group id in the renderer until the reload, which
+  nothing reads (I-1b1); a network that only a group with unreported networks might broadcast is not
+  listed, and an access point in a shared-name group reads "Networks unknown" if either group is
+  (I-1b2a); a failed write of the stored controller choice is logged and the switch still applies
+  (I-1b2b1); `connectionReset` is also reported when the cloud target had nothing connected
+  (I-1b2b2, declined); the switcher reads the cloud list only at startup, after a save and before the
+  cloud offer, and every unreachable local connect reads it once, so repeated Retry clicks could reach
+  -7132 (I-1c2b).

@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T19:42:37Z",
+ "updated": "2026-10-07T20:38:55Z",
  "plan": "todo.md",
  "goal": "Add AP-group and Wi-Fi network management for Omada 6.3 to the Electron app, then remote controllers through the TP-Link cloud.",
  "phases": [
@@ -300,9 +300,9 @@
   {
    "id": "I-1",
    "title": "TP-Link cloud controllers",
-   "status": "in_progress",
+   "status": "done",
    "risk": "high",
-   "summary": "Inbox item: adds remote controllers through the TP-Link Account Level Open API; I-1a and I-1b done, I-1c next."
+   "summary": "Inbox item: adds remote controllers through the TP-Link Account Level Open API beside the local one; I-1a, I-1b and I-1c done."
   },
   {
    "id": "I-1a",
@@ -378,9 +378,9 @@
   {
    "id": "I-1c",
    "title": "Cloud UI and docs",
-   "status": "in_progress",
+   "status": "done",
    "risk": "high",
-   "summary": "Split into I-1c1 (Settings cloud section), I-1c2 (controller switcher and cloud error states) and I-1c3 (README and checklist)."
+   "summary": "Split into I-1c1 (Settings cloud section), I-1c2 (controller switcher and cloud error states) and I-1c3 (README and checklist); all done."
   },
   {
    "id": "I-1c1",
@@ -422,9 +422,11 @@
   {
    "id": "I-1c3",
    "title": "Cloud docs",
-   "status": "queued",
+   "status": "done",
    "risk": "routine",
-   "summary": "Adds a cloud section to the README and to the live-test checklist."
+   "summary": "Documents the cloud access in the README and user guide and adds a cloud part to the live-test checklist.",
+   "review": "docs/reviews/phaseI-1c3.md",
+   "narrative": "docs/progress-archive/phase-i-1c3.md"
   }
  ]
 }

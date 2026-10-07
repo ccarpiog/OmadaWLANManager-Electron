@@ -347,13 +347,17 @@ and no use of the real `~/.omada-wlan-manager/` config** (design spec §1, D4).
   - **Remaining (20b):** README and user guide, and `docs/live-test-checklist.md`.
 - ✅ **Done (20b):** `docs/live-test-checklist.md` follows spec §6 step by step (snapshot EAP Carpio's group id → empty test group `__OWM_TEST_<TS>`, plus a helper group `${T}_B` for the binding-replacement and bound-delete checks → a disabled WPA-Personal network bound only to it → edit / change password / enable and disable → the §5 unknowns → EAP Carpio into the group and back → unbind and delete the network → delete the groups → no `__OWM_TEST_` left), each step with Do / Observe / Record and a pass / fail box, the UI terms as bold English / Spanish pairs, an emergency-restore section, a terminal probe kit (`curl` + `jq` + `openssl` shell functions that read the raw Open API and internal answers the app never shows, survey every network read-only, and write only through four guarded helpers; tested offline in zsh and bash against a local mock, never against a controller), and a cross-reference table of 78 rows (every spec §5 row and every unverified-live item of phases 12–20a → the steps that observe it and its coverage: covered, partly covered or deferred, with the reason; plus a result column), then a "Not verified by this checklist" list and the leftovers that are not live unknowns. `docs/user-guide.md` (English; an "English UI | Spanish UI" table and bold pairs) covers connecting, the three views, selecting and moving access points, management access with the banner reasons, AP groups (New / Rename / Delete, refusal reasons, capacity), Wi-Fi networks (create / edit / change password / enable / disable / delete, Enterprise / PPSK limits), Broadcast on, certificate trust and the keys. README: a description, features and usage that include Broadcast on (Enterprise / PPSK networks can be bound, not edited), a Documentation section, the new pure modules and the testing notes. New `tests/unit/docs-ui-terms.test.ts`: every bold English / Spanish pair of both docs (130 + 247) and every row of the guide's term table must be one key's en and es text in `src/renderer/i18n-strings.ts` (a `{placeholder}` matches any text). No product code changed. `npm test` 1039, smoke 270, TLS probe 25. Review fixes: the probe kit pins the controller's public key on every request (`--pinnedpubkey`, derived only after the certificate's SHA-256 matches the fingerprint shown in Settings; `-k` merely skips the CA check), keeps every secret out of exported variables, command lines and files, and its delete guard fails closed (complete baselines, an id captured with its kind, absent from the baseline, a fresh read naming it as this run's test resource; any `curl` / `jq` error refuses); the "All access points" probe that bound a test network to every production group is gone (isolated test site only), the coverage table is honest about what a run cannot observe, and README and guide no longer claim live verification.
 
-## 5. Inbox I-1 — TP-Link cloud controllers (queued 2026-10-07)
+## 5. ✅ Inbox I-1 — TP-Link cloud controllers (queued 2026-10-07, done 2026-10-07)
 
 **Spec:** `autoclaude/processed/10-tplink-cloud-controllers.md` (user decisions D5–D7: the Account Level Open API reaches the
 remote OC200 controllers; local + cloud in one switcher; after phase 20). **API contract:** `docs/omada-cloud-openapi.md`.
 Same rules as section 4, and D4 extended: no request to any `tplinkcloud.com` API host (nor to the real controller) from code
 under test, unit tests, smoke or probes — TP-Link has not enabled the portal's Open API page for the account yet, so
 everything is built against the documented contract and fixtures.
+
+✅ **Done (I-1):** I-1a, I-1b (I-1b1, I-1b2a, I-1b2b1, I-1b2b2) and I-1c (I-1c1, I-1c2a, I-1c2b, I-1c3), all on the
+documented contract and fixtures; the live checks are `docs/live-test-checklist.md` Part C, for the user to run once
+TP-Link enables the portal's Open API page.
 
 ### ✅ I-1a Cloud account groundwork in main (fixtures only) — risk: high
 - **What:** cloud config fields and their persistence, an Electron-free `CloudAccountClient` (account token, organization list,
@@ -664,7 +668,7 @@ everything is built against the documented contract and fixtures.
                 manager does not track separately. The renderer's `handleConnectionReset()` is a no-op while
                 disconnected except for clearing the remembered site name, which is right after an account change.
 
-### I-1c Settings cloud section, controller switcher, docs — risk: high
+### ✅ I-1c Settings cloud section, controller switcher, docs — risk: high
 - **What (spec "UI"):**
   - The "TP-Link cloud (optional)" Settings section: Region, Client ID, Client Secret, Test cloud access with the
     "save first" refusal, and Remove cloud access.
@@ -956,5 +960,13 @@ everything is built against the documented contract and fixtures.
       - **For I-1c3:** the live checklist needs the switcher steps with a real account (duplicate hidden, offline /
         below-6.3 reasons, a switch and back, "Connect through TP-Link cloud" with the local controller unplugged,
         -7132 by rapid switching, Remove cloud access while on a cloud controller — with and without a local controller).
-  - **I-1c3 (routine):** README cloud section and a cloud section in `docs/live-test-checklist.md` from
+  - ✅ **I-1c3 (routine):** README cloud section and a cloud section in `docs/live-test-checklist.md` from
     `docs/omada-cloud-openapi.md` §11.
+    - **Done (I-1c3)** (docs only, no code change): README section "TP-Link cloud controllers (optional)" (the
+      credential and the portal page, Settings, the switcher, "Connect through TP-Link cloud", cloud only, certificates,
+      limits) plus Features, Requirements, Usage, Configuration, Testing and Security notes; `docs/live-test-checklist.md`
+      Part C (C.0–C.16 and C.R: every §11 item and every "For I-1c3" switcher step, with a cloud kit of shell functions —
+      reads, token requests and one optional no-op move — tested offline in zsh and bash against a mock `curl`, never
+      against TP-Link) and 19 cross-reference rows (`C11-1`–`C11-12`, `I-1c2a-1`–`2`, `I-1c2b-1`–`5`);
+      `docs/user-guide.md` §9 and 8 term-table rows; the stale I-1c sentences of `docs/omada-cloud-openapi.md`; every
+      new bold UI pair verbatim (checklist pairs 247 → 371); `npm test` 1358, smoke 314.
