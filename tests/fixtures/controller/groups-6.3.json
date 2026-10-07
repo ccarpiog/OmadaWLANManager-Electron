@@ -1,5 +1,5 @@
 {
-  "description": "Omada 6.3 group payloads (shapes from docs/omada-6.3-api-findings.md, controller 6.3.0.45). setting/wlans lists every AP group, including the two without SSIDs (zNinguna, CHICarpio) that setting/ssids omits. setting/ssids has one entry per group with SSIDs plus, on purpose, an entry for a group id setting/wlans does not list (ignored by the join) and a non-AP gateway entry (dropped by the validator). `expectedGroups` is the list OmadaController.getWlanGroups() returns (sorted by name). All ids and names are made up; the omadacId matches responses.json.",
+  "description": "Omada 6.3 group payloads (shapes from docs/omada-6.3-api-findings.md, controller 6.3.0.45). setting/wlans lists every AP group, including the two without SSIDs (zNinguna, CHICarpio) that setting/ssids omits. setting/ssids has one entry per group with SSIDs plus, on purpose, an entry for a group id setting/wlans does not list (ignored by the join) and a non-AP gateway entry (dropped by the validator). `expectedGroups` is the list OmadaController.getWlanGroups() returns (sorted by name; the `primary: true` group carries `isDefault: true`). All ids and names are made up; the omadacId matches responses.json.",
   "apiInfo": {
     "errorCode": 0,
     "msg": "Success.",
@@ -64,7 +64,7 @@
   },
   "expectedGroups": [
     { "wlanId": "6512a0e1f3b2c41d2e3f4a5f", "wlanName": "CHICarpio", "ssidList": [] },
-    { "wlanId": "6512a0e1f3b2c41d2e3f4a5b", "wlanName": "Default", "ssidList": [{ "ssidName": "Casa" }, { "ssidName": "Invitados" }] },
+    { "wlanId": "6512a0e1f3b2c41d2e3f4a5b", "wlanName": "Default", "ssidList": [{ "ssidName": "Casa" }, { "ssidName": "Invitados" }], "isDefault": true },
     { "wlanId": "6512a0e1f3b2c41d2e3f4a5c", "wlanName": "zGrupo B", "ssidList": [{ "ssidName": "Oficina" }] },
     { "wlanId": "6512a0e1f3b2c41d2e3f4a5e", "wlanName": "zNinguna", "ssidList": [] }
   ]

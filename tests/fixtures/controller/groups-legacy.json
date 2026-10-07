@@ -1,5 +1,5 @@
 {
-  "description": "Pre-6.3 (legacy) controller payloads, made up in the shapes the app has always read: /api/info reports controllerVer 5.15.24.18, so the group model is 'wlanGroup'; the setting/ssids entries carry no deviceType (counted as AP entries). `wlansUnsupported` is the -1600 envelope Omada returns for an unknown path (docs/omada-6.3-api-findings.md): with it getWlanGroups() falls back to the groups setting/ssids reports (`expectedFallbackGroups`, no empty group). `wlans` covers a legacy controller that does serve setting/wlans: the empty WLAN group 'Silencio' is then listed too (`expectedJoinedGroups`). All ids and names are made up; the omadacId matches responses.json.",
+  "description": "Pre-6.3 (legacy) controller payloads, made up in the shapes the app has always read: /api/info reports controllerVer 5.15.24.18, so the group model is 'wlanGroup'; the setting/ssids entries carry no deviceType (counted as AP entries). `wlansUnsupported` is the -1600 envelope Omada returns for an unknown path (docs/omada-6.3-api-findings.md): with it getWlanGroups() falls back to the groups setting/ssids reports (`expectedFallbackGroups`, no empty group and no default flag: setting/ssids carries none). `wlans` covers a legacy controller that does serve setting/wlans: the empty WLAN group 'Silencio' is then listed too and the `primary` group is flagged default (`expectedJoinedGroups`). All ids and names are made up; the omadacId matches responses.json.",
   "apiInfo": {
     "errorCode": 0,
     "msg": "Success.",
@@ -36,7 +36,7 @@
   ],
   "expectedJoinedGroups": [
     { "wlanId": "5f1a0c0ffee0000000000b02", "wlanName": "Aulas", "ssidList": [{ "ssidName": "Alumnos" }] },
-    { "wlanId": "5f1a0c0ffee0000000000b01", "wlanName": "Default", "ssidList": [{ "ssidName": "Colegio" }, { "ssidName": "Invitados" }] },
+    { "wlanId": "5f1a0c0ffee0000000000b01", "wlanName": "Default", "ssidList": [{ "ssidName": "Colegio" }, { "ssidName": "Invitados" }], "isDefault": true },
     { "wlanId": "5f1a0c0ffee0000000000b03", "wlanName": "Silencio", "ssidList": [] }
   ]
 }

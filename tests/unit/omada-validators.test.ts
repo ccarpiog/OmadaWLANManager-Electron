@@ -145,6 +145,13 @@ describe('joinGroupsWithSsids (setting/wlans outer-joined with setting/ssids)', 
     assert.deepEqual(byName, groupsLegacy.expectedJoinedGroups);
   });
 
+  test('the default flag of setting/wlans is carried to the joined group only (setting/ssids has none)', () => {
+    const { groups } = join(groups63.wlans.result, groups63.ssids.result);
+    assert.deepEqual(groups.filter((group) => group.isDefault === true).map((group) => group.wlanName), ['Default']);
+    assert.equal(groups.filter((group) => 'isDefault' in group).length, 1, 'no isDefault key on the other groups');
+    assert.equal(validateWlanGroups(groups63.ssids.result).some((group) => 'isDefault' in group), false);
+  });
+
   test('the joined groups share no objects with the validated inputs', () => {
     const list = [{ id: 'g1', name: 'One' }];
     const ssidGroups = [{ wlanId: 'g1', wlanName: 'One', ssidList: [{ ssidName: 'A' }] }];
@@ -167,8 +174,10 @@ describe('validator output independence', () => {
     assert.deepEqual(Object.keys(ap).sort(), ['mac', 'name', 'statusCategory', 'type', 'wlanGroup']);
   });
 
-  test('validateGroupList keeps only the id and the name', () => {
-    const [group] = validateGroupList(groups63.wlans.result);
-    assert.deepEqual(Object.keys(group).sort(), ['id', 'name']);
+  test('validateGroupList keeps only the id, the name and the default flag (never the capacity or site fields)', () => {
+    const [defaultGroup, otherGroup] = validateGroupList(groups63.wlans.result);
+    assert.deepEqual(Object.keys(defaultGroup).sort(), ['id', 'isDefault', 'name']);
+    assert.equal(defaultGroup.isDefault, true);
+    assert.deepEqual(Object.keys(otherGroup).sort(), ['id', 'name']);
   });
 }); // End of the describe block "validator output independence"

@@ -5,11 +5,13 @@
 
 import type { AccessPoint, GroupModel, Language, WlanGroup } from '../shared/types';
 import { GROUP_FILTER_ALL, STATUS_FILTER_ALL } from './ap-selection';
-import { apList, destinationList, refreshBtn } from './elements';
+import { apList, destinationList, groupList, networkList, refreshBtn } from './elements';
+import type { AppView, NavLocation } from './nav-history';
 
-// The three views of the app shell (docs/management-design.md §4.2); the
-// Access points view is the landing view
-export type AppView = 'accessPoints' | 'groups' | 'networks';
+// The three views of the app shell (docs/management-design.md §4.2), defined
+// with the navigation history (nav-history.ts); the Access points view is the
+// landing view
+export type { AppView } from './nav-history';
 
 /**
  * Shape of the renderer's mutable state (see the `state` object below).
@@ -51,6 +53,22 @@ export interface RendererState {
   destinationSearchText: string;
   // The view the shell shows (sidebar navigation, shell.ts)
   currentView: AppView;
+  // Access points view: the AP whose details pane is open (ap-details.ts;
+  // the pane takes the destination pane's place), or null when it is closed
+  apDetailsMac: string | null;
+  // AP groups view (groups-view.ts): the selected group's id (null = none)
+  // and the view's own search text (group and network names)
+  selectedGroupId: string | null;
+  groupSearchText: string;
+  // Wi-Fi networks view (networks-view.ts): the selected network's name
+  // (null = none; the internal API identifies networks by name only) and the
+  // view's own search text (network and group names)
+  selectedNetworkName: string | null;
+  networkSearchText: string;
+  // Cross-navigation "Back" history, oldest first (navigation.ts): pushed by
+  // following a link to an AP, a group or a network, popped by "Back to …",
+  // emptied by the sidebar navigation and by a disconnect
+  navHistory: NavLocation[];
   // Time (ms since the epoch) of the last successful data load, shown as
   // "Updated hh:mm"; null while no data is loaded. A failed refresh keeps it
   lastUpdatedAt: number | null;
@@ -115,6 +133,12 @@ export const state: RendererState = {
   apGroupFilter: GROUP_FILTER_ALL,
   destinationSearchText: '',
   currentView: 'accessPoints',
+  apDetailsMac: null,
+  selectedGroupId: null,
+  groupSearchText: '',
+  selectedNetworkName: null,
+  networkSearchText: '',
+  navHistory: [],
   lastUpdatedAt: null,
   controllerHost: null,
   siteName: null,
@@ -151,13 +175,13 @@ export function isOperationInProgress(): boolean {
 }
 
 /**
- * Marks the AP list and the destination list as refreshing (or not): the
- * loaded rows stay on screen, dimmed and flagged aria-busy, while a refresh
- * is in flight.
+ * Marks the AP list, the destination list and the AP groups and Wi-Fi
+ * networks lists as refreshing (or not): the loaded rows stay on screen,
+ * dimmed and flagged aria-busy, while a refresh is in flight.
  * @param {boolean} refreshing - True while a refresh is in flight.
  */
 export function setListsRefreshing(refreshing: boolean): void {
-  for (const list of [apList, destinationList]) {
+  for (const list of [apList, destinationList, groupList, networkList]) {
     list.classList.toggle('is-refreshing', refreshing);
     if (refreshing) {
       list.setAttribute('aria-busy', 'true');

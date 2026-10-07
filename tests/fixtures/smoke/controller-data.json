@@ -1,5 +1,5 @@
 {
-  "description": "Data the stubbed main process (tests/smoke/stub-main.cjs) serves over IPC, in the DTO shapes the real handlers return (src/shared/types.ts). `wlanGroups` is the group list of an Omada 6.3 controller (`controllerVersion`) as OmadaController.getWlanGroups() returns it after joining setting/wlans with setting/ssids, so it includes AP groups without Wi-Fi networks (zNinguna, Exterior). `legacyWlanGroups` is the list of a pre-6.3 controller (`legacyControllerVersion`). The stub sorts by name like OmadaController does and derives the group model from the version with the real rule. One AP and one group carry malformed ids on purpose: the renderer must drop them (src/renderer/connection.ts loadData()). `clientNum` is optional (absent = unknown); the negative one must be dropped at the renderer boundary. Every id, MAC and name is made up.",
+  "description": "Data the stubbed main process (tests/smoke/stub-main.cjs) serves over IPC, in the DTO shapes the real handlers return (src/shared/types.ts). `wlanGroups` is the group list of an Omada 6.3 controller (`controllerVersion`) as OmadaController.getWlanGroups() returns it after joining setting/wlans with setting/ssids, so it includes AP groups without Wi-Fi networks (zNinguna, Exterior), and its Default group carries the default flag (`isDefault`, from setting/wlans `primary`); the legacy list carries none (the setting/ssids fallback has no such flag). `legacyWlanGroups` is the list of a pre-6.3 controller (`legacyControllerVersion`). The stub sorts by name like OmadaController does and derives the group model from the version with the real rule. One AP and one group carry malformed ids on purpose: the renderer must drop them (src/renderer/connection.ts loadData()). `clientNum` is optional (absent = unknown); the negative one must be dropped at the renderer boundary. Every id, MAC and name is made up.",
   "controllerVersion": "6.3.0.45",
   "legacyControllerVersion": "5.15.24.18",
   "accessPoints": [
@@ -21,7 +21,8 @@
     {
       "wlanId": "6512a0e1f3b2c41d2e3f4a5b",
       "wlanName": "Default",
-      "ssidList": [{ "ssidName": "Casa" }, { "ssidName": "Invitados" }]
+      "ssidList": [{ "ssidName": "Casa" }, { "ssidName": "Invitados" }],
+      "isDefault": true
     },
     { "wlanId": "6512a0e1f3b2c41d2e3f4a5e", "wlanName": "zNinguna", "ssidList": [] },
     { "wlanId": "6512a0e1f3b2c41d2e3f4a5d", "wlanName": "Exterior", "ssidList": [] },

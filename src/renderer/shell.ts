@@ -1,24 +1,23 @@
 // ============================================================================
 // App shell: the sidebar navigation (Access points / AP groups / Wi-Fi
 // networks with their total counts, Settings at the bottom) and the switch
-// between the three views (docs/management-design.md §4.2). The AP groups and
-// Wi-Fi networks views are placeholders until phase 14 (todo.md 4.7).
+// between the three views (docs/management-design.md §4.2). The sidebar and
+// the cross-links both switch views through showView(); the Back history of
+// the cross-links lives in navigation.ts.
 // ============================================================================
 
 import { countDistinctSsids } from './ap-selection';
 import {
+  groupsPanelTitle,
   navAccessPointsBtn,
   navGroupsBtn,
   navNetworksBtn,
+  networksPanelTitle,
   settingsBtnLabel,
   viewAccessPoints,
   viewGroups,
-  viewGroupsText,
-  viewGroupsTitle,
   viewNav,
   viewNetworks,
-  viewNetworksText,
-  viewNetworksTitle,
 } from './elements';
 import { t, tGroup } from './i18n';
 import { state, type AppView } from './state';
@@ -86,19 +85,19 @@ export function renderNavCounts(): void {
 /**
  * Writes the shell's group-vocabulary texts ("AP groups" on Omada 6.3+,
  * "WLAN groups (legacy)" before — see tGroup()): the sidebar entry and the
- * placeholder view title. Called by applyGroupVocabulary() (panels.ts).
+ * AP groups view's list title. Called by applyGroupVocabulary() (panels.ts).
  */
 export function applyShellVocabulary(): void {
   const title = tGroup('groupsTitle');
   const label = navGroupsBtn.querySelector('.nav-label');
   if (label) label.textContent = title;
-  viewGroupsTitle.textContent = title;
+  groupsPanelTitle.textContent = title;
 }
 
 /**
  * Writes every shell text in the active language: the navigation's
- * accessible name, the sidebar entries, the Settings entry and the
- * placeholder views; then the counts. Called by applyTranslations().
+ * accessible name, the sidebar entries, the Settings entry and the view
+ * titles; then the counts. Called by applyTranslations().
  */
 export function applyShellTranslations(): void {
   viewNav.setAttribute('aria-label', t('viewNavLabel'));
@@ -108,8 +107,6 @@ export function applyShellTranslations(): void {
   if (networksLabel) networksLabel.textContent = t('wifiNetworks');
   settingsBtnLabel.textContent = t('settings');
   applyShellVocabulary();
-  viewGroupsText.textContent = t('viewComingSoon');
-  viewNetworksTitle.textContent = t('wifiNetworks');
-  viewNetworksText.textContent = t('viewComingSoon');
+  networksPanelTitle.textContent = t('wifiNetworks');
   renderNavCounts();
 } // End of function applyShellTranslations()

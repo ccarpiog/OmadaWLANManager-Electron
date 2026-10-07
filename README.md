@@ -7,9 +7,12 @@ A modern desktop application for moving TP-Link Omada Controller access points b
 
 - Connect to TP-Link Omada Controller
 - View all access points with their status, group, number of Wi-Fi networks and
-  connected clients; search and filter them by status and group
-- View all AP groups with the Wi-Fi networks (SSIDs) each one broadcasts,
-  including groups without any network (see [Controller versions](#controller-versions))
+  connected clients; search and filter them by status and group; click one to see its
+  details (status, MAC, group, clients and the Wi-Fi networks its group broadcasts)
+- Browse the **AP groups** (with their access points and Wi-Fi networks, including groups
+  without any network — see [Controller versions](#controller-versions)) and the
+  **Wi-Fi networks** (with the groups and access points that broadcast each one), read-only;
+  names link between the views, with **Back to …** to return
 - Move one or more access points into another group, including an empty one to silence them,
   after reviewing which Wi-Fi networks they gain and lose; access points are moved one at a time,
   with a per-access-point result and **Retry failed**
@@ -79,6 +82,17 @@ npm run dev
    moves only those, through the same review (the results say how many failed
    access points left the controller meanwhile, and those are skipped; if the
    destination group is gone, they say so instead of offering the retry)
+7. Click an access point's row (anywhere but its checkbox), or press Enter on its
+   checkbox, to open its details in place of the move pane; **Close details**
+   brings the move pane back. The details list the Wi-Fi networks of its group;
+   per-access-point network overrides set in Omada are not shown
+8. The **AP groups** and **Wi-Fi networks** views (sidebar) are read-only, each with
+   its own search. A group shows its access points and networks; a network shows
+   the groups and access points that broadcast it ("N groups · M APs", or "at least
+   M APs" when some access points' groups cannot be identified). Clicking a
+   group, network or access point name opens it in its view; **Back to …** returns
+   to where you were. Security, bands and whether a network is enabled are not
+   shown: they need management access, which the app does not use yet
 
 ## Controller versions
 

@@ -6,8 +6,9 @@
 // announced through an aria-live region. The selection lives in
 // state.selectedApMacs and survives filtering; the pure logic is in
 // ap-selection.ts. Every selection or filter change also refreshes the
-// destination pane's move preview (destination-pane.ts). Row clicks toggle
-// the checkbox (an AP details pane is planned for phase 14, todo.md 4.7).
+// destination pane's move preview (destination-pane.ts). Only the native
+// checkbox toggles the selection: a click anywhere else on a row (or Enter
+// on its checkbox) opens the AP details pane (ap-details.ts, spec §4.3).
 // ============================================================================
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
@@ -25,6 +26,9 @@ import {
   STATUS_FILTER_ALL,
   STATUS_FILTER_UNKNOWN,
 } from './ap-selection';
+import { openApDetails } from './ap-details';
+import { focusApCheckbox } from './ap-focus';
+import { createStatusElement, getApStatus } from './ap-status';
 import { renderMovePreview } from './destination-pane';
 import { createEmptyState } from './dom-helpers';
 import {
@@ -37,48 +41,12 @@ import {
   clearApSelectionBtn,
   selectAllApsBtn,
 } from './elements';
-import { t, tFormat, tGroup, type Translations } from './i18n';
+import { t, tFormat, tGroup } from './i18n';
 import { state } from './state';
 
-/**
- * Presentation for each Omada AP `statusCategory`, keyed by the numeric value
- * the controller reports:
- *
- *   0 disconnected — the controller has lost the AP entirely
- *   1 connected    — normal working state
- *   2 pending      — being adopted; reachable but not yet managed
- *   3 heartbeat missed — adopted, but the controller stopped hearing from it
- *   4 isolated     — adopted and reachable, but cut off from its uplink
- *
- * Previously categories 1 and 2 were both painted green as "online" and
- * everything else red as "offline", which claimed a pending AP was working and
- * hid the difference between a dead AP and one that had merely gone quiet.
- * Each state now gets its own colour and its own label (see the statusAp*
- * translation keys).
- */
-const AP_STATUS: Record<number, { className: string; labelKey: keyof Translations }> = {
-  0: { className: 'offline', labelKey: 'statusApDisconnected' },
-  1: { className: 'online', labelKey: 'statusApConnected' },
-  2: { className: 'pending', labelKey: 'statusApPending' },
-  3: { className: 'warning', labelKey: 'statusApHeartbeatMissed' },
-  4: { className: 'isolated', labelKey: 'statusApIsolated' },
-};
-
-// Order of the per-status options in the status filter
+// Order of the per-status options in the status filter (the presentation of
+// each statusCategory lives in ap-status.ts)
 const STATUS_FILTER_ORDER = [1, 2, 3, 4, 0];
-
-/**
- * Maps an AP's `statusCategory` to its colour class and label key, falling
- * back to a neutral "unknown" state for any value the controller reports that
- * is not in AP_STATUS — a newer firmware adding a category must not make an AP
- * look disconnected.
- * @param {number} statusCategory - The category reported by the controller.
- * @returns {{ className: string; labelKey: keyof Translations }} Presentation
- *   for that state.
- */
-function getApStatus(statusCategory: number): { className: string; labelKey: keyof Translations } {
-  return AP_STATUS[statusCategory] ?? { className: 'unknown', labelKey: 'statusApUnknown' };
-} // End of function getApStatus()
 
 // ============================================================================
 // Filters (the current filters themselves are read by ap-filters.ts)
@@ -180,15 +148,17 @@ function describeApCounts(ap: AccessPoint, groupsByName: ReadonlyMap<string, Wla
  * dataset — no HTML strings), so values coming from the controller can never
  * be interpreted as markup. The row holds a native checkbox (named by the AP
  * name, described by its status and details), the status as coloured dot +
- * text, the AP name, its group, the network count of the group and the client
- * count. Clicks and keys are handled by the list's delegated handlers.
+ * text, the AP name — a native button that opens the AP details pane (out of
+ * the Tab order: the checkbox is the row's Tab stop, and Enter on it opens
+ * the details too) — its group, the network count of the group and the
+ * client count. The row whose details are open is marked. Clicks and keys
+ * are handled by the list's delegated handlers.
  * @param {AccessPoint} ap - The access point to render.
  * @param {number} index - Row index (for the element ids).
  * @param {ReadonlyMap<string, WlanGroup>} groupsByName - Groups by name.
  * @returns {HTMLLIElement} The row element.
  */
 function createApRow(ap: AccessPoint, index: number, groupsByName: ReadonlyMap<string, WlanGroup>): HTMLLIElement {
-  const apStatus = getApStatus(ap.statusCategory);
   const isSelected = state.selectedApMacs.has(ap.mac);
   const nameId = `ap-row-${index}-name`;
   const statusId = `ap-row-${index}-status`;
@@ -196,6 +166,7 @@ function createApRow(ap: AccessPoint, index: number, groupsByName: ReadonlyMap<s
 
   const row = document.createElement('li');
   row.className = isSelected ? 'ap-row selected' : 'ap-row';
+  row.classList.toggle('is-viewing', state.apDetailsMac === ap.mac);
   row.dataset.mac = ap.mac;
 
   const checkbox = document.createElement('input');
@@ -213,24 +184,21 @@ function createApRow(ap: AccessPoint, index: number, groupsByName: ReadonlyMap<s
   const header = document.createElement('div');
   header.className = 'ap-row-header';
 
+  // The AP name opens the details pane: a native button, out of the Tab
+  // order (Enter on the row's checkbox opens the details from the keyboard)
+  const nameButton = document.createElement('button');
+  nameButton.type = 'button';
+  nameButton.className = 'ap-name-btn';
+  nameButton.tabIndex = -1;
+  nameButton.setAttribute('aria-label', tFormat('apDetailsFor', { ap: ap.name }));
   const name = document.createElement('span');
   name.className = 'item-name';
   name.id = nameId;
   name.textContent = ap.name;
+  nameButton.appendChild(name);
 
   // Status as text + colour: the dot is decorative, the label carries the state
-  const status = document.createElement('span');
-  status.className = `item-status ${apStatus.className}`;
-  status.id = statusId;
-  const dot = document.createElement('span');
-  dot.className = 'status-dot';
-  dot.setAttribute('aria-hidden', 'true');
-  dot.textContent = '●';
-  const statusLabel = document.createElement('span');
-  statusLabel.className = 'status-label';
-  statusLabel.textContent = t(apStatus.labelKey);
-  status.appendChild(dot);
-  status.appendChild(statusLabel);
+  const status = createStatusElement(ap.statusCategory, statusId);
 
   const details = document.createElement('div');
   details.className = 'ap-row-meta item-subtitle';
@@ -250,7 +218,7 @@ function createApRow(ap: AccessPoint, index: number, groupsByName: ReadonlyMap<s
   // A narrow window ellipsizes the details: the tooltip keeps them whole
   details.title = details.textContent ?? '';
 
-  header.appendChild(name);
+  header.appendChild(nameButton);
   header.appendChild(status);
   content.appendChild(header);
   content.appendChild(details);
@@ -291,18 +259,6 @@ function applyApRovingTabindex(): void {
     checkbox.tabIndex = checkbox === tabStop ? 0 : -1;
   }
 } // End of function applyApRovingTabindex()
-
-/**
- * Moves keyboard focus to a row's checkbox and makes it the Tab stop.
- * @param {HTMLInputElement} checkbox - The checkbox to focus.
- */
-function focusApCheckbox(checkbox: HTMLInputElement): void {
-  for (const other of apList.querySelectorAll<HTMLInputElement>('.ap-checkbox')) {
-    other.tabIndex = other === checkbox ? 0 : -1;
-  }
-  state.apFocusMac = checkbox.dataset.mac ?? null;
-  checkbox.focus();
-}
 
 /**
  * Renders the access-point list for the current filters using DOM APIs,
@@ -422,10 +378,24 @@ function setApSelected(mac: string, selected: boolean, extendRange: boolean): vo
 } // End of function setApSelected()
 
 /**
- * Delegated click handler of the list: a click on a checkbox applies its new
- * state, a click anywhere else on a row toggles that row's checkbox; with
- * Shift held, the state applies to the range from the anchor. Focus moves to
- * the row's checkbox so the keyboard continues from there.
+ * Makes a row's checkbox the list's Tab stop without moving focus to it (so
+ * Tab back into the list lands on the AP whose details were opened).
+ * @param {HTMLInputElement} checkbox - The row's checkbox.
+ */
+function makeApTabStop(checkbox: HTMLInputElement): void {
+  for (const other of apList.querySelectorAll<HTMLInputElement>('.ap-checkbox')) {
+    other.tabIndex = other === checkbox ? 0 : -1;
+  }
+  state.apFocusMac = checkbox.dataset.mac ?? null;
+}
+
+/**
+ * Delegated click handler of the list: only a click on a checkbox changes
+ * the selection — it applies the checkbox's new state, with Shift held to
+ * the range from the anchor — and focus stays on that checkbox so the
+ * keyboard continues from there. A click anywhere else on a row (the AP name
+ * included) opens that AP's details pane, with focus on its heading; the
+ * row's checkbox becomes the list's Tab stop.
  * @param {MouseEvent} e - The click event.
  */
 export function handleApListClick(e: MouseEvent): void {
@@ -434,10 +404,13 @@ export function handleApListClick(e: MouseEvent): void {
   if (!(row instanceof HTMLElement) || !row.dataset.mac) return;
   const checkbox = row.querySelector<HTMLInputElement>('.ap-checkbox');
   if (!checkbox) return;
-  const onCheckbox = target === checkbox;
-  const selected = onCheckbox ? checkbox.checked : !state.selectedApMacs.has(row.dataset.mac);
-  setApSelected(row.dataset.mac, selected, e.shiftKey);
-  focusApCheckbox(checkbox);
+  if (target === checkbox) {
+    setApSelected(row.dataset.mac, checkbox.checked, e.shiftKey);
+    focusApCheckbox(checkbox);
+    return;
+  }
+  makeApTabStop(checkbox);
+  openApDetails(row.dataset.mac, true);
 } // End of function handleApListClick()
 
 /**
@@ -445,12 +418,19 @@ export function handleApListClick(e: MouseEvent): void {
  * move focus between the rows' checkboxes; with Shift they also select the
  * range from the anchor to the newly focused row (the row being left becomes
  * the anchor when there is none among the visible rows). Space toggles the
- * focused checkbox natively (handled as a click).
+ * focused checkbox natively (handled as a click); Enter opens the focused
+ * row's AP details pane.
  * @param {KeyboardEvent} e - The keydown event.
  */
 export function handleApListKeydown(e: KeyboardEvent): void {
   const current = e.target;
   if (!(current instanceof HTMLInputElement) || !current.classList.contains('ap-checkbox')) return;
+  if (e.key === 'Enter' && current.dataset.mac) {
+    e.preventDefault();
+    makeApTabStop(current);
+    openApDetails(current.dataset.mac, true);
+    return;
+  }
   const checkboxes = Array.from(apList.querySelectorAll<HTMLInputElement>('.ap-checkbox'));
   const index = checkboxes.indexOf(current);
   let nextIndex: number;

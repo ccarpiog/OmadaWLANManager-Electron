@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-06T23:21:16Z",
+ "updated": "2026-10-07T00:15:24Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -116,11 +116,20 @@
    "commit": "b3ecb65"
   },
   {
-   "id": "14",
+   "id": "14a",
    "title": "Read-only AP groups and Wi-Fi networks views",
+   "status": "done",
+   "risk": "routine",
+   "summary": "Adds read-only AP group and Wi-Fi network views from internal data, cross-navigation and an AP details pane.",
+   "review": "docs/reviews/phase14a.md",
+   "narrative": "docs/progress-archive/phase-14a.md"
+  },
+  {
+   "id": "14b",
+   "title": "View states and responsive layout",
    "status": "queued",
    "risk": "routine",
-   "summary": "Adds read-only AP group and Wi-Fi network views with cross-navigation and responsive layout."
+   "summary": "Adds loading, empty, error and read-only states, responsive breakpoints and the Cmd/Ctrl+F and Escape keys."
   },
   {
    "id": "15",

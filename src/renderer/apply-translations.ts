@@ -41,6 +41,7 @@ import { renderApFilterOptions, renderApList, renderApSelectionControls } from '
 import { renderDestinationList, renderMovePreview } from './destination-pane';
 import { t } from './i18n';
 import { moveActionLabel } from './move-text';
+import { applyInventoryTranslations } from './navigation';
 import { applyGroupVocabulary, showEmptyStates } from './panels';
 import { applyShellTranslations } from './shell';
 import { state } from './state';
@@ -50,12 +51,13 @@ import { renderHeaderMeta } from './status';
  * Writes every user-facing string of the static UI (titles, labels, button
  * texts, placeholders, accessible names) in the active language, then
  * re-renders the shell (sidebar, header details), the filter options, the
- * lists (or the empty states) and the move preview so the dynamic content
- * follows the language too. Called at startup and after a settings save that
- * may have changed the language.
+ * lists (or the empty states), the move preview, the AP groups and Wi-Fi
+ * networks views, the AP details pane and the Back bar so the dynamic
+ * content follows the language too. Called at startup and after a settings
+ * save that may have changed the language.
  */
 export function applyTranslations() {
-  // App shell: sidebar entries and counts, Settings entry, placeholder views
+  // App shell: sidebar entries and counts, Settings entry, view titles
   applyShellTranslations();
 
   // Panel titles and list labels; the destination list's follows the
@@ -137,4 +139,7 @@ export function applyTranslations() {
     renderApSelectionControls();
   }
   renderMovePreview();
+
+  // AP groups and Wi-Fi networks views, AP details pane, Back bar
+  applyInventoryTranslations();
 } // End of function applyTranslations()

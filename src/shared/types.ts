@@ -59,11 +59,16 @@ export interface AccessPoint {
 // is the group id (the AP-group id on 6.3+, the value an AP move sends with
 // PATCH eaps/{mac}) and `wlanName` its name. `ssidList` holds the Wi-Fi
 // networks the group broadcasts; it is empty for a group without networks
-// (assigning an AP to such a group silences it).
+// (assigning an AP to such a group silences it). `isDefault` is present, and
+// true, only for the group the controller flags as its default one
+// (`primary: true` in the internal setting/wlans list); it is absent for every
+// other group and whenever the list came from the legacy setting/ssids
+// fallback, which carries no such flag.
 export interface WlanGroup {
   wlanId: string;
   wlanName: string;
   ssidList: Ssid[];
+  isDefault?: boolean;
 }
 
 // One Wi-Fi network (SSID) broadcast by a group

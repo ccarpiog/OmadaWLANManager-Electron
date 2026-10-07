@@ -23,11 +23,13 @@ export interface SitePage {
 
 /**
  * One entry of the authoritative group list (internal `GET setting/wlans`,
- * see validateGroupList()): the group id and its display name.
+ * see validateGroupList()): the group id, its display name and, only for the
+ * default group (`primary: true`), `isDefault: true`.
  */
 export interface GroupListEntry {
   id: string;
   name: string;
+  isDefault?: boolean;
 }
 
 /**
@@ -186,8 +188,11 @@ export function validateWlanGroups(result: unknown): WlanGroup[] {
  * Omada 6.3+ this is the complete AP-group list, including groups without
  * SSIDs (docs/omada-6.3-api-findings.md). Entries whose `deviceType` is not
  * the AP type are ignored (isApEntry()); a repeated id keeps its first entry.
- * Only the display name is normalized (a missing one becomes ''); every other
- * field (default flag, per-band capacity, ...) is left out of the result.
+ * Only the display name is normalized (a missing one becomes ''). The default
+ * flag is kept as `isDefault: true` only when `primary` is exactly `true`
+ * (docs/omada-6.3-api-findings.md: `primary:true` = the default AP group);
+ * any other value leaves it absent. Every other field (per-band capacity,
+ * site, ...) is left out of the result.
  * @param {unknown} result - Raw `result` field of the wlans response.
  * @returns {GroupListEntry[]} The groups, in response order.
  * @throws {Error} When the payload shape is unsupported.
@@ -218,7 +223,11 @@ export function validateGroupList(result: unknown): GroupListEntry[] {
       continue; // Deduplicate: keep the first occurrence of each id
     }
     seenIds.add(group.id);
-    groups.push({ id: group.id, name: typeof group.name === 'string' ? group.name : '' });
+    const listed: GroupListEntry = { id: group.id, name: typeof group.name === 'string' ? group.name : '' };
+    if (group.primary === true) {
+      listed.isDefault = true;
+    }
+    groups.push(listed);
   } // End of the loop that validates each group-list entry
 
   return groups;
@@ -233,8 +242,9 @@ export function validateGroupList(result: unknown): GroupListEntry[] {
  * id is not in the list is left out and reported in `ignoredSsidGroupIds`:
  * the list is authoritative, and an AP can only be moved into a group it
  * contains. The name comes from the list; a blank one falls back to the name
- * `setting/ssids` reports for the same id. The result shares no objects with
- * the inputs.
+ * `setting/ssids` reports for the same id. The list's default flag is carried
+ * over (`isDefault: true` on the default group only). The result shares no
+ * objects with the inputs.
  * @param {GroupListEntry[]} groupList - The validated group list.
  * @param {WlanGroup[]} ssidGroups - The validated `setting/ssids` groups.
  * @returns {GroupJoinResult} The joined groups and the ignored ids.
@@ -259,11 +269,15 @@ export function joinGroupsWithSsids(groupList: GroupListEntry[], ssidGroups: Wla
   const groups = groupList.map((group): WlanGroup => {
     const matches = ssidGroupsById.get(group.id) ?? [];
     const fallbackName = matches.find((match) => match.wlanName !== '')?.wlanName ?? '';
-    return {
+    const joined: WlanGroup = {
       wlanId: group.id,
       wlanName: group.name !== '' ? group.name : fallbackName,
       ssidList: matches.flatMap((match) => match.ssidList.map((ssid) => ({ ssidName: ssid.ssidName })))
     };
+    if (group.isDefault === true) {
+      joined.isDefault = true;
+    }
+    return joined;
   });
 
   return { groups, ignoredSsidGroupIds };

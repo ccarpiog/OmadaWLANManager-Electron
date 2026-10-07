@@ -59,7 +59,6 @@ const TEXT = {
     // App shell and Access points list (phase 13a)
     accessPoints: 'Puntos de acceso', wifiNetworks: 'Redes Wi-Fi', updated: 'Actualizado {time}', refreshing: 'Actualizando…',
     site: 'Sitio: {site}', version: 'Omada {version}',
-    comingSoon: 'Esta vista llegará en una versión posterior. Mientras tanto, mueve los puntos de acceso entre grupos desde la vista Puntos de acceso.',
     networksOne: '1 red', networksMany: '{count} redes', networksNone: 'Sin redes', clientsOne: '1 cliente', clientsMany: '{count} clientes',
     selNone: 'Ningún AP seleccionado', selOne: '1 seleccionado', selMany: '{count} seleccionados',
     hiddenOne: '1 oculto por los filtros', hiddenMany: '{count} ocultos por los filtros',
@@ -90,6 +89,24 @@ const TEXT = {
     retryMissingOne: '1 AP fallido ya no está en el controlador y no se reintentará.',
     retryRemainingOne: '"{action}" solo reintentará el AP restante.',
     retryDestinationGone: 'No se puede reintentar: el grupo "{group}" ya no está en el controlador.',
+    // Read-only AP groups / Wi-Fi networks views, AP details pane, cross-navigation (phase 14a)
+    apNone: 'Sin AP', apCountUnknown: 'Nº de AP desconocido', groupOne: '1 grupo', groupMany: '{count} grupos', badgeDefault: 'Predeterminado',
+    searchCount: 'Se muestran {shown} de {total}', noMatchingGroups: 'Ningún grupo ni red coincide con "{query}"',
+    groupDetailPrompt: 'Selecciona un grupo para ver sus puntos de acceso y sus redes Wi-Fi',
+    networkDetailPrompt: 'Selecciona una red para ver los grupos y los puntos de acceso que la emiten',
+    noApsInGroup: 'Ningún punto de acceso está en este grupo',
+    networkUnknownOne: 'No se incluye 1 punto de acceso que puede emitirla: la aplicación no puede identificar su grupo (sin grupo, con un grupo que no está en la lista o con un nombre que comparten varios grupos).',
+    networkUnknownMany: 'No se incluyen {count} puntos de acceso que pueden emitirla: la aplicación no puede identificar su grupo (sin grupo, con un grupo que no está en la lista o con un nombre que comparten varios grupos).',
+    networkNoAps: 'Ningún punto de acceso está en los grupos que la emiten',
+    // Phase 14a review fixes: a network's AP count as a lower bound (or unknown) with the reason
+    apAtLeastOne: 'al menos 1 AP', apAtLeastMany: 'al menos {count} AP',
+    scopeUnknownOne: 'no se puede identificar el grupo de 1 AP', scopeUnknownMany: 'no se puede identificar el grupo de {count} AP',
+    managementOnly: 'No se muestran la seguridad, las bandas ni si la red está activada: requieren acceso de gestión.',
+    apDetailsTitle: 'Detalles del AP', closeDetails: 'Cerrar detalles', statusLabel: 'Estado', macLabel: 'MAC', clientsLabel: 'Clientes',
+    clientsNotReported: 'El controlador no informa de ellos',
+    apNetworksUnknown: 'Sus redes Wi-Fi son desconocidas: la aplicación no puede identificar su grupo.',
+    apOverrides: 'Estas son las redes de su grupo. Las redes personalizadas de este AP no se muestran (la aplicación aún no las lee): si tiene alguna en Omada, lo que emite realmente puede ser distinto.',
+    backTo: 'Volver a {target}',
   },
   en: {
     disconnected: 'Disconnected', connecting: 'Connecting...', connect: 'Connect', disconnect: 'Disconnect', connected: 'Connected',
@@ -104,7 +121,6 @@ const TEXT = {
     // App shell and Access points list (phase 13a)
     accessPoints: 'Access points', wifiNetworks: 'Wi-Fi networks', updated: 'Updated {time}', refreshing: 'Refreshing…',
     site: 'Site: {site}', version: 'Omada {version}',
-    comingSoon: 'This view arrives in a later version. Meanwhile, move access points between groups from the Access points view.',
     networksOne: '1 network', networksMany: '{count} networks', networksNone: 'No networks', clientsOne: '1 client', clientsMany: '{count} clients',
     selNone: 'No APs selected', selOne: '1 selected', selMany: '{count} selected',
     hiddenOne: '1 hidden by filters', hiddenMany: '{count} hidden by filters',
@@ -116,6 +132,19 @@ const TEXT = {
     moveNoSelection: 'Select the access points to move', moveDestination: 'Destination: {group}',
     moveNone: 'Move APs', moveOne: 'Move AP', moveMany: 'Move {count} APs',
     ambiguous: 'Another group has the same name — rename one in Omada to move APs here',
+    // Read-only views, AP details pane, cross-navigation (phase 14a)
+    apOne: '1 AP', apMany: '{count} APs', apNone: 'No APs', apCountUnknown: 'AP count unknown', groupOne: '1 group', groupMany: '{count} groups',
+    badgeDefault: 'Default',
+    networkUnknownMany: 'Not included: {count} access points that may broadcast it, whose group the app cannot identify (no group, a group not in the list, or a name several groups share).',
+    // Phase 14a review fixes: a network's AP count as a lower bound (or unknown) with the reason
+    apAtLeastOne: 'at least 1 AP', apAtLeastMany: 'at least {count} APs',
+    scopeUnknownOne: '1 AP\'s group cannot be identified', scopeUnknownMany: '{count} APs\' groups cannot be identified',
+    managementOnly: 'Security, bands and whether the network is enabled are not shown: they need management access.',
+    apDetailsTitle: 'AP details', closeDetails: 'Close details', statusLabel: 'Status', clientsLabel: 'Clients',
+    apGroupUnlisted: '{group} (not in the group list)',
+    apNetworksUnknown: 'Its Wi-Fi networks are unknown: the app cannot identify its group.',
+    apOverrides: 'These are its group\'s networks. Per-AP Wi-Fi network overrides are not shown (the app does not read them yet): if this AP has any in Omada, what it actually broadcasts may differ.',
+    backTo: 'Back to {target}',
   },
 };
 const STATUS_CLASSES = ['offline', 'online', 'pending', 'warning', 'isolated'];
@@ -771,7 +800,8 @@ function readSelection(page) {
 
 /**
  * Reads the sidebar and the views: per entry its element, label, count and
- * aria-current, plus which view is shown.
+ * aria-current, which view is shown, the titles of the AP groups and Wi-Fi
+ * networks views, and any leftover placeholder element (phase 13a's).
  * @param {import('playwright-core').Page} page - The renderer page.
  * @returns {Promise<object>} The sidebar state.
  */
@@ -799,10 +829,9 @@ function readNav(page) {
       networks: entry('navNetworks'),
       shown: ['viewAccessPoints', 'viewGroups', 'viewNetworks'].filter((id) => !document.getElementById(id)?.hidden),
       navLabel: document.getElementById('viewNav')?.getAttribute('aria-label') ?? null,
-      groupsTitle: document.getElementById('viewGroupsTitle')?.textContent ?? null,
-      groupsText: document.getElementById('viewGroupsText')?.textContent ?? null,
-      networksTitle: document.getElementById('viewNetworksTitle')?.textContent ?? null,
-      networksText: document.getElementById('viewNetworksText')?.textContent ?? null,
+      groupsTitle: document.getElementById('groupsPanelTitle')?.textContent ?? null,
+      networksTitle: document.getElementById('networksPanelTitle')?.textContent ?? null,
+      placeholders: document.querySelectorAll('#viewGroupsText, #viewNetworksText, .view-placeholder').length,
     };
   }); // End of the in-page sidebar probe
 } // End of function readNav()
@@ -840,6 +869,161 @@ function readHeader(page) {
     };
   }); // End of the in-page header probe
 } // End of function readHeader()
+
+/**
+ * Reads the AP groups master list: per item its group id, element and type,
+ * name, badges, counts line, the strong empty-group label, aria-current and
+ * tabindex.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<Array<{ id: string; tag: string; type: string | null; name: string; badges: string[]; meta: string; silence: string | null; current: string | null; tabIndex: number }>>}
+ */
+function readGroupItems(page) {
+  return page.evaluate(() => Array.from(document.querySelectorAll('#groupList .master-item')).map((item) => ({
+    id: item.dataset.groupId,
+    tag: item.tagName.toLowerCase(),
+    type: item.getAttribute('type'),
+    name: item.querySelector('.item-name')?.textContent ?? '',
+    badges: Array.from(item.querySelectorAll('.badge')).map((badge) => badge.textContent),
+    meta: item.querySelector('.master-item-meta')?.textContent ?? '',
+    silence: item.querySelector('.is-silence')?.textContent ?? null,
+    current: item.getAttribute('aria-current'),
+    tabIndex: item.tabIndex,
+  })));
+} // End of function readGroupItems()
+
+/**
+ * Reads the Wi-Fi networks master list: per item its network name (data
+ * attribute), element, label, scope, aria-current and tabindex.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<Array<{ name: string; tag: string; label: string; scope: string; current: string | null; tabIndex: number }>>}
+ */
+function readNetworkItems(page) {
+  return page.evaluate(() => Array.from(document.querySelectorAll('#networkList .master-item')).map((item) => ({
+    name: item.dataset.networkName,
+    tag: item.tagName.toLowerCase(),
+    label: item.querySelector('.item-name')?.textContent ?? '',
+    scope: item.querySelector('.network-scope')?.textContent ?? '',
+    current: item.getAttribute('aria-current'),
+    tabIndex: item.tabIndex,
+  })));
+} // End of function readNetworkItems()
+
+/**
+ * Reads a master list's state: its empty / no-results text, the Clear
+ * search button, the aria-live results summary, the search field's value
+ * and the focused element's id.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {{ list: string; summary: string; search: string; clear: string }} ids - Element ids.
+ * @returns {Promise<{ empty: string | null; clear: string | null; summary: string; live: string | null; search: string | null; focus: string }>}
+ */
+function readListState(page, ids) {
+  return page.evaluate((elementIds) => ({
+    empty: document.querySelector(`#${elementIds.list} .empty-state p`)?.textContent ?? null,
+    clear: document.getElementById(elementIds.clear)?.textContent ?? null,
+    summary: document.getElementById(elementIds.summary)?.textContent ?? '',
+    live: document.getElementById(elementIds.summary)?.getAttribute('aria-live') ?? null,
+    search: document.getElementById(elementIds.search)?.value ?? null,
+    focus: document.activeElement?.id || '',
+  }), ids);
+} // End of function readListState()
+
+/**
+ * Reads a detail pane (the AP details, a group's or a network's detail):
+ * the heading (text and tag), badges, summary line, facts (label, value,
+ * status label, link), sections (title, rows with link text / status /
+ * meta, links with kind, target, text and element, notes, strong
+ * empty-group notes), the top-level notes and the empty-state text.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} selector - CSS selector of the pane's content element.
+ * @returns {Promise<object | null>} The pane's content, or null when absent.
+ */
+function readDetailPane(page, selector) {
+  return page.evaluate((paneSelector) => {
+    const root = document.querySelector(paneSelector);
+    if (!root) return null;
+    /**
+     * Reads the cross-links inside an element.
+     * @param {Element} container - The element.
+     * @returns {object[]} Kind, target, text, tag and type of each link.
+     */
+    const linksOf = (container) => Array.from(container.querySelectorAll('.cross-link')).map((link) => ({
+      kind: link.dataset.linkKind, target: link.dataset.linkTarget, text: link.textContent, tag: link.tagName.toLowerCase(), type: link.getAttribute('type'),
+    }));
+    const sections = {};
+    for (const section of root.querySelectorAll('.detail-section')) {
+      sections[section.dataset.section] = {
+        title: section.querySelector('.detail-section-title')?.textContent ?? '',
+        rows: Array.from(section.querySelectorAll('.detail-link-row')).map((row) => ({
+          link: row.querySelector('.cross-link')?.textContent ?? null,
+          status: row.querySelector('.status-label')?.textContent ?? null,
+          meta: row.querySelector('.detail-meta')?.textContent ?? null,
+        })),
+        links: linksOf(section),
+        notes: Array.from(section.querySelectorAll('.detail-note')).map((note) => note.textContent),
+        silence: Array.from(section.querySelectorAll('.detail-note.is-silence')).map((note) => note.textContent),
+      };
+    } // End of the loop over the sections
+    const facts = {};
+    for (const fact of root.querySelectorAll('.detail-fact')) {
+      const value = fact.querySelector('dd');
+      const link = value?.querySelector('.cross-link');
+      facts[fact.dataset.fact] = {
+        label: fact.querySelector('dt')?.textContent ?? '',
+        value: value?.textContent ?? '',
+        status: value?.querySelector('.status-label')?.textContent ?? null,
+        link: link ? { kind: link.dataset.linkKind, target: link.dataset.linkTarget } : null,
+      };
+    }
+    const heading = root.querySelector('.detail-name');
+    return {
+      heading: heading?.textContent ?? null,
+      headingTag: heading?.tagName.toLowerCase() ?? null,
+      badges: Array.from(root.querySelectorAll('.detail-header .badge')).map((badge) => badge.textContent),
+      summary: root.querySelector('.detail-summary')?.textContent ?? null,
+      facts,
+      sections,
+      notes: Array.from(root.querySelectorAll(':scope > .detail-note')).map((note) => ({ kind: note.dataset.note, text: note.textContent })),
+      empty: root.querySelector('.empty-state p')?.textContent ?? null,
+    };
+  }, selector); // End of the in-page detail probe
+} // End of function readDetailPane()
+
+/**
+ * Reads the cross-navigation state: the shown view, the Back bar, the AP
+ * details and destination panes, the AP rows marked as viewed, the views'
+ * searches and selections, the AP list's scroll offset and the focused
+ * element (id, link kind and target, nearest ancestor with an id, data keys).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The state.
+ */
+function readInventory(page) {
+  return page.evaluate(() => {
+    const active = document.activeElement;
+    return {
+      shown: ['viewAccessPoints', 'viewGroups', 'viewNetworks'].filter((id) => !document.getElementById(id)?.hidden),
+      backHidden: Boolean(document.getElementById('backBar')?.hidden),
+      backLabel: document.getElementById('backBtnLabel')?.textContent ?? null,
+      apDetailsHidden: Boolean(document.getElementById('apDetailsPanel')?.hidden),
+      destinationHidden: Boolean(document.getElementById('destinationPanel')?.hidden),
+      apDetailsTitle: document.getElementById('apDetailsPanelTitle')?.textContent ?? null,
+      closeText: document.getElementById('closeApDetailsBtn')?.textContent ?? null,
+      viewingMacs: Array.from(document.querySelectorAll('#apList .ap-row.is-viewing')).map((row) => row.dataset.mac),
+      groupSearch: document.getElementById('groupSearch')?.value ?? null,
+      networkSearch: document.getElementById('networkSearch')?.value ?? null,
+      currentGroup: document.querySelector('#groupList .master-item[aria-current="true"]')?.dataset.groupId ?? null,
+      currentNetwork: document.querySelector('#networkList .master-item[aria-current="true"]')?.dataset.networkName ?? null,
+      apListScroll: document.getElementById('apList')?.scrollTop ?? null,
+      focus: {
+        id: active?.id || '',
+        linkKind: active?.dataset?.linkKind ?? null,
+        linkTarget: active?.dataset?.linkTarget ?? null,
+        inside: active?.parentElement?.closest('[id]')?.id ?? null,
+        groupId: active?.dataset?.groupId ?? null,
+        mac: active?.dataset?.mac ?? null,
+      },
+    };
+  }); // End of the in-page cross-navigation probe
+} // End of function readInventory()
 
 // ============================================================================
 // Expected values derived from the fixtures
@@ -933,6 +1117,110 @@ function expectedDestinations(wlanGroups, language) {
     ...groups.filter((group) => group.ssidList.length === 0).map((group) => ({ name: group.wlanName, detail: detail(group), section: 'silence' })),
   ];
 } // End of function expectedDestinations()
+
+/**
+ * An AP count label: "No APs" / "1 AP" / "N APs", or "AP count unknown" for
+ * null (src/renderer/inventory-ui.ts apCountOrUnknown()).
+ * @param {'es' | 'en'} language - UI language.
+ * @param {number | null} count - The count.
+ * @returns {string} The label.
+ */
+function apCountLabel(language, count) {
+  const text = TEXT[language];
+  if (count === null) return text.apCountUnknown;
+  if (count === 0) return text.apNone;
+  return count === 1 ? text.apOne : fmt(text.apMany, { count });
+}
+
+/**
+ * The AP groups master list the view must show: valid groups sorted by
+ * name, each with its AP count (unknown when another group has its name),
+ * "N networks" or the §4.1 empty-group label, and the Default badge only
+ * for a group the fixture flags with isDefault.
+ * @param {object[]} accessPoints - AccessPoint DTOs served by the stub.
+ * @param {object[]} wlanGroups - WlanGroup DTOs served by the stub.
+ * @param {'es' | 'en'} language - UI language.
+ * @returns {Array<{ id: string; name: string; badges: string[]; meta: string }>}
+ */
+function expectedGroupItems(accessPoints, wlanGroups, language) {
+  const text = TEXT[language];
+  const groups = wlanGroups.filter((group) => WLAN_ID_REGEX.test(group.wlanId)).sort((a, b) => a.wlanName.localeCompare(b.wlanName));
+  const aps = accessPoints.filter((ap) => MAC_REGEX.test(ap.mac));
+  return groups.map((group) => {
+    const shared = groups.filter((other) => other.wlanName === group.wlanName).length > 1;
+    const count = shared ? null : aps.filter((ap) => ap.wlanGroup === group.wlanName).length;
+    const names = new Set(group.ssidList.map((ssid) => ssid.ssidName));
+    let networks = text.emptyGroup;
+    if (names.size > 0) {
+      networks = names.size === 1 ? text.networksOne : fmt(text.networksMany, { count: names.size });
+    }
+    return { id: group.wlanId, name: group.wlanName, badges: group.isDefault === true ? [text.badgeDefault] : [], meta: `${apCountLabel(language, count)} · ${networks}` };
+  }); // End of the expected-group mapping
+} // End of function expectedGroupItems()
+
+/**
+ * A network's scope (src/renderer/inventory-ui.ts scopeText()): "N groups ·
+ * M APs" when every AP is placed; otherwise "at least M APs" (or "AP count
+ * unknown" when M is 0) followed by how many APs' groups cannot be identified.
+ * @param {'es' | 'en'} language - UI language.
+ * @param {number} groupCount - Groups broadcasting the network.
+ * @param {number} apCount - APs known to broadcast it.
+ * @param {number} unknownCount - APs that may broadcast it.
+ * @returns {string} The scope.
+ */
+function scopeLabel(language, groupCount, apCount, unknownCount) {
+  const text = TEXT[language];
+  const groups = groupCount === 1 ? text.groupOne : fmt(text.groupMany, { count: groupCount });
+  if (unknownCount === 0) return `${groups} · ${apCountLabel(language, apCount)}`;
+  let aps = text.apCountUnknown;
+  if (apCount > 0) {
+    aps = apCount === 1 ? text.apAtLeastOne : fmt(text.apAtLeastMany, { count: apCount });
+  }
+  const reason = unknownCount === 1 ? text.scopeUnknownOne : fmt(text.scopeUnknownMany, { count: unknownCount });
+  return `${groups} · ${aps}; ${reason}`;
+} // End of function scopeLabel()
+
+/**
+ * The Wi-Fi networks master list the view must show: one entry per distinct
+ * network name of the valid groups, sorted, with its scope: the APs whose
+ * group name no other group shares and that group broadcasts the network,
+ * and the APs that may broadcast it (no group, a group not listed, or a
+ * shared name one of whose groups broadcasts it).
+ * @param {object[]} accessPoints - AccessPoint DTOs served by the stub.
+ * @param {object[]} wlanGroups - WlanGroup DTOs served by the stub.
+ * @param {'es' | 'en'} language - UI language.
+ * @returns {Array<{ name: string; label: string; scope: string }>}
+ */
+function expectedNetworkItems(accessPoints, wlanGroups, language) {
+  const groups = wlanGroups.filter((group) => WLAN_ID_REGEX.test(group.wlanId));
+  const aps = accessPoints.filter((ap) => MAC_REGEX.test(ap.mac));
+  const byNetwork = new Map();
+  for (const group of groups) {
+    for (const name of new Set(group.ssidList.map((ssid) => ssid.ssidName))) {
+      byNetwork.set(name, [...(byNetwork.get(name) ?? []), group]);
+    }
+  } // End of the loop that indexes the groups by network name
+  /**
+   * Whether an AP broadcasts a network: 'yes', 'no' or 'maybe'.
+   * @param {object} ap - The AP.
+   * @param {object[]} broadcasting - The groups broadcasting the network.
+   * @returns {string} The placement.
+   */
+  const placement = (ap, broadcasting) => {
+    const named = groups.filter((group) => group.wlanName === ap.wlanGroup);
+    if (ap.wlanGroup === '' || named.length === 0) return 'maybe';
+    if (!named.some((group) => broadcasting.includes(group))) return 'no';
+    return named.length === 1 ? 'yes' : 'maybe';
+  };
+  return Array.from(byNetwork)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, broadcasting]) => {
+      const placements = aps.map((ap) => placement(ap, broadcasting));
+      const apCount = placements.filter((value) => value === 'yes').length;
+      const unknownCount = placements.filter((value) => value === 'maybe').length;
+      return { name, label: name, scope: scopeLabel(language, broadcasting.length, apCount, unknownCount) };
+    });
+} // End of function expectedNetworkItems()
 
 /**
  * Compares rendered AP items with the expected rows.
@@ -1132,6 +1420,412 @@ async function closeResults(page) {
   await waitForMoveDialogClosed(page);
   await waitForLoadIdle(page);
 }
+
+/**
+ * Spanish launch, the read-only AP groups and Wi-Fi networks views, the AP
+ * details pane and cross-navigation (phase 14a): the group list (counts,
+ * the Default badge, the empty groups with the §4.1 label), its search and
+ * detail (linked APs and networks, an empty group, no edit controls), the
+ * network list (one entry per distinct name, scopes), its search and detail
+ * (linked groups and APs, the unidentified AP stated apart, the fields that
+ * need management access stated), the AP details pane opened by a row click
+ * (the checkbox alone toggles; Enter on a checkbox opens the details;
+ * Close), a cross-navigation round trip at 700×500 whose Back restores view,
+ * selection, search, scroll and focus, and the sidebar emptying the Back
+ * history; then the phase 14a review regressions: a twin group making the
+ * network scopes lower bounds / unknown with their reason, and a refresh
+ * that removes an AP kept in the Back history (Back skips it). Runs on the
+ * fixture data before any move (each regression check restores it); ends
+ * on the Access points view with no selection, no details pane, no Back
+ * history and no view search.
+ * @param {object} session - The Spanish launch.
+ * @returns {Promise<void>}
+ */
+async function runInventoryChecks(session) {
+  const { page } = session;
+  const es = TEXT.es;
+  /**
+   * Selector of a group's master item.
+   * @param {string} id - Group id.
+   * @returns {string} The CSS selector.
+   */
+  const groupItem = (id) => `#groupList .master-item[data-group-id="${id}"]`;
+  /**
+   * Selector of a network's master item.
+   * @param {string} name - Network name.
+   * @returns {string} The CSS selector.
+   */
+  const networkItem = (name) => `#networkList .master-item[data-network-name="${name}"]`;
+  /**
+   * Selector of a fixture AP's checkbox.
+   * @param {string} name - AP name.
+   * @returns {string} The CSS selector.
+   */
+  const box = (name) => `#apList .ap-checkbox[data-mac="${AP[name].mac}"]`;
+  /**
+   * Selector of a part of a fixture AP's row outside its checkbox (the group text).
+   * @param {string} name - AP name.
+   * @returns {string} The CSS selector.
+   */
+  const rowGroup = (name) => `#apList .ap-row[data-mac="${AP[name].mac}"] .ap-row-group`;
+  /**
+   * The status label of a fixture AP.
+   * @param {string} name - AP name.
+   * @returns {string} The Spanish status label.
+   */
+  const statusOf = (name) => es.status[AP[name].statusCategory] ?? es.statusUnknown;
+  /**
+   * Lists the buttons and fields of a view other than its master items,
+   * cross-links and search (rename / new / delete / edit controls must not exist).
+   * @param {string} viewId - The view's id.
+   * @returns {Promise<string[]>} Their ids or classes.
+   */
+  const otherControls = (viewId) => page.evaluate((id) => Array.from(document.querySelectorAll(`#${id} button, #${id} input, #${id} select`))
+    .filter((element) => !element.classList.contains('master-item') && !element.classList.contains('cross-link') && element.type !== 'text')
+    .map((element) => element.id || element.className), viewId);
+  // The APs of the Default group, in list order (sorted by name)
+  const defaultAps = ['EAP Carpio', 'Garaje', 'Porche', 'Salón'];
+
+  await check('[es] AP groups view: every group (empty ones included) as a native button with its AP and network counts, "Predeterminado" only on the group the controller flags as default, the §4.1 label on the groups without networks, one Tab stop, and a prompt in the detail', async () => {
+    await page.click('#navGroups');
+    const items = await readGroupItems(page);
+    const expected = expectedGroupItems(data.accessPoints, data.wlanGroups, 'es');
+    const detail = await readDetailPane(page, '#groupDetail');
+    const nav = await readNav(page);
+    const actual = items.map(({ id, name, badges, meta }) => ({ id, name, badges, meta }));
+    return verdict(
+      isDeepStrictEqual(actual, expected) && items.every((item) => item.tag === 'button' && item.type === 'button' && item.current === null) &&
+      isDeepStrictEqual(items.filter((item) => item.silence !== null).map((item) => item.name), ['Exterior', 'zNinguna']) &&
+      items.filter((item) => item.tabIndex === 0).length === 1 && detail?.empty === es.groupDetailPrompt &&
+      isDeepStrictEqual(nav.shown, ['viewGroups']) && nav.groups.current === 'page' && nav.groupsTitle === es.groupsTitle.apGroup,
+      { actual, expected, items, detail, nav }
+    );
+  }); // End of check "[es] AP groups view..."
+
+  await check('[es] AP groups search over group and network names: "invit" finds Default by its network with "Se muestran 1 de 4" (aria-live); no match says so and "Borrar búsqueda" restores the list with focus in the search; Escape clears it too', async () => {
+    const ids = { list: 'groupList', summary: 'groupListSummary', search: 'groupSearch', clear: 'clearGroupSearchBtn' };
+    await page.fill('#groupSearch', 'invit');
+    const byNetwork = await readListState(page, ids);
+    const byNetworkNames = (await readGroupItems(page)).map((item) => item.name);
+    await page.fill('#groupSearch', 'zzz');
+    const none = await readListState(page, ids);
+    await page.click('#clearGroupSearchBtn');
+    const cleared = await readListState(page, ids);
+    const clearedCount = (await readGroupItems(page)).length;
+    await page.fill('#groupSearch', 'ningu');
+    const narrowed = (await readGroupItems(page)).map((item) => item.name);
+    await page.keyboard.press('Escape');
+    const escaped = await readListState(page, ids);
+    const escapedCount = (await readGroupItems(page)).length;
+    return verdict(
+      isDeepStrictEqual(byNetworkNames, ['Default']) && byNetwork.summary === fmt(es.searchCount, { shown: 1, total: 4 }) && byNetwork.live === 'polite' &&
+      none.empty === fmt(es.noMatchingGroups, { query: 'zzz' }) && none.clear === es.clearSearch &&
+      cleared.search === '' && cleared.focus === 'groupSearch' && cleared.summary === '' && clearedCount === 4 &&
+      isDeepStrictEqual(narrowed, ['zNinguna']) && escaped.search === '' && escaped.summary === '' && escapedCount === 4,
+      { byNetworkNames, byNetwork, none, cleared, clearedCount, narrowed, escaped, escapedCount }
+    );
+  }); // End of check "[es] AP groups search..."
+
+  await check('[es] AP group detail (Default): selected (aria-current); its name as heading, "Predeterminado", "4 AP · 2 redes", its APs as links with their status, its Wi-Fi networks as read-only links; no rename, new or delete control', async () => {
+    await page.click(groupItem(GROUP.Default.wlanId));
+    const items = await readGroupItems(page);
+    const detail = await readDetailPane(page, '#groupDetail');
+    const controls = await otherControls('viewGroups');
+    return verdict(
+      isDeepStrictEqual(items.filter((item) => item.current === 'true').map((item) => item.id), [GROUP.Default.wlanId]) &&
+      detail.heading === 'Default' && detail.headingTag === 'h3' && isDeepStrictEqual(detail.badges, [es.badgeDefault]) &&
+      detail.summary === `${fmt(es.apMany, { count: 4 })} · ${fmt(es.networksMany, { count: 2 })}` &&
+      detail.sections.aps?.title === `${es.accessPoints} (4)` &&
+      isDeepStrictEqual(detail.sections.aps.rows, defaultAps.map((name) => ({ link: name, status: statusOf(name), meta: null }))) &&
+      isDeepStrictEqual(detail.sections.aps.links.map((link) => [link.kind, link.target, link.tag, link.type]), defaultAps.map((name) => ['ap', AP[name].mac, 'button', 'button'])) &&
+      detail.sections.networks?.title === `${es.wifiNetworks} (2)` &&
+      isDeepStrictEqual(detail.sections.networks.links.map((link) => [link.kind, link.target, link.text]), [['network', 'Casa', 'Casa'], ['network', 'Invitados', 'Invitados']]) &&
+      controls.length === 0,
+      { items, detail, controls }
+    );
+  }); // End of check "[es] AP group detail (Default)..."
+
+  await check('[es] empty AP groups by keyboard: ArrowDown + Enter select Exterior ("Sin AP · Sin redes Wi-Fi — silencia estos AP", "Ningún punto de acceso está en este grupo"), End + Enter select zNinguna ("1 AP", Jardín linked, the strong label instead of networks); focus stays in the list', async () => {
+    await page.focus(groupItem(GROUP.Default.wlanId));
+    await page.keyboard.press('ArrowDown');
+    const afterArrow = await readInventory(page);
+    await page.keyboard.press('Enter');
+    const exterior = await readDetailPane(page, '#groupDetail');
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    const ninguna = await readDetailPane(page, '#groupDetail');
+    const after = await readInventory(page);
+    return verdict(
+      afterArrow.focus.groupId === GROUP.Exterior.wlanId &&
+      exterior.heading === 'Exterior' && exterior.badges.length === 0 && exterior.summary === `${es.apNone} · ${es.emptyGroup}` &&
+      exterior.sections.aps?.title === `${es.accessPoints} (0)` && isDeepStrictEqual(exterior.sections.aps.notes, [es.noApsInGroup]) &&
+      exterior.sections.networks?.title === `${es.wifiNetworks} (0)` && isDeepStrictEqual(exterior.sections.networks.silence, [es.emptyGroup]) &&
+      ninguna.heading === 'zNinguna' && ninguna.summary === `${es.apOne} · ${es.emptyGroup}` &&
+      isDeepStrictEqual(ninguna.sections.aps?.rows, [{ link: 'Jardín', status: statusOf('Jardín'), meta: null }]) &&
+      isDeepStrictEqual(ninguna.sections.networks?.silence, [es.emptyGroup]) && ninguna.sections.networks.links.length === 0 &&
+      after.focus.groupId === GROUP.zNinguna.wlanId && after.currentGroup === GROUP.zNinguna.wlanId,
+      { afterArrow: afterArrow.focus, exterior, ninguna, after: after.focus }
+    );
+  }); // End of check "[es] empty AP groups by keyboard..."
+
+  await check('[es] Wi-Fi networks view: one native entry per distinct network name (the sidebar count), sorted, each with its scope "N grupos · M AP"; its own search matches network names ("casa") and group names ("zgrupo": "Se muestran 5 de 7"); the detail asks for a network', async () => {
+    await page.click('#navNetworks');
+    const items = await readNetworkItems(page);
+    const expected = expectedNetworkItems(data.accessPoints, data.wlanGroups, 'es');
+    const nav = await readNav(page);
+    const detail = await readDetailPane(page, '#networkDetail');
+    await page.fill('#networkSearch', 'casa');
+    const byName = (await readNetworkItems(page)).map((item) => item.name);
+    await page.fill('#networkSearch', 'zgrupo');
+    const byGroup = (await readNetworkItems(page)).map((item) => item.name);
+    const listState = await readListState(page, { list: 'networkList', summary: 'networkListSummary', search: 'networkSearch', clear: 'clearNetworkSearchBtn' });
+    await page.fill('#networkSearch', '');
+    const all = (await readNetworkItems(page)).length;
+    const zGrupoNetworks = expected.map((item) => item.name).filter((name) => GROUP['zGrupo B'].ssidList.some((ssid) => ssid.ssidName === name));
+    return verdict(
+      isDeepStrictEqual(items.map(({ name, label, scope }) => ({ name, label, scope })), expected) && String(items.length) === nav.networks.count &&
+      items.every((item) => item.tag === 'button' && item.current === null) && isDeepStrictEqual(nav.shown, ['viewNetworks']) &&
+      nav.networksTitle === es.wifiNetworks && detail?.empty === es.networkDetailPrompt &&
+      isDeepStrictEqual(byName, ['Casa']) && isDeepStrictEqual(byGroup, zGrupoNetworks) && zGrupoNetworks.length === 5 &&
+      listState.summary === fmt(es.searchCount, { shown: 5, total: 7 }) && listState.live === 'polite' && all === 7,
+      { items, expected, nav, detail, byName, byGroup, listState, all }
+    );
+  }); // End of check "[es] Wi-Fi networks view..."
+
+  await check('[es] Wi-Fi network detail (Casa): "1 grupo · al menos 4 AP; no se puede identificar el grupo de 1 AP" (Bodega has no group); the group broadcasting it (Default, "4 AP") and the APs that broadcast it as links with their status, Bodega stated apart in the same section (no count in its title); security, bands and enabled state stated as needing management access (nothing invented, no edit control)', async () => {
+    await page.click(networkItem('Casa'));
+    const detail = await readDetailPane(page, '#networkDetail');
+    const current = (await readNetworkItems(page)).filter((item) => item.current === 'true').map((item) => item.name);
+    const controls = await otherControls('viewNetworks');
+    return verdict(
+      isDeepStrictEqual(current, ['Casa']) && detail.heading === 'Casa' &&
+      detail.summary === `${es.groupOne} · ${fmt(es.apAtLeastMany, { count: 4 })}; ${es.scopeUnknownOne}` &&
+      detail.sections.groups?.title === `${es.groupsTitle.apGroup} (1)` &&
+      isDeepStrictEqual(detail.sections.groups.rows, [{ link: 'Default', status: null, meta: fmt(es.apMany, { count: 4 }) }]) &&
+      isDeepStrictEqual(detail.sections.groups.links.map((link) => [link.kind, link.target]), [['group', GROUP.Default.wlanId]]) &&
+      detail.sections.aps?.title === es.accessPoints &&
+      isDeepStrictEqual(detail.sections.aps.rows, defaultAps.map((name) => ({ link: name, status: statusOf(name), meta: null }))) &&
+      isDeepStrictEqual(detail.sections.aps.notes, [es.networkUnknownOne]) &&
+      isDeepStrictEqual(detail.notes, [{ kind: 'managementOnly', text: es.managementOnly }]) &&
+      controls.length === 0,
+      { current, detail, controls }
+    );
+  }); // End of check "[es] Wi-Fi network detail (Casa)..."
+
+  await check('[es] AP details by row click: a click on EAP Carpio\'s row (not its checkbox) opens "Detalles del AP" in the destination pane\'s place with focus on its name: status, MAC, its AP group as a link, clients, its group\'s networks as links and the statement that per-AP overrides cannot be shown; the checkbox stays unchecked', async () => {
+    await page.click('#navAccessPoints');
+    await page.click(rowGroup('EAP Carpio'));
+    await page.waitForFunction(() => document.activeElement?.id === 'apDetailsName', null, { timeout: WAIT_MS });
+    const inventory = await readInventory(page);
+    const detail = await readDetailPane(page, '#apDetailsContent');
+    const selection = await readSelection(page);
+    return verdict(
+      inventory.apDetailsHidden === false && inventory.destinationHidden === true && inventory.apDetailsTitle === es.apDetailsTitle &&
+      inventory.closeText === es.closeDetails && isDeepStrictEqual(inventory.viewingMacs, [AP['EAP Carpio'].mac]) &&
+      detail.heading === 'EAP Carpio' && detail.headingTag === 'h3' &&
+      detail.facts.status?.label === es.statusLabel && detail.facts.status?.status === statusOf('EAP Carpio') &&
+      detail.facts.mac?.label === es.macLabel && detail.facts.mac?.value === AP['EAP Carpio'].mac &&
+      detail.facts.group?.label === es.groupLabel.apGroup && detail.facts.group?.value === 'Default' &&
+      isDeepStrictEqual(detail.facts.group?.link, { kind: 'group', target: GROUP.Default.wlanId }) &&
+      detail.facts.clients?.label === es.clientsLabel && detail.facts.clients?.value === es.clientsOne &&
+      detail.sections.networks?.title === `${es.wifiNetworks} (2)` &&
+      isDeepStrictEqual(detail.sections.networks.links.map((link) => [link.kind, link.target]), [['network', 'Casa'], ['network', 'Invitados']]) &&
+      isDeepStrictEqual(detail.notes, [{ kind: 'overrides', text: es.apOverrides }]) &&
+      selection.checked.length === 0 && selection.summary === expectedSummary('es', 0, 0),
+      { inventory, detail, selection }
+    );
+  }); // End of check "[es] AP details by row click..."
+
+  await check('[es] AP details: only the checkbox toggles the selection (a Shift-click range too) while the pane stays on EAP Carpio; Enter on Bodega\'s checkbox opens its details ("Sin asignar", networks unknown) without toggling it; "Cerrar detalles" brings the destination pane back with focus on Bodega\'s checkbox', async () => {
+    await page.click(box('Altillo'));
+    await page.click(box('EAP Carpio'), { modifiers: ['Shift'] });
+    const ranged = await readSelection(page);
+    const stillCarpio = (await readDetailPane(page, '#apDetailsContent'))?.heading;
+    await page.click('#clearApSelectionBtn');
+    await page.focus(box('Bodega'));
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.activeElement?.id === 'apDetailsName', null, { timeout: WAIT_MS });
+    const bodega = await readDetailPane(page, '#apDetailsContent');
+    const afterEnter = await readSelection(page);
+    await page.click('#closeApDetailsBtn');
+    const closed = await readInventory(page);
+    const selection = await readSelection(page);
+    return verdict(
+      isDeepStrictEqual(ranged.checked, [AP.Altillo.mac, AP.Bodega.mac, AP['EAP Carpio'].mac]) && stillCarpio === 'EAP Carpio' &&
+      bodega.heading === 'Bodega' && bodega.facts.group?.value === es.unassigned && bodega.facts.group?.link === null &&
+      bodega.facts.clients?.value === es.clientsNotReported && bodega.sections.networks?.title === es.wifiNetworks &&
+      isDeepStrictEqual(bodega.sections.networks.notes, [es.apNetworksUnknown]) && bodega.sections.networks.links.length === 0 &&
+      afterEnter.checked.length === 0 &&
+      closed.apDetailsHidden === true && closed.destinationHidden === false && closed.viewingMacs.length === 0 &&
+      selection.activeMac === AP.Bodega.mac,
+      { ranged, stillCarpio, bodega, afterEnter, closed, selection }
+    );
+  }); // End of check "[es] AP details: only the checkbox toggles the selection..."
+
+  await check('[es] cross-navigation round trip at 700×500: AP details (EAP Carpio, the AP list scrolled) → its group (Default, "Volver a EAP Carpio") → one of its networks (Casa, "Volver a Default") → Back → Back restores each view with its selection, search and scroll, focus back on the link followed, no Back bar at the end; the checkbox selection (Altillo) is untouched and everything stays inside the window', async () => {
+    await page.click(box('Altillo'));
+    await page.click('#navGroups');
+    await page.fill('#groupSearch', 'def');
+    await page.click('#navAccessPoints');
+    await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(700, 500));
+    try {
+      await page.waitForFunction(() => window.innerWidth <= 700 && window.innerHeight <= 500, null, { timeout: WAIT_MS });
+      await page.click(rowGroup('EAP Carpio'));
+      await page.waitForFunction(() => document.activeElement?.id === 'apDetailsName', null, { timeout: WAIT_MS });
+      const listScroll = await page.evaluate(() => {
+        const list = document.getElementById('apList');
+        list.scrollTop = list.scrollHeight;
+        return list.scrollTop;
+      });
+      await page.click('#apDetailsContent .cross-link[data-link-kind="group"]');
+      await page.waitForFunction(() => document.activeElement?.id === 'groupDetailName', null, { timeout: WAIT_MS });
+      const atGroup = await readInventory(page);
+      await page.click('#groupDetail .cross-link[data-link-kind="network"][data-link-target="Casa"]');
+      await page.waitForFunction(() => document.activeElement?.id === 'networkDetailName', null, { timeout: WAIT_MS });
+      const atNetwork = await readInventory(page);
+      const layout = await page.evaluate(() => {
+        /**
+         * Tells whether an element is rendered entirely inside the window.
+         * @param {string} id - The element id.
+         * @returns {boolean} True when it has a size and fits the viewport.
+         */
+        const inside = (id) => {
+          const rect = document.getElementById(id)?.getBoundingClientRect();
+          return Boolean(rect && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight);
+        };
+        return {
+          scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight,
+          width: window.innerWidth, height: window.innerHeight,
+          back: inside('backBtn'), heading: inside('networkDetailName'), search: inside('networkSearch'),
+        };
+      }); // End of the in-page layout probe
+      await page.click('#backBtn');
+      const backAtGroup = await readInventory(page);
+      await page.click('#backBtn');
+      const backAtAp = await readInventory(page);
+      const apDetail = await readDetailPane(page, '#apDetailsContent');
+      const selection = await readSelection(page);
+      return verdict(
+        listScroll > 0 &&
+        isDeepStrictEqual(atGroup.shown, ['viewGroups']) && atGroup.currentGroup === GROUP.Default.wlanId && atGroup.groupSearch === 'def' &&
+        atGroup.backHidden === false && atGroup.backLabel === fmt(es.backTo, { target: 'EAP Carpio' }) &&
+        isDeepStrictEqual(atNetwork.shown, ['viewNetworks']) && atNetwork.currentNetwork === 'Casa' &&
+        atNetwork.backLabel === fmt(es.backTo, { target: 'Default' }) &&
+        layout.scrollWidth <= layout.width && layout.scrollHeight <= layout.height && layout.back && layout.heading && layout.search &&
+        isDeepStrictEqual(backAtGroup.shown, ['viewGroups']) && backAtGroup.currentGroup === GROUP.Default.wlanId && backAtGroup.groupSearch === 'def' &&
+        backAtGroup.focus.linkKind === 'network' && backAtGroup.focus.linkTarget === 'Casa' && backAtGroup.focus.inside === 'groupDetail' &&
+        backAtGroup.backHidden === false && backAtGroup.backLabel === fmt(es.backTo, { target: 'EAP Carpio' }) &&
+        isDeepStrictEqual(backAtAp.shown, ['viewAccessPoints']) && backAtAp.apDetailsHidden === false && apDetail?.heading === 'EAP Carpio' &&
+        Math.abs(backAtAp.apListScroll - listScroll) <= 1 && backAtAp.focus.linkKind === 'group' && backAtAp.focus.linkTarget === GROUP.Default.wlanId &&
+        backAtAp.focus.inside === 'apDetailsContent' && backAtAp.backHidden === true &&
+        isDeepStrictEqual(selection.checked, [AP.Altillo.mac]),
+        { listScroll, atGroup, atNetwork, layout, backAtGroup, backAtAp, apDetail: apDetail?.heading, selection }
+      );
+    } finally {
+      await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
+    }
+  }); // End of check "[es] cross-navigation round trip at 700×500..."
+
+  await check('[es] the sidebar starts a fresh navigation: after following a link the Back bar shows; a sidebar entry hides it (history emptied) and every view keeps its selection', async () => {
+    await page.click('#apDetailsContent .cross-link[data-link-kind="group"]');
+    await page.waitForFunction(() => document.activeElement?.id === 'groupDetailName', null, { timeout: WAIT_MS });
+    const followed = await readInventory(page);
+    await page.click('#navNetworks');
+    const sidebar = await readInventory(page);
+    await page.click('#navAccessPoints');
+    const back = await readInventory(page);
+    return verdict(
+      followed.backHidden === false && isDeepStrictEqual(followed.shown, ['viewGroups']) &&
+      sidebar.backHidden === true && isDeepStrictEqual(sidebar.shown, ['viewNetworks']) && sidebar.currentNetwork === 'Casa' &&
+      back.backHidden === true && back.apDetailsHidden === false && back.currentGroup === GROUP.Default.wlanId,
+      { followed, sidebar, back }
+    );
+  }); // End of check "[es] the sidebar starts a fresh navigation..."
+
+  await check('[es] back to the Access points list for the move checks: details closed (the destination pane is back), nothing selected, no view search, no Back bar', async () => {
+    await page.click('#closeApDetailsBtn');
+    await page.click('#clearApSelectionBtn');
+    await page.click('#navGroups');
+    await page.fill('#groupSearch', '');
+    await page.click('#navAccessPoints');
+    const inventory = await readInventory(page);
+    const selection = await readSelection(page);
+    return verdict(
+      isDeepStrictEqual(inventory.shown, ['viewAccessPoints']) && inventory.apDetailsHidden === true && inventory.destinationHidden === false &&
+      inventory.groupSearch === '' && inventory.networkSearch === '' && inventory.backHidden === true && selection.checked.length === 0,
+      { inventory, selection }
+    );
+  }); // End of check "[es] back to the Access points list..."
+
+  await check('[es] regression (phase 14a review): a twin "Default" broadcasting Casa appears on refresh: every network scope reads as a lower bound or unknown with the reason ("2 grupos · Nº de AP desconocido; no se puede identificar el grupo de 5 AP", "1 grupo · al menos 1 AP; …"), never an exact count or "Sin AP"; Casa\'s detail lists no AP, states the 5 APs that may broadcast it (no "Ningún punto de acceso…" note) and both twins\' AP counts as unknown; the scopes come back once the twin is gone', async () => {
+    const twin = { wlanId: '6512a0e1f3b2c41d2e3f4a60', wlanName: 'Default', ssidList: [{ ssidName: 'Casa' }] };
+    const twinGroups = [...data.wlanGroups, twin];
+    await page.click('#navNetworks');
+    await configureStub(session, { wlanGroups: twinGroups });
+    await page.click('#refreshBtn');
+    await page.waitForSelector(groupItem(twin.wlanId), { state: 'attached', timeout: WAIT_MS });
+    await waitForLoadIdle(page);
+    const items = await readNetworkItems(page);
+    const expected = expectedNetworkItems(data.accessPoints, twinGroups, 'es');
+    await page.click(networkItem('Casa'));
+    const detail = await readDetailPane(page, '#networkDetail');
+    // The listing without the twin comes back for the checks that follow
+    await configureStub(session, { wlanGroups: data.wlanGroups });
+    await page.click('#refreshBtn');
+    await page.waitForFunction((selector) => document.querySelector(selector) === null, groupItem(twin.wlanId), { timeout: WAIT_MS });
+    await waitForLoadIdle(page);
+    const restored = (await readNetworkItems(page)).map(({ name, label, scope }) => ({ name, label, scope }));
+    const scopes = Object.fromEntries(items.map((item) => [item.name, item.scope]));
+    await page.click('#navAccessPoints');
+    return verdict(
+      isDeepStrictEqual(items.map(({ name, label, scope }) => ({ name, label, scope })), expected) &&
+      scopes.Casa === `${fmt(es.groupMany, { count: 2 })} · ${es.apCountUnknown}; ${fmt(es.scopeUnknownMany, { count: 5 })}` &&
+      scopes.Invitados === `${es.groupOne} · ${es.apCountUnknown}; ${fmt(es.scopeUnknownMany, { count: 5 })}` &&
+      scopes.Oficina === `${es.groupOne} · ${es.apAtLeastOne}; ${es.scopeUnknownOne}` &&
+      items.every((item) => !item.scope.includes(es.apNone)) && detail.summary === scopes.Casa &&
+      isDeepStrictEqual(detail.sections.groups?.rows.map((row) => [row.link, row.meta]), [['Default', es.apCountUnknown], ['Default', es.apCountUnknown]]) &&
+      detail.sections.aps?.title === es.accessPoints && detail.sections.aps.rows.length === 0 &&
+      isDeepStrictEqual(detail.sections.aps.notes, [fmt(es.networkUnknownMany, { count: 5 })]) && !detail.sections.aps.notes.includes(es.networkNoAps) &&
+      isDeepStrictEqual(detail.notes, [{ kind: 'managementOnly', text: es.managementOnly }]) &&
+      isDeepStrictEqual(restored, expectedNetworkItems(data.accessPoints, data.wlanGroups, 'es')),
+      { items, expected, detail, restored }
+    );
+  }); // End of check "[es] regression (phase 14a review): a twin Default..."
+
+  await check('[es] regression (phase 14a review): a refresh that removes an AP kept in the Back history drops it: Casa → Porche → Default ("Volver a Porche"); Porche leaves the controller and after Refresh the bar offers "Volver a Casa", whose Back shows Casa with no Back bar left', async () => {
+    await page.click('#navNetworks');
+    await page.click(networkItem('Casa'));
+    await page.click(`#networkDetail .cross-link[data-link-kind="ap"][data-link-target="${AP.Porche.mac}"]`);
+    await page.waitForFunction(() => document.activeElement?.id === 'apDetailsName', null, { timeout: WAIT_MS });
+    const atAp = await readInventory(page);
+    await page.click('#apDetailsContent .cross-link[data-link-kind="group"]');
+    await page.waitForFunction(() => document.activeElement?.id === 'groupDetailName', null, { timeout: WAIT_MS });
+    const atGroup = await readInventory(page);
+    await configureStub(session, { accessPoints: data.accessPoints.filter((ap) => ap.mac !== AP.Porche.mac) });
+    await page.click('#refreshBtn');
+    await waitForApCount(page, 6);
+    await waitForLoadIdle(page);
+    const refreshed = await readInventory(page);
+    await page.click('#backBtn');
+    const back = await readInventory(page);
+    // Porche comes back for the checks that follow, which start on the Access points list
+    await configureStub(session, { accessPoints: data.accessPoints });
+    await page.click('#refreshBtn');
+    await waitForApCount(page, 7);
+    await waitForLoadIdle(page);
+    await page.click('#navAccessPoints');
+    const end = await readInventory(page);
+    return verdict(
+      isDeepStrictEqual(atAp.shown, ['viewAccessPoints']) && atAp.backLabel === fmt(es.backTo, { target: 'Casa' }) &&
+      isDeepStrictEqual(atGroup.shown, ['viewGroups']) && atGroup.backLabel === fmt(es.backTo, { target: 'Porche' }) &&
+      atGroup.currentGroup === GROUP.Default.wlanId &&
+      isDeepStrictEqual(refreshed.shown, ['viewGroups']) && refreshed.backHidden === false && refreshed.backLabel === fmt(es.backTo, { target: 'Casa' }) &&
+      isDeepStrictEqual(back.shown, ['viewNetworks']) && back.currentNetwork === 'Casa' && back.backHidden === true &&
+      isDeepStrictEqual(end.shown, ['viewAccessPoints']) && end.backHidden === true && end.apDetailsHidden === true && end.destinationHidden === false,
+      { atAp, atGroup, refreshed, back, end }
+    );
+  }); // End of check "[es] regression (phase 14a review): a refresh that removes an AP..."
+} // End of function runInventoryChecks()
 
 /**
  * Spanish launch, Access points list selection: checkbox clicks, Shift-click
@@ -1936,28 +2630,32 @@ async function runSpanishFirstRun(electronInfo) {
       );
     }); // End of check "[es] AP rows: a native checkbox per AP..."
 
-    await check('[es] navigation: the AP groups and Wi-Fi networks entries show their placeholder views (aria-current follows), and Enter on "Puntos de acceso" brings the list back', async () => {
+    await check('[es] navigation: the AP groups and Wi-Fi networks entries show their real views (aria-current follows, one list entry per sidebar count, no placeholder left), and Enter on "Puntos de acceso" brings the list back', async () => {
       await page.click('#navGroups');
       const groups = await readNav(page);
+      const groupItems = (await readGroupItems(page)).length;
       await page.click('#navNetworks');
       const networks = await readNav(page);
+      const networkItems = (await readNetworkItems(page)).length;
       await page.focus('#navAccessPoints');
       await page.keyboard.press('Enter');
       const back = await readNav(page);
       const rows = (await readApItems(page)).length;
       return verdict(
         isDeepStrictEqual(groups.shown, ['viewGroups']) && groups.groups.current === 'page' && groups.accessPoints.current === null &&
-        groups.groupsTitle === es.groupsTitle.apGroup && groups.groupsText === es.comingSoon &&
+        groups.groupsTitle === es.groupsTitle.apGroup && groups.placeholders === 0 && String(groupItems) === groups.groups.count &&
         isDeepStrictEqual(networks.shown, ['viewNetworks']) && networks.networks.current === 'page' && networks.groups.current === null &&
-        networks.networksTitle === es.wifiNetworks && networks.networksText === es.comingSoon &&
+        networks.networksTitle === es.wifiNetworks && String(networkItems) === networks.networks.count &&
         isDeepStrictEqual(back.shown, ['viewAccessPoints']) && back.accessPoints.current === 'page' && back.networks.current === null &&
         rows === expectedAps.length,
-        { groups, networks, back, rows }
+        { groups, networks, back, rows, groupItems, networkItems }
       );
     }); // End of check "[es] navigation..."
 
-    await check('[es] single move: clicking an AP row checks it ("Selecciona un grupo de AP"); picking zGrupo B previews Default -> zGrupo B (gains +5, loses -2, unchanged none) and enables "Mover AP"', async () => {
-      await page.click(`#apList .ap-row[data-mac="${MOVE_AP.mac}"] .item-name`);
+    await runInventoryChecks(session);
+
+    await check('[es] single move: clicking an AP\'s checkbox checks it ("Selecciona un grupo de AP"); picking zGrupo B previews Default -> zGrupo B (gains +5, loses -2, unchanged none) and enables "Mover AP"', async () => {
+      await page.click(`#apList .ap-checkbox[data-mac="${MOVE_AP.mac}"]`);
       const apOnly = await readPreview(page);
       await pickDestination(page, MOVE_GROUP.wlanId);
       const preview = await readPreview(page);
@@ -1974,7 +2672,7 @@ async function runSpanishFirstRun(electronInfo) {
         preview.button === es.moveOne && preview.disabled === false && apSelected === true && radio === true,
         { apOnly, preview, apSelected, radio }
       );
-    }); // End of check "[es] single move: clicking an AP row checks it..."
+    }); // End of check "[es] single move: clicking an AP's checkbox checks it..."
 
     await check('[es] single move: "Mover AP" opens the review dialog (role=dialog, aria-modal, described by its summary, inert background) with focus on Cancel, showing Default -> zGrupo B, the AP, the networks gained/lost/unchanged, its clients, and the not-atomic and no-overrides notes', async () => {
       await openReview(page);
@@ -2021,7 +2719,12 @@ async function runSpanishFirstRun(electronInfo) {
       return verdict(sets.length === 0 && shell.inert === false && shell.moveOpen === false && shell.moveDisabled === false, { sets, shell });
     }); // End of check "[es] single move via keyboard..."
 
+    // Data loads made before the single move (the connect and every refresh
+    // so far): the move must add exactly one reload of each list
+    let loadsBeforeMove = { aps: Number.NaN, wlans: Number.NaN };
     await check('[es] single move -> "Mover AP" in the review: one OMADA_SET_WLAN with the AP MAC and the group id, then the results "Se movió el AP a "zGrupo B"." with one "Movido" row (name and MAC) and Close focused', async () => {
+      const beforeMove = await stubState(session);
+      loadsBeforeMove = { aps: callsTo(beforeMove, 'omada:get-aps').length, wlans: callsTo(beforeMove, 'omada:get-wlans').length };
       await openReview(page);
       await page.click('#confirmMoveBtn');
       await waitForResults(page);
@@ -2044,16 +2747,16 @@ async function runSpanishFirstRun(electronInfo) {
       const radios = await readDestinations(page);
       const focusInList = await page.evaluate(() => Boolean(document.activeElement?.classList.contains('ap-checkbox')));
       return verdict(
-        callsTo(snapshot, 'omada:get-aps').length === 2 && callsTo(snapshot, 'omada:get-wlans').length === 2 &&
+        callsTo(snapshot, 'omada:get-aps').length === loadsBeforeMove.aps + 1 && callsTo(snapshot, 'omada:get-wlans').length === loadsBeforeMove.wlans + 1 &&
         row?.group === `${es.groupLabel.apGroup}: ${MOVE_GROUP.wlanName}` && row?.checked === false &&
         preview.status === es.moveNoSelection && preview.disabled === true && preview.button === es.moveNone && preview.destination === null &&
         radios.every((item) => item.checked === false) && focusInList,
-        { getAps: callsTo(snapshot, 'omada:get-aps').length, getWlans: callsTo(snapshot, 'omada:get-wlans').length, row, preview, focusInList }
+        { loadsBeforeMove, getAps: callsTo(snapshot, 'omada:get-aps').length, getWlans: callsTo(snapshot, 'omada:get-wlans').length, row, preview, focusInList }
       );
     }); // End of check "[es] single move -> Close..."
 
     await check('[es] Silence as a move target: zNinguna (pinned under "Silenciar") is selectable; the preview shows every network lost and "Sin redes Wi-Fi — silencia estos AP", the review shows it as the destination warning', async () => {
-      await page.click(`#apList .ap-row[data-mac="${MOVE_AP.mac}"]`);
+      await page.click(`#apList .ap-checkbox[data-mac="${MOVE_AP.mac}"]`);
       await pickDestination(page, EMPTY_GROUP.wlanId);
       const preview = await readPreview(page);
       const radio = (await readDestinations(page)).find((item) => item.wlanId === EMPTY_GROUP.wlanId);
@@ -2287,6 +2990,26 @@ async function runSpanishFirstRun(electronInfo) {
       );
     }); // End of check "[es] legacy controller (5.x) after a refresh..."
 
+    await check('[es] legacy controller (5.x): the AP groups view keeps the legacy wording ("Grupos WLAN (heredado)") without any "Predeterminado" badge (the legacy list carries no default flag); a network\'s detail lists its "Grupos WLAN (heredado)"; the AP details call the group "WLAN"', async () => {
+      await page.click('#navGroups');
+      const nav = await readNav(page);
+      const items = await readGroupItems(page);
+      await page.click('#navNetworks');
+      await page.click('#networkList .master-item[data-network-name="Colegio"]');
+      const network = await readDetailPane(page, '#networkDetail');
+      await page.click('#navAccessPoints');
+      const firstMac = (await readApItems(page))[0]?.mac;
+      await page.click(`#apList .ap-row[data-mac="${firstMac}"] .ap-row-group`);
+      const details = await readDetailPane(page, '#apDetailsContent');
+      await page.click('#closeApDetailsBtn');
+      return verdict(
+        nav.groupsTitle === es.groupsTitle.wlanGroup && isDeepStrictEqual(items.map((item) => item.name), ['Aulas', 'Default']) &&
+        items.every((item) => item.badges.length === 0) && network.sections.groups?.title === `${es.groupsTitle.wlanGroup} (1)` &&
+        details.facts.group?.label === es.groupLabel.wlanGroup,
+        { groupsTitle: nav.groupsTitle, items, networkGroups: network.sections.groups, group: details.facts.group }
+      );
+    }); // End of check "[es] legacy controller (5.x): the AP groups view keeps the legacy wording..."
+
     await check('[es] settings opened from the gear button: focus moves into the URL field, background inert', async () => {
       await page.click('#settingsBtn');
       await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
@@ -2339,6 +3062,93 @@ async function runSpanishFirstRun(electronInfo) {
     await session.app.close().catch(() => {});
   }
 } // End of function runSpanishFirstRun()
+
+/**
+ * English launch on a legacy controller, the read-only views and the AP
+ * details pane in English (phase 14a): the "WLAN groups (legacy)" list with
+ * English counts and no Default badge (the legacy list carries no default
+ * flag), the network scopes and a network's detail, the AP details of an AP
+ * whose group the legacy list does not have and of one whose group it has,
+ * and "Back to <AP>" after following the group link. Runs after the
+ * selection checks (no move made); ends on the Access points view with the
+ * details pane closed and no Back history.
+ * @param {object} session - The English launch.
+ * @returns {Promise<void>}
+ */
+async function runEnglishInventoryChecks(session) {
+  const { page } = session;
+  const en = TEXT.en;
+  /**
+   * Selector of a part of a fixture AP's row outside its checkbox (the group text).
+   * @param {string} name - AP name.
+   * @returns {string} The CSS selector.
+   */
+  const rowGroup = (name) => `#apList .ap-row[data-mac="${AP[name].mac}"] .ap-row-group`;
+
+  await check('[en] AP groups view on a legacy controller: "WLAN groups (legacy)" listing "4 APs · 2 networks" and "No APs · 1 network", with no Default badge (the legacy list carries no default flag)', async () => {
+    await page.click('#navGroups');
+    const nav = await readNav(page);
+    const items = await readGroupItems(page);
+    const expected = expectedGroupItems(data.accessPoints, data.legacyWlanGroups, 'en');
+    const actual = items.map(({ id, name, badges, meta }) => ({ id, name, badges, meta }));
+    return verdict(
+      nav.groupsTitle === en.groupsTitle.wlanGroup && isDeepStrictEqual(actual, expected) && items.every((item) => item.badges.length === 0) &&
+      isDeepStrictEqual(actual.map((item) => item.meta), [`${en.apNone} · ${en.networksOne}`, `${fmt(en.apMany, { count: 4 })} · ${fmt(en.networksMany, { count: 2 })}`]),
+      { nav: nav.groupsTitle, actual, expected }
+    );
+  }); // End of check "[en] AP groups view on a legacy controller..."
+
+  await check('[en] Wi-Fi networks view in English: scopes such as "1 group · at least 4 APs; 3 APs\' groups cannot be identified"; Colegio\'s detail lists "WLAN groups (legacy) (1)", its 4 APs with the 3 APs whose group is unknown stated in the same section, and the management-access note', async () => {
+    await page.click('#navNetworks');
+    const items = await readNetworkItems(page);
+    const expected = expectedNetworkItems(data.accessPoints, data.legacyWlanGroups, 'en');
+    await page.click('#networkList .master-item[data-network-name="Colegio"]');
+    const detail = await readDetailPane(page, '#networkDetail');
+    return verdict(
+      isDeepStrictEqual(items.map(({ name, label, scope }) => ({ name, label, scope })), expected) &&
+      detail.heading === 'Colegio' && detail.summary === `${en.groupOne} · ${fmt(en.apAtLeastMany, { count: 4 })}; ${fmt(en.scopeUnknownMany, { count: 3 })}` &&
+      detail.sections.groups?.title === `${en.groupsTitle.wlanGroup} (1)` && detail.sections.aps?.title === en.accessPoints &&
+      detail.sections.aps.rows.length === 4 && isDeepStrictEqual(detail.sections.aps.notes, [fmt(en.networkUnknownMany, { count: 3 })]) &&
+      isDeepStrictEqual(detail.notes, [{ kind: 'managementOnly', text: en.managementOnly }]),
+      { items, expected, detail }
+    );
+  }); // End of check "[en] Wi-Fi networks view in English..."
+
+  await check('[en] AP details in English: Altillo (its group is not in the legacy list) shows "zGrupo B (not in the group list)" and unknown networks; Salón links to its WLAN group, and following the link offers "Back to Salón", which returns to Salón\'s details with focus on the link', async () => {
+    await page.click('#navAccessPoints');
+    await page.click(rowGroup('Altillo'));
+    await page.waitForFunction(() => document.activeElement?.id === 'apDetailsName', null, { timeout: WAIT_MS });
+    const altillo = await readDetailPane(page, '#apDetailsContent');
+    const inventory = await readInventory(page);
+    await page.click(rowGroup('Salón'));
+    await page.waitForFunction(() => document.getElementById('apDetailsName')?.textContent === 'Salón', null, { timeout: WAIT_MS });
+    const salon = await readDetailPane(page, '#apDetailsContent');
+    await page.click('#apDetailsContent .cross-link[data-link-kind="group"]');
+    await page.waitForFunction(() => document.activeElement?.id === 'groupDetailName', null, { timeout: WAIT_MS });
+    const atGroup = await readInventory(page);
+    const group = await readDetailPane(page, '#groupDetail');
+    await page.click('#backBtn');
+    const back = await readInventory(page);
+    await page.click('#closeApDetailsBtn');
+    const closed = await readInventory(page);
+    return verdict(
+      altillo.heading === 'Altillo' && altillo.facts.group?.label === en.groupLabel.wlanGroup &&
+      altillo.facts.group?.value === fmt(en.apGroupUnlisted, { group: 'zGrupo B' }) && altillo.facts.group?.link === null &&
+      isDeepStrictEqual(altillo.sections.networks?.notes, [en.apNetworksUnknown]) && isDeepStrictEqual(altillo.notes, [{ kind: 'overrides', text: en.apOverrides }]) &&
+      inventory.apDetailsTitle === en.apDetailsTitle && inventory.closeText === en.closeDetails &&
+      salon.facts.status?.label === en.statusLabel && salon.facts.clients?.label === en.clientsLabel &&
+      salon.facts.clients?.value === fmt(en.clientsMany, { count: 12 }) && salon.facts.group?.value === 'Default' &&
+      isDeepStrictEqual(salon.sections.networks?.links.map((link) => link.text), ['Colegio', 'Invitados']) &&
+      atGroup.backLabel === fmt(en.backTo, { target: 'Salón' }) && atGroup.currentGroup === LEGACY_GROUP.Default.wlanId &&
+      group.heading === 'Default' && group.badges.length === 0 &&
+      group.summary === `${fmt(en.apMany, { count: 4 })} · ${fmt(en.networksMany, { count: 2 })}` &&
+      isDeepStrictEqual(back.shown, ['viewAccessPoints']) && back.backHidden === true &&
+      back.focus.linkKind === 'group' && back.focus.linkTarget === LEGACY_GROUP.Default.wlanId &&
+      closed.apDetailsHidden === true && closed.destinationHidden === false,
+      { altillo, inventory, salon, atGroup, group, back, closed }
+    );
+  }); // End of check "[en] AP details in English..."
+} // End of function runEnglishInventoryChecks()
 
 // ============================================================================
 // Launch 2: English, stored config, multi-site controller
@@ -2437,9 +3247,9 @@ async function runEnglishMultiSite(electronInfo) {
       const shell = await readShell(page);
       const preview = await readPreview(page);
       const firstMac = (await readApItems(page))[0]?.mac;
-      await page.click(`#apList .ap-row[data-mac="${firstMac}"]`);
+      await page.click(`#apList .ap-checkbox[data-mac="${firstMac}"]`);
       const apOnly = await readPreview(page);
-      await page.click(`#apList .ap-row[data-mac="${firstMac}"]`);
+      await page.click(`#apList .ap-checkbox[data-mac="${firstMac}"]`);
       return verdict(
         shell.destinationListLabel === en.groupsTitle.wlanGroup && shell.destinationTitle === en.destinationTitle &&
         preview.status === en.moveNoSelection && preview.button === en.moveNone && preview.disabled === true &&
@@ -2466,6 +3276,8 @@ async function runEnglishMultiSite(electronInfo) {
         { selection, preview, cleared }
       );
     }); // End of check "[en] the selection survives filtering in English..."
+
+    await runEnglishInventoryChecks(session);
 
     await check('[en] two legacy groups named "Aulas" (a twin appears on refresh): both radios disabled with "Another group has the same name — rename one in Omada to move APs here" (also in their description); the unique Default stays selectable', async () => {
       const twin = { wlanId: '5f1a0c0ffee0000000000b03', wlanName: 'Aulas', ssidList: [{ ssidName: 'Profesores' }] };

@@ -165,7 +165,7 @@ body.platform-darwin .title-bar {
 }
 
 /* The 700-799 px window widths drop the version first (it stays in the
-   tooltip-free header of wider windows; phase 14 adds the full breakpoints) */
+   tooltip-free header of wider windows; phase 14b adds the full breakpoints) */
 @media (max-width: 799px) {
   .controller-version {
     display: none;
@@ -407,24 +407,27 @@ body.platform-darwin .title-bar {
   min-height: 0;
 }
 
-/* AP groups / Wi-Fi networks placeholders (phase 14 replaces them) */
-.view-placeholder {
+/* "Back to …" bar above the views, shown after following a cross-link
+   (navigation.ts) */
+.back-bar {
+  flex: none;
+  padding: 8px 16px 0;
+}
+
+.back-btn {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 32px;
-  text-align: center;
-}
-
-.view-placeholder h2 {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.view-placeholder p {
-  max-width: 420px;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 32px;
   font-size: 13px;
-  color: var(--text-secondary);
+}
+
+.back-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Main content */
@@ -436,6 +439,12 @@ body.platform-darwin .title-bar {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* AP groups and Wi-Fi networks views: a narrower master list, a wider
+   detail */
+.inventory-content {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
 }
 
 /* Panels */
@@ -455,6 +464,28 @@ body.platform-darwin .title-bar {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   border-bottom: 1px solid var(--border-color);
+}
+
+/* A panel title with an action on its right (AP details: Close) */
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.panel-header .panel-title {
+  flex: 1;
+  min-width: 0;
+  border-bottom: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-header-action {
+  flex: none;
+  margin-right: 12px;
 }
 
 .panel-filter {
@@ -590,6 +621,38 @@ body.platform-darwin .title-bar {
   outline-offset: 2px;
 }
 
+/* The AP whose details pane is open */
+.ap-row.is-viewing {
+  box-shadow: inset 3px 0 0 var(--accent-color);
+}
+
+/* The AP name: a native button that opens the details pane (out of the Tab
+   order; Enter on the row's checkbox opens it from the keyboard) */
+.ap-name-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.ap-name-btn .item-name {
+  display: block;
+}
+
+.ap-name-btn:hover .item-name {
+  text-decoration: underline;
+}
+
+.ap-name-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
 .ap-row-content {
   flex: 1;
   min-width: 0;
@@ -634,6 +697,273 @@ body.platform-darwin .title-bar {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: pre;
+}
+
+/* Master lists of the AP groups and Wi-Fi networks views: one native
+   button per group / network, the current one highlighted */
+.master-items {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.master-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  font: inherit;
+  text-align: left;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.master-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.master-item[aria-current="true"] {
+  background: var(--accent-soft);
+}
+
+.master-item:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+.master-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.master-item-header .item-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.master-item-meta {
+  display: block;
+  margin-top: 0;
+}
+
+/* A network's scope wraps instead of being cut: a lower bound carries its
+   reason ("at least 4 APs; 1 AP's group cannot be identified") */
+.master-item .network-scope {
+  white-space: normal;
+}
+
+/* The strong empty-group label ("No Wi-Fi networks — silences these APs")
+   in the group list and details */
+.group-network-count.is-silence {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Badges (Default) */
+.badge {
+  flex: none;
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  border-radius: 10px;
+}
+
+.badge-default {
+  color: var(--accent-color);
+  background: var(--accent-soft);
+}
+
+/* "Showing N of M" under a searched master list (aria-live, collapsed
+   while empty) */
+.list-summary {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-color);
+}
+
+.list-summary:empty {
+  padding: 0;
+  border-top: none;
+}
+
+/* Detail panes (AP details, group and network details): the item's name,
+   facts, sections of cross-links and notes */
+.detail-content {
+  padding: 12px 16px;
+}
+
+.detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-name {
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  border-radius: 4px;
+}
+
+.detail-name:focus {
+  outline: none;
+}
+
+.detail-name:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.detail-summary {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.detail-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.detail-fact {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detail-fact dt {
+  flex: none;
+  min-width: 6.5em;
+  color: var(--text-secondary);
+}
+
+.detail-fact dd {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  user-select: text;
+}
+
+.detail-section {
+  margin-top: 16px;
+}
+
+.detail-section-title {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.detail-links {
+  list-style: none;
+}
+
+.detail-link-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.detail-link-row:last-child {
+  border-bottom: none;
+}
+
+.detail-link-row .item-status,
+.detail-meta {
+  flex: none;
+}
+
+.detail-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Status as dot + text, like the AP rows */
+.detail-content .item-status {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.detail-content .status-label {
+  color: var(--text-secondary);
+}
+
+/* Cross-links: native buttons styled as links (they switch view and offer
+   "Back to …") */
+.cross-link {
+  min-width: 0;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--accent-color);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.cross-link:hover {
+  text-decoration: underline;
+}
+
+.cross-link:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.detail-note {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.detail-section .detail-note {
+  margin-top: 2px;
+}
+
+/* The empty-group label as a strong note (weight plus the amber bar) */
+.detail-note.is-silence {
+  font-weight: 600;
+  color: var(--text-primary);
+  border-left: 3px solid var(--warning-color);
+  padding-left: 6px;
 }
 
 /* Selection summary under the list, e.g. "3 selected (1 hidden by filters)"
@@ -1419,10 +1749,12 @@ body.platform-darwin .title-bar {
 }
 
 /* Reduced motion: the shell's own transitions (sidebar entries, AP rows,
-   destination options, the refreshing dim) apply instantly */
+   master-list items, destination options, the refreshing dim) apply
+   instantly */
 @media (prefers-reduced-motion: reduce) {
   .nav-item,
   .ap-row,
+  .master-item,
   .destination-option,
   .panel-content.is-refreshing {
     transition: none;

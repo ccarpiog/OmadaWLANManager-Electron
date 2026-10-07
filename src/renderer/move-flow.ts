@@ -24,6 +24,7 @@ import { currentMovePlan, focusDestinationRadio, renderDestinationPane, renderMo
 import { apFilterInput, apList } from './elements';
 import { t } from './i18n';
 import { openMoveDialog, type MoveDialog } from './move-dialog';
+import { renderInventoryViews } from './navigation';
 import {
   applyMovedGroup,
   checkRetry,
@@ -76,8 +77,9 @@ async function runMoves(aps: readonly AccessPoint[], destination: WlanGroup, gen
  * destination locally (right even if the reload below fails), the selection
  * becomes the failed APs (so the move button retries exactly those once the
  * dialog is closed; "Retry failed" follows the checked retry contract), and
- * a fully successful run also clears the destination. Re-renders the AP list
- * and the destination pane.
+ * a fully successful run also clears the destination. Re-renders the AP list,
+ * the destination pane and the read-only views (an open AP details pane then
+ * shows the moved AP's new group and networks).
  * @param {readonly MoveOutcome[]} outcomes - The run's outcomes.
  * @param {WlanGroup} destination - The destination group.
  */
@@ -93,6 +95,7 @@ function commitOutcomes(outcomes: readonly MoveOutcome[], destination: WlanGroup
   }
   renderApList();
   renderDestinationPane();
+  renderInventoryViews();
 } // End of function commitOutcomes()
 
 /**

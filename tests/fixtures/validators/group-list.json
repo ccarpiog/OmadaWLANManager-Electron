@@ -17,8 +17,27 @@
         ]
       },
       "expected": [
-        { "id": "6512a0e1f3b2c41d2e3f4a5b", "name": "Default" },
+        { "id": "6512a0e1f3b2c41d2e3f4a5b", "name": "Default", "isDefault": true },
         { "id": "6512a0e1f3b2c41d2e3f4a5e", "name": "zNinguna" }
+      ]
+    },
+    {
+      "name": "the default flag is kept only for primary exactly true (a string, a number or null leaves it absent)",
+      "result": {
+        "data": [
+          { "id": "group-true", "name": "True", "primary": true },
+          { "id": "group-string", "name": "String", "primary": "true" },
+          { "id": "group-number", "name": "Number", "primary": 1 },
+          { "id": "group-null", "name": "Null", "primary": null },
+          { "id": "group-false", "name": "False", "primary": false }
+        ]
+      },
+      "expected": [
+        { "id": "group-true", "name": "True", "isDefault": true },
+        { "id": "group-string", "name": "String" },
+        { "id": "group-number", "name": "Number" },
+        { "id": "group-null", "name": "Null" },
+        { "id": "group-false", "name": "False" }
       ]
     },
     {

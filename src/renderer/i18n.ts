@@ -86,11 +86,9 @@ export interface Translations {
   certResetAction: string;
   certResetDone: string;
   certResetError: string;
-  // App shell (shell.ts, status.ts): the sidebar views, the placeholder of
-  // the views that arrive in a later version, and the header details
+  // App shell (shell.ts, status.ts): the sidebar views and the header details
   wifiNetworks: string;
   viewNavLabel: string;
-  viewComingSoon: string;
   siteLabel: string;
   updatedAt: string;
   refreshing: string;
@@ -122,6 +120,54 @@ export interface Translations {
   networkCountNone: string;
   clientCountOne: string;
   clientCountMany: string;
+  // AP groups and Wi-Fi networks views (groups-view.ts, networks-view.ts):
+  // searches, results summary, empty/no-results states, detail prompts, the
+  // Default badge, counts ("N groups · M APs") and the read-only details
+  groupSearch: string;
+  groupSearchLabel: string;
+  networkSearch: string;
+  networkSearchLabel: string;
+  searchResultsCount: string;
+  noMatchingGroups: string;
+  noMatchingNetworks: string;
+  connectToSeeNetworks: string;
+  noNetworks: string;
+  groupDetailsTitle: string;
+  networkDetailsTitle: string;
+  groupDetailPrompt: string;
+  networkDetailPrompt: string;
+  badgeDefault: string;
+  unnamed: string;
+  apCountNone: string;
+  apCountUnknown: string;
+  // A network's AP count as a lower bound, and the reason (scopeText())
+  apCountAtLeastOne: string;
+  apCountAtLeastMany: string;
+  scopeUnknownApsOne: string;
+  scopeUnknownApsMany: string;
+  groupCountOne: string;
+  groupCountMany: string;
+  noApsInGroup: string;
+  groupAmbiguousAps: string;
+  networkNoAps: string;
+  networkUnknownApsOne: string;
+  networkUnknownApsMany: string;
+  networkManagementOnly: string;
+  // AP details pane (ap-details.ts), opened by a click on an AP row
+  apDetailsTitle: string;
+  apDetailsFor: string;
+  closeDetails: string;
+  apStatusLabel: string;
+  apMacLabel: string;
+  apClientsLabel: string;
+  clientsNotReported: string;
+  apGroupUnlisted: string;
+  apGroupAmbiguous: string;
+  apNetworksUnknown: string;
+  apOverridesUnavailable: string;
+  // Cross-navigation (navigation.ts): "Back to <previous item>"
+  backTo: string;
+  back: string;
   // Destination pane (destination-pane.ts, move-text.ts): the group search,
   // the pinned "Silence" section, the move preview (mixed selections, the
   // networks gained / lost / unchanged) and the "Move AP" / "Move N APs"
@@ -279,7 +325,6 @@ const translations: Record<Language, Translations> = {
     certResetError: 'No se pudo restablecer el certificado de confianza',
     wifiNetworks: 'Redes Wi-Fi',
     viewNavLabel: 'Vistas',
-    viewComingSoon: 'Esta vista llegará en una versión posterior. Mientras tanto, mueve los puntos de acceso entre grupos desde la vista Puntos de acceso.',
     siteLabel: 'Sitio: {site}',
     updatedAt: 'Actualizado {time}',
     refreshing: 'Actualizando…',
@@ -309,6 +354,48 @@ const translations: Record<Language, Translations> = {
     networkCountNone: 'Sin redes',
     clientCountOne: '1 cliente',
     clientCountMany: '{count} clientes',
+    groupSearch: 'Buscar grupos o redes…',
+    groupSearchLabel: 'Buscar grupos por nombre o por red Wi-Fi',
+    networkSearch: 'Buscar redes o grupos…',
+    networkSearchLabel: 'Buscar redes Wi-Fi por nombre o por grupo',
+    searchResultsCount: 'Se muestran {shown} de {total}',
+    noMatchingGroups: 'Ningún grupo ni red coincide con "{query}"',
+    noMatchingNetworks: 'Ninguna red ni grupo coincide con "{query}"',
+    connectToSeeNetworks: 'Conecta al controlador para ver las redes Wi-Fi',
+    noNetworks: 'No hay redes Wi-Fi disponibles',
+    groupDetailsTitle: 'Detalles del grupo',
+    networkDetailsTitle: 'Detalles de la red',
+    groupDetailPrompt: 'Selecciona un grupo para ver sus puntos de acceso y sus redes Wi-Fi',
+    networkDetailPrompt: 'Selecciona una red para ver los grupos y los puntos de acceso que la emiten',
+    badgeDefault: 'Predeterminado',
+    unnamed: '(sin nombre)',
+    apCountNone: 'Sin AP',
+    apCountUnknown: 'Nº de AP desconocido',
+    apCountAtLeastOne: 'al menos 1 AP',
+    apCountAtLeastMany: 'al menos {count} AP',
+    scopeUnknownApsOne: 'no se puede identificar el grupo de 1 AP',
+    scopeUnknownApsMany: 'no se puede identificar el grupo de {count} AP',
+    groupCountOne: '1 grupo',
+    groupCountMany: '{count} grupos',
+    noApsInGroup: 'Ningún punto de acceso está en este grupo',
+    groupAmbiguousAps: 'Otro grupo tiene el mismo nombre: la aplicación no puede saber qué puntos de acceso están en este (los AP solo informan del nombre de su grupo).',
+    networkNoAps: 'Ningún punto de acceso está en los grupos que la emiten',
+    networkUnknownApsOne: 'No se incluye 1 punto de acceso que puede emitirla: la aplicación no puede identificar su grupo (sin grupo, con un grupo que no está en la lista o con un nombre que comparten varios grupos).',
+    networkUnknownApsMany: 'No se incluyen {count} puntos de acceso que pueden emitirla: la aplicación no puede identificar su grupo (sin grupo, con un grupo que no está en la lista o con un nombre que comparten varios grupos).',
+    networkManagementOnly: 'No se muestran la seguridad, las bandas ni si la red está activada: requieren acceso de gestión.',
+    apDetailsTitle: 'Detalles del AP',
+    apDetailsFor: 'Detalles de {ap}',
+    closeDetails: 'Cerrar detalles',
+    apStatusLabel: 'Estado',
+    apMacLabel: 'MAC',
+    apClientsLabel: 'Clientes',
+    clientsNotReported: 'El controlador no informa de ellos',
+    apGroupUnlisted: '{group} (no está en la lista de grupos)',
+    apGroupAmbiguous: '{group} (otro grupo tiene el mismo nombre)',
+    apNetworksUnknown: 'Sus redes Wi-Fi son desconocidas: la aplicación no puede identificar su grupo.',
+    apOverridesUnavailable: 'Estas son las redes de su grupo. Las redes personalizadas de este AP no se muestran (la aplicación aún no las lee): si tiene alguna en Omada, lo que emite realmente puede ser distinto.',
+    backTo: 'Volver a {target}',
+    back: 'Volver',
     destinationTitle: 'Mover los AP seleccionados',
     destinationSearch: 'Buscar grupos o redes…',
     destinationSearchLabel: 'Buscar grupos de destino o redes Wi-Fi',
@@ -451,7 +538,6 @@ const translations: Record<Language, Translations> = {
     certResetError: 'Could not reset the trusted certificate',
     wifiNetworks: 'Wi-Fi networks',
     viewNavLabel: 'Views',
-    viewComingSoon: 'This view arrives in a later version. Meanwhile, move access points between groups from the Access points view.',
     siteLabel: 'Site: {site}',
     updatedAt: 'Updated {time}',
     refreshing: 'Refreshing…',
@@ -481,6 +567,48 @@ const translations: Record<Language, Translations> = {
     networkCountNone: 'No networks',
     clientCountOne: '1 client',
     clientCountMany: '{count} clients',
+    groupSearch: 'Search groups or networks…',
+    groupSearchLabel: 'Search groups by name or Wi-Fi network',
+    networkSearch: 'Search networks or groups…',
+    networkSearchLabel: 'Search Wi-Fi networks by name or group',
+    searchResultsCount: 'Showing {shown} of {total}',
+    noMatchingGroups: 'No groups or networks match "{query}"',
+    noMatchingNetworks: 'No networks or groups match "{query}"',
+    connectToSeeNetworks: 'Connect to the controller to see Wi-Fi networks',
+    noNetworks: 'No Wi-Fi networks available',
+    groupDetailsTitle: 'Group details',
+    networkDetailsTitle: 'Network details',
+    groupDetailPrompt: 'Select a group to see its access points and Wi-Fi networks',
+    networkDetailPrompt: 'Select a network to see the groups and access points that broadcast it',
+    badgeDefault: 'Default',
+    unnamed: '(no name)',
+    apCountNone: 'No APs',
+    apCountUnknown: 'AP count unknown',
+    apCountAtLeastOne: 'at least 1 AP',
+    apCountAtLeastMany: 'at least {count} APs',
+    scopeUnknownApsOne: '1 AP\'s group cannot be identified',
+    scopeUnknownApsMany: '{count} APs\' groups cannot be identified',
+    groupCountOne: '1 group',
+    groupCountMany: '{count} groups',
+    noApsInGroup: 'No access points are in this group',
+    groupAmbiguousAps: 'Another group has the same name: the app cannot tell which access points are in this one (access points report only their group\'s name).',
+    networkNoAps: 'No access points are in the groups that broadcast it',
+    networkUnknownApsOne: 'Not included: 1 access point that may broadcast it, whose group the app cannot identify (no group, a group not in the list, or a name several groups share).',
+    networkUnknownApsMany: 'Not included: {count} access points that may broadcast it, whose group the app cannot identify (no group, a group not in the list, or a name several groups share).',
+    networkManagementOnly: 'Security, bands and whether the network is enabled are not shown: they need management access.',
+    apDetailsTitle: 'AP details',
+    apDetailsFor: 'Details of {ap}',
+    closeDetails: 'Close details',
+    apStatusLabel: 'Status',
+    apMacLabel: 'MAC',
+    apClientsLabel: 'Clients',
+    clientsNotReported: 'Not reported by the controller',
+    apGroupUnlisted: '{group} (not in the group list)',
+    apGroupAmbiguous: '{group} (another group has the same name)',
+    apNetworksUnknown: 'Its Wi-Fi networks are unknown: the app cannot identify its group.',
+    apOverridesUnavailable: 'These are its group\'s networks. Per-AP Wi-Fi network overrides are not shown (the app does not read them yet): if this AP has any in Omada, what it actually broadcasts may differ.',
+    backTo: 'Back to {target}',
+    back: 'Back',
     destinationTitle: 'Move selected APs',
     destinationSearch: 'Search groups or networks…',
     destinationSearchLabel: 'Search destination groups or Wi-Fi networks',

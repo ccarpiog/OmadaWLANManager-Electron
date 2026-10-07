@@ -75,11 +75,22 @@
         </div>
       </nav>
 
-      <div class="view-area">
+      <div class="view-area" id="viewArea">
+        <!-- "Back to …" after following a cross-link to an AP, a group or a
+             network (navigation.ts); hidden while the history is empty -->
+        <div class="back-bar" id="backBar" hidden>
+          <button type="button" class="btn btn-link back-btn" id="backBtn">
+            <span class="back-arrow" aria-hidden="true">←</span>
+            <span class="back-label" id="backBtnLabel"></span>
+          </button>
+        </div>
+
         <!-- Access points view (landing view): the AP list with checkbox
-             multi-select (ap-list.ts) and the always-visible destination
-             pane (destination-pane.ts), whose move button opens the review
-             dialog (move-flow.ts, move-dialog.ts) -->
+             multi-select (ap-list.ts) and the destination pane
+             (destination-pane.ts), whose move button opens the review
+             dialog (move-flow.ts, move-dialog.ts). A click on an AP row
+             (not its checkbox) opens the AP details pane (ap-details.ts) in
+             the destination pane's place until it is closed -->
         <section class="view" id="viewAccessPoints">
           <main class="main-content">
             <!-- Access points panel -->
@@ -104,7 +115,7 @@
                  native radio per group (AP groups on Omada 6.3+, WLAN groups
                  before; groups without networks pinned in the "Silence"
                  section), the move preview and the move button -->
-            <section class="panel destination-panel" aria-labelledby="destinationPanelTitle">
+            <section class="panel destination-panel" id="destinationPanel" aria-labelledby="destinationPanelTitle">
               <h2 class="panel-title" id="destinationPanelTitle"></h2>
               <div class="panel-filter">
                 <input type="text" id="destinationSearch" class="filter-input">
@@ -118,18 +129,59 @@
                 <button type="button" class="btn btn-success move-btn" id="moveBtn" disabled></button>
               </div>
             </section>
+
+            <!-- AP details pane: status, MAC, group (a cross-link), clients,
+                 the group's Wi-Fi networks (cross-links) and the per-AP
+                 overrides statement -->
+            <section class="panel detail-panel ap-details-panel" id="apDetailsPanel" aria-labelledby="apDetailsPanelTitle" hidden>
+              <div class="panel-header">
+                <h2 class="panel-title" id="apDetailsPanelTitle"></h2>
+                <button type="button" class="btn btn-link panel-header-action" id="closeApDetailsBtn"></button>
+              </div>
+              <div class="panel-content detail-content" id="apDetailsContent"></div>
+            </section>
           </main>
         </section>
 
-        <!-- AP groups and Wi-Fi networks views: placeholders until the
-             read-only views arrive (todo.md 4.7, phase 14) -->
-        <section class="view view-placeholder" id="viewGroups" aria-labelledby="viewGroupsTitle" hidden>
-          <h2 id="viewGroupsTitle"></h2>
-          <p id="viewGroupsText"></p>
+        <!-- AP groups view (read-only, groups-view.ts): the group list with
+             its own search, and the selected group's detail (its APs and
+             Wi-Fi networks as cross-links) -->
+        <section class="view" id="viewGroups" aria-labelledby="groupsPanelTitle" hidden>
+          <div class="main-content inventory-content">
+            <section class="panel master-panel" aria-labelledby="groupsPanelTitle">
+              <h2 class="panel-title" id="groupsPanelTitle"></h2>
+              <div class="panel-filter">
+                <input type="text" id="groupSearch" class="filter-input">
+              </div>
+              <div class="panel-content master-list" id="groupList" role="group"></div>
+              <p class="list-summary" id="groupListSummary" aria-live="polite"></p>
+            </section>
+            <section class="panel detail-panel" aria-labelledby="groupDetailPanelTitle">
+              <h2 class="panel-title" id="groupDetailPanelTitle"></h2>
+              <div class="panel-content detail-content" id="groupDetail"></div>
+            </section>
+          </div>
         </section>
-        <section class="view view-placeholder" id="viewNetworks" aria-labelledby="viewNetworksTitle" hidden>
-          <h2 id="viewNetworksTitle"></h2>
-          <p id="viewNetworksText"></p>
+
+        <!-- Wi-Fi networks view (read-only, networks-view.ts): the network
+             list with each scope ("N groups · M APs") and its own search,
+             and the selected network's detail (the groups and APs that
+             broadcast it as cross-links) -->
+        <section class="view" id="viewNetworks" aria-labelledby="networksPanelTitle" hidden>
+          <div class="main-content inventory-content">
+            <section class="panel master-panel" aria-labelledby="networksPanelTitle">
+              <h2 class="panel-title" id="networksPanelTitle"></h2>
+              <div class="panel-filter">
+                <input type="text" id="networkSearch" class="filter-input">
+              </div>
+              <div class="panel-content master-list" id="networkList" role="group"></div>
+              <p class="list-summary" id="networkListSummary" aria-live="polite"></p>
+            </section>
+            <section class="panel detail-panel" aria-labelledby="networkDetailPanelTitle">
+              <h2 class="panel-title" id="networkDetailPanelTitle"></h2>
+              <div class="panel-content detail-content" id="networkDetail"></div>
+            </section>
+          </div>
         </section>
       </div>
     </div>

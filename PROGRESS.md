@@ -20,7 +20,8 @@ Authoritative checkpoint for autoclaude runs (`/autoclaude-opus`, `/autoclaude-f
 | 12 | 4.5 Omada 6.3 correctness: `controllerVer`, `groupModel`, full group list from `setting/wlans` (empty groups), AP/WLAN terminology — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-12.md` |
 | 13a | 4.6 (first half) App shell (sidebar, counts, Updated hh:mm) + Access points list with checkbox multi-select surviving filters — risk: high; worker: opus | **done** — `docs/progress-archive/phase-13a.md` |
 | 13b | 4.6 (second half) Destination pane, review dialog, sequential bulk move with per-AP results + Retry failed — risk: high; worker: opus | **done** — `docs/progress-archive/phase-13b.md` |
-| 14 | 4.7 Read-only AP groups & Wi-Fi networks views, cross-navigation, states, responsive layout — risk: routine | pending |
+| 14a | 4.7 (first half) Read-only AP groups & Wi-Fi networks views from internal data, cross-navigation with "Back to …", AP details pane — risk: routine; worker: opus | **done** — `docs/progress-archive/phase-14a.md` |
+| 14b | 4.7 (second half) §4.6 states, read-only banner with reason, §4.7 responsive breakpoints, Cmd/Ctrl+F and Escape — risk: routine | pending |
 | 15 | 4.8 Open API credentials, `OpenApiClient`, `ControllerSession`, capability detection — risk: high | pending |
 | 16 | 4.9 AP group management (create/rename/delete-if-empty, move APs here) — risk: high | pending |
 | 17 | 4.10 Wi-Fi network read model via Open API (secrets stripped) — risk: routine | pending |
@@ -243,7 +244,15 @@ validation, connect-without-config, console/main-process errors).
 - Acceptance met: build exit 0; `npm test` 398/398; smoke 92/92 (single, bulk all-succeed / partial → Retry failed / cancel, SSID search, Silence, no-op + mixed, keyboard-only, Cancel focus, same-named group, Enter on a focused radio); `npm run tls-probe` 21/21; no `innerHTML`/inline styles.
 - Review: Codex, `docs/reviews/phase13b.md`, ship-with-fixes. Blocker (duplicate group names made no-op detection unverifiable, since AP records carry only the group name) → same-named groups are shown disabled with a reason and `planMove()` refuses them; should-fixes (Retry failed drifting after the post-move reload; Enter acting on the checked rather than the focused radio) → retry contract re-checked by `checkRetry()`, Enter selects the focused radio first. All fixed by an opus worker; orchestrator re-ran build, tests, smoke and probe, all green.
 
-## Plan status: ACTIVE — phases 8–13b done, phases 14–20 pending
+### Phase 14a — read-only AP groups & Wi-Fi networks views, cross-navigation, AP details (2026-10-07)
+
+- Risk: routine. Workers: opus (phase), opus (review fixes). Full narrative: `docs/progress-archive/phase-14a.md`.
+- Phase 14 (todo 4.7) was split before starting: 14a = read-only views + cross-navigation + AP details, 14b = §4.6 states, read-only banner, §4.7 breakpoints, Cmd/Ctrl+F, Escape (recorded in `todo.md` 4.7).
+- New: `groups-view.ts` (counts, Empty badge, Default only from `primary: true` → `WlanGroup.isDefault`), `networks-view.ts` (one entry per network name, scope "N groups · M APs", "at least M APs" when some APs' groups cannot be identified), `ap-details.ts` (row click opens it in the destination pane's place; the checkbox alone toggles), `nav-history.ts` + `navigation.ts` ("Back to …" restores view, selection, search, scroll, focus; history reconciled after every load), pure `inventory-model.ts`. Override badges stated as unavailable (no new IPC: the `ssidOverrides[]` element shape is undocumented).
+- Acceptance met: build exit 0; `npm test` 438/438; smoke 109/109 (groups and networks list + detail, cross-navigation round trip with Back, AP details by row click with checkbox-only toggling, the overrides statement, all 13a/13b checks); `npm run tls-probe` 21/21; no `innerHTML`/inline styles; preload requires only `electron`.
+- Review: Codex, `docs/reviews/phase14a.md`, ship-with-fixes, 0 blockers. Should-fixes (network scope showed a lower bound as exact; Back kept targets a refresh removed) fixed by an opus worker; orchestrator re-ran build, tests, smoke and probe, all green.
+
+## Plan status: ACTIVE — phases 8–14a done, phases 14b–20 pending
 
 Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2026-10-06 the user approved a new plan — todo.md section 4, phases 8–20 — after a live check of Omada Controller 6.3.0.45 showed that WLAN Groups became AP Groups (findings: `docs/omada-6.3-api-findings.md`). The app still works on 6.3, but it hides empty AP groups (todo 4.5). The plan adds AP-group and Wi-Fi network management.
 
@@ -282,19 +291,25 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
   internal AP list has only group names; per-AP ids need `GET eaps/{mac}`); the review states that
   per-AP SSID overrides cannot be shown; a successful move still ends on a results dialog that needs
   one Close.
+- Phase 14a leftovers (none blocking): in the Access points list an AP in a shared-name group shows the
+  network count of the first group with that name (since 13a); the 13b review dialog says the internal API
+  "does not report" overrides although `eaps/{mac}` returns `ssidOverrides[]` (element shape undocumented;
+  smoke asserts the text); per-band capacity (`remainingBinding` in `setting/wlans`) is not kept yet —
+  phase 16; an AP with no group makes every network's count "at least M APs".
 
 ## Next action
 
-**Phase 14 — todo 4.7: read-only AP groups & Wi-Fi networks views, cross-navigation, states, responsive layout (risk: routine).** First read `todo.md` item 4.7, then `docs/management-design.md` §4.4, §4.5, §4.6 and §4.7 only, and `docs/progress-archive/phase-13b.md` for the current Access points view.
+**Phase 14b — todo 4.7, second half: §4.6 states, read-only banner, §4.7 responsive layout and keys (risk: routine).** First read `todo.md` item 4.7 (its **Split** and **Done (14a)** bullets), then `docs/management-design.md` §4.6 and §4.7 only, and `docs/progress-archive/phase-14a.md` for the three views as they stand.
 
-- Replace 13a's placeholder AP groups and Wi-Fi networks views with read-only views built from the internal data already loaded (group → SSID names; network → groups / APs), with cross-links and "Back to …".
-- The AP details pane deferred from 13a: row click → effective networks, link to its group. Today a row click toggles the checkbox (13a/13b smoke relies on it) — keep the checkbox itself as the toggle and update those checks. Override badges need per-AP data (`GET eaps/{mac}` returns `ssidOverrides[]`, live-verified): either add a read-only, sender-asserted, shape-guarded IPC for it (stub it in `tests/smoke/stub-main.cjs`) or state the overrides as unavailable — never invent them; record the choice.
-- All §4.6 states (first run, disconnected, loading, refreshing, no data vs no results, errors, read-only banner with the "no management credentials" reason); §4.7 breakpoints and keyboard rules (Cmd/Ctrl+F, Escape).
-- Acceptance: smoke at 1200, 900 and 720 px widths; a cross-navigation round trip; Cmd/Ctrl+F and Escape behavior; the read-only banner with its reason; existing checks keep passing. `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
+- Every §4.6 state across Access points, AP groups and Wi-Fi networks: first run (one **Configure connection** action), disconnected (navigation stays; content shows **Connect to controller**), initial loading (progress/skeletons in the layout), refreshing (keep data, mark refreshing — 13a already does this for the AP list), "no data" vs "no search results" with **Clear filters**, initial-load error (inline, persistent, Retry + Settings), refresh error (stale data + last-updated time).
+- Read-only banner with the precise reason and fix: on 6.3+ "Open API credentials are not configured — viewing is available. Add them in Settings → Management access.", below 6.3 the legacy-controller reason (spec §4.6 wording; es + en). Phase 15 will switch it on capabilities, so drive it from one function.
+- §4.7 breakpoints: ≥1000 px full sidebar + list/detail split; 800–999 px compact (icon) sidebar + split; 700–799 px top view switcher + single-pane drill-in (destination picker and AP details as full panes with Back). Content panes scroll independently; action bars and modal buttons stay visible at short heights; minimum window 700×500.
+- Keys: Cmd/Ctrl+F focuses the current view's search; Escape clears search → exits edit mode → closes the top dialog.
+- Acceptance: smoke at 1200, 900 and 720 px widths (each view usable, no horizontal overflow); Cmd/Ctrl+F and Escape order; the read-only banner with its reason (6.3 and legacy); first-run / disconnected / initial-load-error states; all existing checks keep passing. `npm run build`, `npm test`, `ELECTRON_PATH=/private/tmp/omada-p10-smoke/electron/Electron.app/Contents/MacOS/Electron npm run smoke` and `npm run tls-probe` (same `ELECTRON_PATH`) must all exit 0.
 
 ## Key paths
 
-- `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `shell` (header + sidebar), `connection`, `ap-list` + `ap-filters` + pure `ap-selection`, `destination-pane`, pure `move-plan` + `move-text`, `move-dialog`, `move-flow` (bulk move), `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
+- `src/renderer/renderer.ts` — renderer entry (event wiring + init); logic lives in sibling modules (`state`, `i18n`, `shell` (header + sidebar), `connection`, `ap-list` + `ap-filters` + pure `ap-selection`, `destination-pane`, pure `move-plan` + `move-text`, `move-dialog`, `move-flow` (bulk move), `groups-view` + `networks-view` + `ap-details` over pure `inventory-model`, `navigation` + pure `nav-history` (Back), `*-modal`, `toast`, …), bundled by `scripts/build-renderer.mjs`
 - `scripts/tsc.mjs` + `scripts/resolve-tsc.mjs` — run TypeScript 7 through Node (no `.bin` shim)
 - `tests/unit/` + `tests/fixtures/` — `npm test` (runner `scripts/run-unit-tests.mjs`); `tests/smoke/` — `npm run smoke` (`stub-main.cjs`, `run-smoke.mjs`)
 - `src/main/omada-transport.ts` (transport interface + hardened request logic), `net-transport.ts` (Electron `net`), `omada-validators.ts`, `cookie-jar.ts`, `url.ts`

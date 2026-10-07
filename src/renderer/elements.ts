@@ -25,13 +25,32 @@ export const viewNav = document.getElementById('viewNav') as HTMLElement;
 export const navAccessPointsBtn = document.getElementById('navAccessPoints') as HTMLButtonElement;
 export const navGroupsBtn = document.getElementById('navGroups') as HTMLButtonElement;
 export const navNetworksBtn = document.getElementById('navNetworks') as HTMLButtonElement;
+export const viewArea = document.getElementById('viewArea') as HTMLElement;
 export const viewAccessPoints = document.getElementById('viewAccessPoints') as HTMLElement;
 export const viewGroups = document.getElementById('viewGroups') as HTMLElement;
 export const viewNetworks = document.getElementById('viewNetworks') as HTMLElement;
-export const viewGroupsTitle = document.getElementById('viewGroupsTitle') as HTMLElement;
-export const viewGroupsText = document.getElementById('viewGroupsText') as HTMLElement;
-export const viewNetworksTitle = document.getElementById('viewNetworksTitle') as HTMLElement;
-export const viewNetworksText = document.getElementById('viewNetworksText') as HTMLElement;
+
+// Cross-navigation: the "Back to …" bar above the views
+export const backBar = document.getElementById('backBar') as HTMLElement;
+export const backBtn = document.getElementById('backBtn') as HTMLButtonElement;
+export const backBtnLabel = document.getElementById('backBtnLabel') as HTMLElement;
+
+// AP groups view: master list (title, search, list, aria-live results
+// summary) and the selected group's detail
+export const groupsPanelTitle = document.getElementById('groupsPanelTitle') as HTMLElement;
+export const groupSearchInput = document.getElementById('groupSearch') as HTMLInputElement;
+export const groupList = document.getElementById('groupList') as HTMLElement;
+export const groupListSummary = document.getElementById('groupListSummary') as HTMLElement;
+export const groupDetailPanelTitle = document.getElementById('groupDetailPanelTitle') as HTMLElement;
+export const groupDetail = document.getElementById('groupDetail') as HTMLElement;
+
+// Wi-Fi networks view: master list and the selected network's detail
+export const networksPanelTitle = document.getElementById('networksPanelTitle') as HTMLElement;
+export const networkSearchInput = document.getElementById('networkSearch') as HTMLInputElement;
+export const networkList = document.getElementById('networkList') as HTMLElement;
+export const networkListSummary = document.getElementById('networkListSummary') as HTMLElement;
+export const networkDetailPanelTitle = document.getElementById('networkDetailPanelTitle') as HTMLElement;
+export const networkDetail = document.getElementById('networkDetail') as HTMLElement;
 
 // Access points panel: list, filters, selection toolbar and summary
 export const apList = document.getElementById('apList') as HTMLElement;
@@ -44,12 +63,19 @@ export const clearApSelectionBtn = document.getElementById('clearApSelectionBtn'
 export const apSelectionSummary = document.getElementById('apSelectionSummary') as HTMLElement;
 
 // Destination pane: group search, the radio list, the move preview and the
-// move button
+// move button. The AP details pane takes its place while open
+export const destinationPanel = document.getElementById('destinationPanel') as HTMLElement;
 export const destinationSearchInput = document.getElementById('destinationSearch') as HTMLInputElement;
 export const destinationList = document.getElementById('destinationList') as HTMLElement;
 export const moveStatus = document.getElementById('moveStatus') as HTMLElement;
 export const movePreview = document.getElementById('movePreview') as HTMLElement;
 export const moveBtn = document.getElementById('moveBtn') as HTMLButtonElement;
+
+// AP details pane (Access points view): title, Close, content
+export const apDetailsPanel = document.getElementById('apDetailsPanel') as HTMLElement;
+export const apDetailsPanelTitle = document.getElementById('apDetailsPanelTitle') as HTMLElement;
+export const closeApDetailsBtn = document.getElementById('closeApDetailsBtn') as HTMLButtonElement;
+export const apDetailsContent = document.getElementById('apDetailsContent') as HTMLElement;
 
 // Panel titles
 export const apPanelTitle = document.getElementById('apPanelTitle') as HTMLElement;

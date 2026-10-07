@@ -13,6 +13,7 @@ import { renderDestinationList, renderMovePreview } from './destination-pane';
 import { apFilterInput, connectBtn, destinationSearchInput, refreshBtn, settingsBtn } from './elements';
 import { t } from './i18n';
 import { isAmbiguousGroup } from './move-plan';
+import { renderInventoryViews, resetInventoryViews } from './navigation';
 import { applyGroupVocabulary, showEmptyStates, showLoadingStates } from './panels';
 import { renderNavCounts } from './shell';
 import { showSiteSelection } from './site-modal';
@@ -343,7 +344,9 @@ async function runSiteSelection(rawSites: unknown, rawNonce: unknown, generation
  * the last load), the AP selection, the destination, the filters and the
  * destination search, then re-renders the empty states, the filter options,
  * the sidebar counts, the header details and the move preview (which
- * disables the move button).
+ * disables the move button). The AP groups and Wi-Fi networks views lose
+ * their selections and searches, the AP details pane closes and the Back
+ * history is emptied (the current view stays: navigation works disconnected).
  */
 function clearData(): void {
   state.accessPoints = [];
@@ -369,6 +372,7 @@ function clearData(): void {
   renderNavCounts();
   renderHeaderMeta();
   renderMovePreview();
+  resetInventoryViews();
 } // End of function clearData()
 
 /**
@@ -448,7 +452,9 @@ export function toggleConnection() {
  * the new load time). The first load shows a spinner in both lists; a reload
  * (refresh, or after a move) keeps the loaded rows on screen, marked as
  * refreshing, with "Refreshing…" in the header. The Refresh button spins
- * either way. The AP selection survives a reload, pruned to the APs that
+ * either way. The AP groups and Wi-Fi networks views and the AP details pane
+ * are re-rendered from the new data too (selections whose item is gone are
+ * dropped). The AP selection survives a reload, pruned to the APs that
  * still exist; the destination is kept when its group still exists under a
  * name no other group shares (move-plan.ts isAmbiguousGroup()). The
  * session generation is captured before awaiting: if it moves on meanwhile
@@ -506,13 +512,17 @@ export async function loadData(): Promise<void> {
       });
     state.groupModel = listing.groupModel;
     state.controllerVersion = listing.controllerVersion;
-    state.wlanGroups = listing.groups.filter(wlan => {
-      if (!isValidWlanId(wlan.wlanId)) {
-        console.warn('Ignoring WLAN group with invalid id format:', wlan.wlanId);
-        return false;
-      }
-      return true;
-    });
+    // The default flag is kept only as exactly `true` (the Default badge
+    // must never come from anything else)
+    state.wlanGroups = listing.groups
+      .filter(wlan => {
+        if (!isValidWlanId(wlan.wlanId)) {
+          console.warn('Ignoring WLAN group with invalid id format:', wlan.wlanId);
+          return false;
+        }
+        return true;
+      })
+      .map(({ isDefault, ...wlan }) => (isDefault === true ? { ...wlan, isDefault: true } : wlan));
 
     // Keep the selection and the destination that still point at loaded data
     const macs = state.accessPoints.map(ap => ap.mac);
@@ -536,6 +546,7 @@ export async function loadData(): Promise<void> {
     renderDestinationList();
     renderNavCounts();
     renderMovePreview();
+    renderInventoryViews();
   } catch (error) {
     // Stale failure: swallow it (the disconnected/new UI must not react)
     if (generation !== state.sessionGeneration) {

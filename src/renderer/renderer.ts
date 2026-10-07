@@ -16,7 +16,19 @@
 //   panels.ts             list empty/loading states, group vocabulary
 //   ap-selection.ts       pure AP filtering, range selection and counts
 //   ap-filters.ts         the AP list's current filters (from the state)
-//   ap-list.ts            Access points list (checkbox multi-select)
+//   ap-status.ts          AP status colour + label
+//   ap-focus.ts           focus inside the AP list (roving checkbox)
+//   ap-list.ts            Access points list (checkbox multi-select; a row
+//                         click opens the AP details pane)
+//   ap-details.ts         AP details pane (in the destination pane's place)
+//   inventory-model.ts    pure view models of the AP groups / Wi-Fi networks
+//                         views and the AP details (rows, scopes, links)
+//   inventory-ui.ts       shared DOM blocks of those views (cross-links,
+//                         badges, notes, master-list keyboard)
+//   groups-view.ts        AP groups view (read-only master list + detail)
+//   networks-view.ts      Wi-Fi networks view (read-only master list + detail)
+//   nav-history.ts        pure Back-history helpers
+//   navigation.ts         cross-links, "Back to …", re-rendering the views
 //   move-plan.ts          pure move planning (gains/losses, mixed
 //                         selections), destination search, move results
 //   move-text.ts          localized texts of a move plan
@@ -34,6 +46,7 @@
 // Shared types come from src/shared/types.ts (type-only imports), and the
 // window.omadaAPI bridge typing from global.d.ts.
 
+import { closeApDetails } from './ap-details';
 import {
   clearApSelection,
   handleApListClick,
@@ -55,15 +68,21 @@ import {
   apGroupFilterSelect,
   apList,
   apStatusFilterSelect,
+  backBtn,
   cancelCertResetBtn,
   cancelSettingsBtn,
   clearApSelectionBtn,
+  closeApDetailsBtn,
   closeSettingsBtn,
   confirmCertResetBtn,
   connectBtn,
   destinationList,
   destinationSearchInput,
+  groupList,
+  groupSearchInput,
   moveBtn,
+  networkList,
+  networkSearchInput,
   passwordInput,
   refreshBtn,
   resetCertBtn,
@@ -73,10 +92,24 @@ import {
   settingsModal,
   urlInput,
   usernameInput,
+  viewArea,
   viewNav,
 } from './elements';
+import {
+  handleGroupListClick,
+  handleGroupListKeydown,
+  handleGroupSearchInput,
+  handleGroupSearchKeydown,
+} from './groups-view';
 import { setLanguage, t } from './i18n';
 import { startMove } from './move-flow';
+import { goBack, handleCrossLinkClick, navigateToView } from './navigation';
+import {
+  handleNetworkListClick,
+  handleNetworkListKeydown,
+  handleNetworkSearchInput,
+  handleNetworkSearchKeydown,
+} from './networks-view';
 import {
   cancelCertificateReset,
   closeSettings,
@@ -86,7 +119,7 @@ import {
   saveSettings,
   updatePasswordAffordance,
 } from './settings-modal';
-import { isAppView, showView } from './shell';
+import { isAppView } from './shell';
 import { state } from './state';
 import { setStatus } from './status';
 import { showToast } from './toast';
@@ -99,14 +132,35 @@ connectBtn.addEventListener('click', toggleConnection);
 refreshBtn.addEventListener('click', refreshData);
 settingsBtn.addEventListener('click', openSettings);
 
-// Sidebar navigation: one native button per view (delegated)
+// Sidebar navigation: one native button per view (delegated); it starts a
+// fresh navigation (the "Back to …" history is emptied)
 viewNav.addEventListener('click', (e) => {
   const button = e.target instanceof Element ? e.target.closest<HTMLElement>('.nav-item[data-view]') : null;
   const view = button?.dataset.view;
   if (isAppView(view)) {
-    showView(view);
+    navigateToView(view);
   }
 });
+
+// Cross-navigation: every cross-link in the views (AP details, group and
+// network details) is followed by one delegated handler; "Back to …"
+viewArea.addEventListener('click', handleCrossLinkClick);
+backBtn.addEventListener('click', goBack);
+
+// AP details pane (opened by a row click, see ap-list.ts): Close brings the
+// destination pane back, focus returns to the AP's checkbox
+closeApDetailsBtn.addEventListener('click', () => closeApDetails(true));
+
+// AP groups and Wi-Fi networks views: their searches (Escape clears) and
+// master lists (click selects; arrows, Home and End move focus)
+groupSearchInput.addEventListener('input', handleGroupSearchInput);
+groupSearchInput.addEventListener('keydown', handleGroupSearchKeydown);
+groupList.addEventListener('click', handleGroupListClick);
+groupList.addEventListener('keydown', handleGroupListKeydown);
+networkSearchInput.addEventListener('input', handleNetworkSearchInput);
+networkSearchInput.addEventListener('keydown', handleNetworkSearchKeydown);
+networkList.addEventListener('click', handleNetworkListClick);
+networkList.addEventListener('keydown', handleNetworkListKeydown);
 
 // Access points list: filters, checkbox selection (delegated click and
 // keyboard handlers), "Select all N filtered APs" and "Clear selection"
