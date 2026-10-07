@@ -1,7 +1,8 @@
 # Omada WLAN Manager (Electron)
 
 A modern desktop application for moving TP-Link Omada Controller access points between AP groups
-(Omada 6.3 and later) or WLAN groups (older controllers).
+(Omada 6.3 and later) or WLAN groups (older controllers) and, with optional management access on
+Omada 6.3 and later, for managing the AP groups and Wi-Fi networks themselves.
 
 ## Features
 
@@ -19,14 +20,17 @@ A modern desktop application for moving TP-Link Omada Controller access points b
   broadcast, and manage Open and WPA-Personal Wi-Fi networks: create them (disabled,
   on the AP groups you pick), edit their name, security and bands after reviewing the
   changes, change their password, enable, disable and delete them (WPA-Enterprise and
-  PPSK networks can only be enabled, disabled and deleted)
+  PPSK networks can be enabled, disabled, deleted and bound to AP groups, but not edited)
+- Choose which AP groups broadcast a Wi-Fi network (**Broadcast on**, with management
+  access): searchable group checkboxes, the groups and access points it reaches before
+  and after the change, and a per-band capacity check that names every group without room
 - Move one or more access points into another group, including an empty one to silence them,
   after reviewing which Wi-Fi networks they gain and lose; access points are moved one at a time,
   with a per-access-point result and **Retry failed**
 - Supports the self-signed certificates Omada controllers use, with
   trust-on-first-use pinning: you confirm the certificate's SHA-256
   fingerprint once, and a different certificate is refused afterwards
-- Modern, native-looking UI with dark mode support
+- Modern, native-looking UI in Spanish or English, with dark mode support
 
 ## Requirements
 
@@ -40,7 +44,12 @@ A modern desktop application for moving TP-Link Omada Controller access points b
 - npm or yarn
 - macOS 13 (Ventura) or later to run the macOS build (Electron 44 dropped macOS 12)
 - TP-Link Omada Controller (tested with controller versions 5.x and 6.1.0.19;
-  the internal API calls the app makes were verified on 6.3.0.45)
+  the internal API calls the app makes were verified on 6.3.0.45). Management
+  access needs Omada 6.3 or later and an Open API application; its Open API calls
+  are implemented against the controller's documented API and unit- and
+  smoke-tested on fixtures only. They have not been verified on a live
+  controller yet: that is the manual [live-test checklist](docs/live-test-checklist.md),
+  which has not been run
 
 Toolchain: Electron 44 (Chromium 152, Node.js 24), TypeScript 7, esbuild,
 electron-builder 26, Playwright (`playwright-core`) for the GUI smoke test.
@@ -59,6 +68,9 @@ npm run dev
 ```
 
 ## Usage
+
+The [user guide](docs/user-guide.md) walks through every feature and gives each
+interface term in English and Spanish. In short:
 
 1. Launch the application
 2. Click **Settings** (gear icon, at the bottom of the sidebar), or **Configure connection** on first launch, to configure your Omada Controller connection:
@@ -131,7 +143,15 @@ npm run dev
    groups by name, or "All access points" / "Unknown scope"). WPA-Enterprise and
    PPSK networks have no **Edit** or **Change password** (the details say why);
    a password is typed twice, never shown and never kept once the dialog
-   closes. The
+   closes. A network's details also have **Broadcast on**, the only place that
+   changes which AP groups broadcast it: **Change AP groups** opens searchable
+   group checkboxes with a live preview of the groups and access points it will
+   reach; **Review the change** reads the current data again and shows the groups
+   now, after, added, removed and kept, and names every added group that has no
+   confirmed room on one of the network's bands (such a change is not saved);
+   **Save AP groups** applies it. A network keeps at least one group (disable it
+   to stop broadcasting), and a network on "All access points" or with an unknown
+   scope stays read-only there. The
    AP groups view adds **New group** (an empty
    group, name only), **Rename** and **Delete**, and each group's remaining
    capacity per band ("Not reported" when the controller does not say); a group
@@ -159,6 +179,18 @@ npm run dev
     time (the move pane, AP details and a group's or network's details open in
     the list's place, each with **←** back to the list)
 
+## Documentation
+
+- [User guide](docs/user-guide.md): how to use the app, with every interface term
+  in English and Spanish
+- [Live-test checklist](docs/live-test-checklist.md): the manual run, not done
+  yet, that checks the management features' unverified controller behaviors on a
+  real Omada 6.3 controller with disposable `__OWM_TEST_` resources only; its
+  cross-reference table says which behaviors a run covers and which it cannot
+- [Design spec](docs/management-design.md), [Omada 6.3 API findings](docs/omada-6.3-api-findings.md),
+  [Open API operations](docs/omada-openapi-ops.md) and the
+  [security audit](docs/security-audit.md)
+
 ## Controller versions
 
 The app reads the controller version from `/api/info` when it connects:
@@ -171,7 +203,7 @@ The app reads the controller version from `/api/info` when it connects:
   be read, are treated as legacy: the groups are called "WLAN groups (legacy)".
   The app still asks for the complete group list and, when the controller does
   not offer it, shows the groups that have Wi-Fi networks, as earlier versions
-  of the app did.
+  of the app did. Management access is not available on them.
 
 Moving an access point always uses the same controller call (`PATCH
 eaps/{mac}` with the group id), whatever the version.
@@ -260,8 +292,12 @@ npm run tls-probe # build, then the opt-in certificate-pinning probe (local HTTP
   JSON files under `tests/fixtures/`. Covered: the API response validators,
   the group-list join (6.3 and legacy payloads) and the controller-version
   rule, cookie-jar merging, controller URL normalization, the hardened HTTP
-  transport, and `OmadaController` driven through a fake transport. A test
-  that imports Electron fails the bundle step.
+  transport, `OmadaController` driven through a fake transport, the Open API
+  client, the management capability checks, the AP-group, Wi-Fi network and
+  binding rules and writes, the IPC guards and redaction, the renderer's pure
+  view logic, and that every interface term quoted in `docs/user-guide.md` and
+  `docs/live-test-checklist.md` is verbatim in the Spanish and English string
+  tables. A test that imports Electron fails the bundle step.
 - `npm run smoke` launches Electron through Playwright (`playwright-core`, which
   downloads no browsers) with `tests/smoke/stub-main.cjs` as the main process:
   the real preload and renderer, with fixture-driven fake IPC handlers. It
@@ -295,6 +331,10 @@ npm run tls-probe # build, then the opt-in certificate-pinning probe (local HTTP
   Electron's profile inside the temp dir, never loads the real main process,
   cancels every non-`file:` request and writes no files. Neither command
   contacts a controller or touches `~/.omada-wlan-manager/`.
+- **Live controller:** no automated test contacts a real controller. The
+  management features' controller behaviors are to be checked by hand with
+  [`docs/live-test-checklist.md`](docs/live-test-checklist.md), which has not
+  been run yet.
 
 ## Project Structure
 
@@ -309,11 +349,12 @@ omada-electron/
 │   │   ├── net-transport.ts   # Production transport (Electron's net module)
 │   │   ├── cert-verify.ts     # Certificate hooks + replaceable controller session
 │   │   ├── connection-manager.ts # Connection state machine (connect, site choice, trust, reset, URL change)
-│   │   ├── controller-session.ts # Controller session facade (internal + Open API clients, management capability checks, AP-group operations, Wi-Fi network reads and writes)
-│   │   ├── openapi-client.ts  # Open API client (token, paths, pagination, AP-group calls, Wi-Fi network reads and writes)
+│   │   ├── controller-session.ts # Controller session facade (internal + Open API clients, management capability checks, AP-group operations, Wi-Fi network reads, writes and AP-group bindings)
+│   │   ├── openapi-client.ts  # Open API client (token, paths, pagination, AP-group calls, Wi-Fi network reads, writes and bindings)
 │   │   ├── omada-validators.ts, cookie-jar.ts, url.ts, # Pure, unit-tested helpers
 │   │   │   cert-pinning.ts, config-model.ts, controller-version.ts, redact.ts,
-│   │   │   ap-group-policy.ts, ipc-guards.ts, ipc-trust.ts, wifi-network-model.ts
+│   │   │   ap-group-policy.ts, ipc-guards.ts, ipc-trust.ts, wifi-network-model.ts,
+│   │   │   wifi-network-write.ts, network-binding-plan.ts
 │   │   └── preload.ts  # Preload script for secure IPC
 │   ├── renderer/       # Renderer process (Browser), bundled by esbuild
 │   │   ├── index.html  # Main HTML
@@ -322,6 +363,7 @@ omada-electron/
 │   │   └── *.ts        # UI modules (state, i18n, lists, modals, connection, ...)
 │   └── shared/         # Shared types
 │       └── types.ts    # TypeScript interfaces
+├── docs/               # User guide, live-test checklist, design spec, API notes, security audit
 ├── scripts/            # Build and test scripts (renderer bundle, unit-test runner)
 ├── tests/              # unit/ (node:test), smoke/ (Playwright GUI smoke), tls-probe/ (opt-in), fixtures/ (JSON)
 ├── assets/             # Icons and resources
