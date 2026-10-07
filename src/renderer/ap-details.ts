@@ -39,8 +39,9 @@ const HEADING_ID = 'apDetailsName';
 
 /**
  * The value of the group fact: a cross-link to the group when it resolves to
- * exactly one listed group; otherwise the reason it cannot (no group, not in
- * the list, a name another group shares).
+ * exactly one listed group; otherwise the reason it cannot (not reported by
+ * the controller — cloud only, inbox I-1c2a —, no group, not in the list, a
+ * name another group shares).
  * @param {ApDetailsModel} model - The AP's details.
  * @returns {HTMLElement | string} The value.
  */
@@ -54,6 +55,9 @@ function groupFactValue(model: ApDetailsModel): HTMLElement | string {
   }
   if (model.group.kind === 'ambiguous') {
     return tFormat('apGroupAmbiguous', { group: model.group.name });
+  }
+  if (model.group.kind === 'unreported') {
+    return t('apGroupNotReported');
   }
   return t('unassigned');
 } // End of function groupFactValue()

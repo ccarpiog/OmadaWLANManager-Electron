@@ -397,7 +397,9 @@ export function saveCloudSiteId(omadacId: string, siteId: string): void {
  * as a safeStorage blob, or held in memory for this session when secure
  * storage is unavailable — see secureStorageAvailable()) and the cloud-access
  * rules (the same storage rule for the cloud secret; a region or cloud
- * Client ID change drops it; Remove cloud access deletes every cloud field).
+ * Client ID change drops it; Remove cloud access deletes every cloud field),
+ * and the cloud-only save of a setup without a local controller (inbox
+ * I-1c2a: no URL, username or password, cloud fields only).
  * The file is written atomically; the in-memory cache and the session-only
  * secrets are updated only after a successful write. Errors are returned as
  * codes, never thrown.

@@ -87,7 +87,13 @@ export function activeControllerValue(target: ConnectionTarget): string {
  * the local controller. `activeController` survives a dropped or undecryptable
  * credential (config-model.ts), so the fallback is decided here, never by
  * deleting the stored choice. Pure; the startup path calls it through
- * startupTargetOf().
+ * startupTargetOf(). A configuration without a local controller (cloud-only,
+ * inbox I-1c2a) needs nothing else: the stored cloud controller with a usable
+ * credential is the target; with neither a usable cloud choice nor a local
+ * controller the target is local, whose connect answers 'configIncomplete'
+ * (nothing is configured to connect to). With no cloud controller ever
+ * chosen, a cloud-only setup also starts on local: the renderer then offers
+ * the account's controllers (switchController()).
  * @param {StoredConfig} config - The stored config.
  * @param {boolean} cloudCredentialUsable - Whether the cloud credential is usable now.
  * @returns {ConnectionTarget} The target to start with.

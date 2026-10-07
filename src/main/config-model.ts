@@ -61,7 +61,9 @@ export const CLIENT_ID_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
  * Everything tied to one controller — the password, the Open API Client ID
  * and Client Secret, the site id and the certificate pin — is scoped to
  * `url`: applyConfigSave() drops all of them when the URL changes (new
- * management credentials may come with the same save).
+ * management credentials may come with the same save). `url` and `username`
+ * are '' when no local controller is configured: a first run, or a
+ * cloud-only configuration (inbox I-1c2a), which holds the cloud fields only.
  */
 export interface StoredConfig {
   url: string;
@@ -824,6 +826,125 @@ function applyCloudAccessSave(
 } // End of function applyCloudAccessSave()
 
 /**
+ * Tells whether a save configures no local controller at all (a cloud-only
+ * save, inbox I-1c2a): the payload's URL and username are empty (blank) and
+ * its password absent or empty, while no local controller is stored (`url`
+ * ''). A partially filled local section, or an emptied one while a local
+ * controller is stored, is not cloud-only: it takes the local rules (and
+ * their codes) as before.
+ * @param {StoredConfig} current - The config currently stored.
+ * @param {ConfigSavePayload} payload - The settings sent by the renderer.
+ * @returns {boolean} True for a cloud-only save.
+ */
+export function isCloudOnlySave(current: StoredConfig, payload: ConfigSavePayload): boolean {
+  return (
+    current.url === '' &&
+    typeof payload.url === 'string' &&
+    payload.url.trim() === '' &&
+    typeof payload.username === 'string' &&
+    payload.username.trim() === '' &&
+    (payload.password === undefined || payload.password === '')
+  );
+} // End of function isCloudOnlySave()
+
+/**
+ * Copies the cloud-access outcome of a save into the config to persist: the
+ * region, the cloud Client ID and the blob as decided, and — unless cloud
+ * access was removed — the active controller and the per-controller site
+ * choices as stored (they are keyed by omadacIds, not by a credential).
+ * @param {StoredConfig} config - The config being built (mutated).
+ * @param {StoredConfig} current - The config currently stored.
+ * @param {Extract<CloudSaveOutcome, { ok: true }>} cloud - The cloud outcome.
+ */
+function applyCloudOutcome(config: StoredConfig, current: StoredConfig, cloud: Extract<CloudSaveOutcome, { ok: true }>): void {
+  if (cloud.cloudRegion) {
+    config.cloudRegion = cloud.cloudRegion;
+  }
+  if (cloud.cloudClientId) {
+    config.cloudClientId = cloud.cloudClientId;
+  }
+  if (cloud.encryptedCloudClientSecret) {
+    config.encryptedCloudClientSecret = cloud.encryptedCloudClientSecret;
+  }
+  if (!cloud.removed) {
+    if (current.activeController) {
+      config.activeController = current.activeController;
+    }
+    if (current.cloudSites) {
+      config.cloudSites = { ...current.cloudSites };
+    }
+  }
+} // End of function applyCloudOutcome()
+
+/**
+ * Tells whether a save changed the cloud credential: the effective region,
+ * the cloud Client ID, the blob or the session-only secret differ.
+ * @param {StoredConfig} current - The config before the save.
+ * @param {StoredConfig} config - The config after it.
+ * @param {string | null} sessionBefore - The session-only cloud secret before.
+ * @param {string | null} sessionAfter - The session-only cloud secret after.
+ * @returns {boolean} True when the cloud client and its tokens must go.
+ */
+function cloudCredentialsDiffer(current: StoredConfig, config: StoredConfig, sessionBefore: string | null, sessionAfter: string | null): boolean {
+  return (
+    cloudRegionOf(current) !== cloudRegionOf(config) ||
+    current.cloudClientId !== config.cloudClientId ||
+    current.encryptedCloudClientSecret !== config.encryptedCloudClientSecret ||
+    (sessionBefore ?? null) !== sessionAfter
+  );
+} // End of function cloudCredentialsDiffer()
+
+/**
+ * Applies a cloud-only save (isCloudOnlySave(); rules in applyConfigSave()'s
+ * documentation): the management fields are refused — management access
+ * belongs to a local controller ('managementNeedsController'), a removal
+ * aside —, the cloud fields follow applyCloudAccessSave(), and the save must
+ * remove cloud access or leave a cloud Client ID stored; otherwise nothing
+ * would be configured at all, which stays 'invalidUrl' (the empty form, as
+ * before). The config holds no local field: no URL, username, password,
+ * management access, site, pin or localOmadacId.
+ * @param {StoredConfig} current - The config currently stored (no local controller).
+ * @param {ConfigSavePayload} payload - The settings sent by the renderer.
+ * @param {SecretBox} box - Encryption primitives.
+ * @param {string | null} sessionCloudClientSecret - The current session-only cloud secret.
+ * @returns {ConfigSaveOutcome} The config to persist, or an error code.
+ */
+function applyCloudOnlySave(
+  current: StoredConfig,
+  payload: ConfigSavePayload,
+  box: SecretBox,
+  sessionCloudClientSecret: string | null
+): ConfigSaveOutcome {
+  if (payload.clientId !== undefined || payload.clientSecret !== undefined) {
+    return { ok: false, error: 'managementNeedsController' };
+  }
+  if (payload.removeManagementAccess !== undefined && payload.removeManagementAccess !== true) {
+    return { ok: false, error: 'saveFailed' };
+  }
+  const cloud = applyCloudAccessSave(current, payload, box, sessionCloudClientSecret);
+  if (!cloud.ok) {
+    return { ok: false, error: cloud.error };
+  }
+  if (!cloud.removed && !cloud.cloudClientId) {
+    return { ok: false, error: 'invalidUrl' };
+  }
+  const config: StoredConfig = {
+    url: '',
+    username: '',
+    language: isSupportedLanguage(payload.language) ? payload.language : DEFAULT_LANGUAGE
+  };
+  applyCloudOutcome(config, current, cloud);
+  return {
+    ok: true,
+    config,
+    urlChanged: false,
+    sessionClientSecret: null,
+    sessionCloudClientSecret: cloud.sessionCloudClientSecret,
+    cloudCredentialsChanged: cloudCredentialsDiffer(current, config, sessionCloudClientSecret, cloud.sessionCloudClientSecret)
+  };
+} // End of function applyCloudOnlySave()
+
+/**
  * Applies a settings save from the renderer to the current config. Rules:
  * - the URL is normalized (normalizeControllerUrl(): HTTPS only, no
  *   credentials/fragment) — invalid → 'invalidUrl';
@@ -879,6 +1000,20 @@ function applyCloudAccessSave(
  *   (they are keyed by the controllers' omadacIds, not by a credential);
  *   `localOmadacId` belongs to the configured controller and is dropped with
  *   a URL change.
+ * No local controller (cloud-only, inbox I-1c2a; isCloudOnlySave()): when the
+ * payload's URL and username are empty and its password absent or empty
+ * while no local controller is stored, the local rules above do not apply:
+ * - the management Client ID / Client Secret belong to a local controller:
+ *   either one in the payload is 'managementNeedsController' (a removal is
+ *   accepted and changes nothing);
+ * - the cloud fields follow the cloud rules above, and the save must remove
+ *   cloud access or leave a cloud Client ID stored — otherwise nothing at all
+ *   would be configured: 'invalidUrl', as the empty form always was;
+ * - the config keeps no local field (URL and username '', no password,
+ *   management access, site, pin or localOmadacId); `urlChanged` is false.
+ * A partially filled local section (e.g. a URL without a password, a
+ * username without a URL) and an emptied one while a local controller is
+ * stored keep the local rules and their codes unchanged.
  * @param {StoredConfig} current - The config currently stored.
  * @param {ConfigSavePayload} payload - The settings sent by the renderer.
  * @param {SecretBox} box - Encryption primitives.
@@ -898,6 +1033,10 @@ export function applyConfigSave(
 ): ConfigSaveOutcome {
   if (typeof payload !== 'object' || payload === null) {
     return { ok: false, error: 'saveFailed' };
+  }
+
+  if (isCloudOnlySave(current, payload)) {
+    return applyCloudOnlySave(current, payload, box, sessionCloudClientSecret);
   }
 
   const normalizedUrl = normalizeControllerUrl(payload.url);
@@ -981,34 +1120,13 @@ export function applyConfigSave(
     }
   }
   // Cloud access, as decided above (independent of the URL)
-  if (cloud.cloudRegion) {
-    config.cloudRegion = cloud.cloudRegion;
-  }
-  if (cloud.cloudClientId) {
-    config.cloudClientId = cloud.cloudClientId;
-  }
-  if (cloud.encryptedCloudClientSecret) {
-    config.encryptedCloudClientSecret = cloud.encryptedCloudClientSecret;
-  }
-  if (!cloud.removed) {
-    if (current.activeController) {
-      config.activeController = current.activeController;
-    }
-    if (current.cloudSites) {
-      config.cloudSites = { ...current.cloudSites };
-    }
-  }
-  const cloudCredentialsChanged =
-    cloudRegionOf(current) !== cloudRegionOf(config) ||
-    current.cloudClientId !== config.cloudClientId ||
-    current.encryptedCloudClientSecret !== config.encryptedCloudClientSecret ||
-    (sessionCloudClientSecret ?? null) !== cloud.sessionCloudClientSecret;
+  applyCloudOutcome(config, current, cloud);
   return {
     ok: true,
     config,
     urlChanged,
     sessionClientSecret: management.sessionClientSecret,
     sessionCloudClientSecret: cloud.sessionCloudClientSecret,
-    cloudCredentialsChanged
+    cloudCredentialsChanged: cloudCredentialsDiffer(current, config, sessionCloudClientSecret, cloud.sessionCloudClientSecret)
   };
 } // End of function applyConfigSave()

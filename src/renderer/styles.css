@@ -1706,8 +1706,19 @@ body.platform-darwin .title-bar {
   color: var(--text-secondary);
 }
 
+/* The local controller's cloud duplicate ("This network", inbox I-1c2a) */
+.cloud-controller-local {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 .cloud-controller-status {
   flex-basis: 100%;
+}
+
+/* The certificate section's note on cloud controllers (inbox I-1c2a) */
+.cert-cloud-note {
+  margin-top: 6px;
 }
 
 /* Settings: the dialog's description (its aria-describedby, §4.7) */

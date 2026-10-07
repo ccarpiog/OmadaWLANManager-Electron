@@ -9,8 +9,12 @@
 // the controller DTOs or a stable code with a diagnostic) and maps it to
 // what the result line shows (cloudTestOutcome(), cloudTestSummaryKey(),
 // cloudControllerStatusKey()), and tells whether a reply still belongs to
-// the run on screen (isCloudTestCurrent()). Unit-tested in
-// tests/unit/renderer-cloud-form.test.ts.
+// the run on screen (isCloudTestCurrent()). Inbox I-1c2a adds the stored
+// omadacId of the local controller a successful reply carries
+// (parseLocalOmadacId(), isLocalDuplicate(): the Test result marks that
+// controller "This network") and the mirror of main's cloud-only save, a
+// configuration without a local controller (isCloudOnlyForm(),
+// planCloudOnlySave()). Unit-tested in tests/unit/renderer-cloud-form.test.ts.
 // ============================================================================
 
 import type {
@@ -93,6 +97,40 @@ const CREDENTIAL_DISPLAYS: ReadonlyMap<number, CloudTestDisplay> = new Map<numbe
   [-90113, 'credentialDisabled'],
   [-90106, 'credentialWrong'],
 ]);
+
+/**
+ * Tells whether a value is an omadacId as main sends it (OMADAC_ID_REGEX of
+ * src/main/cloud-account-model.ts; never 'local', the local target's name).
+ * @param {unknown} value - The candidate.
+ * @returns {value is string} True for a usable omadacId.
+ */
+export function isCloudControllerId(value: unknown): value is string {
+  return typeof value === 'string' && OMADAC_ID_REGEX.test(value) && value !== 'local';
+}
+
+/**
+ * Validates the `localOmadacId` of a cloud reply (inbox I-1c2a): the omadacId
+ * a local connect learned for the configured controller. Fails closed: a
+ * missing or malformed value is null (absent), never a crash and never a
+ * refusal of the reply.
+ * @param {unknown} raw - The `localOmadacId` field received over IPC.
+ * @returns {string | null} The omadacId, or null.
+ */
+export function parseLocalOmadacId(raw: unknown): string | null {
+  return isCloudControllerId(raw) ? raw : null;
+}
+
+/**
+ * Tells whether a listed cloud controller is the local controller reached
+ * through the cloud (its omadacId is the stored local one): the switcher
+ * lists it once, as local, and Settings' Test result marks it "This network".
+ * @param {CloudController} controller - The listed controller.
+ * @param {string | null | undefined} localOmadacId - The local controller's omadacId, if known.
+ * @returns {boolean} True for the local controller's cloud duplicate.
+ */
+export function isLocalDuplicate(controller: CloudController, localOmadacId: string | null | undefined): boolean {
+  return isCloudControllerId(localOmadacId) && controller.omadacId === localOmadacId;
+}
 
 /**
  * Tells whether a value is one of the cloud account regions.
@@ -305,6 +343,93 @@ export function hasUnsavedCloudChanges(input: {
 } // End of function hasUnsavedCloudChanges()
 
 // ============================================================================
+// A configuration without a local controller (cloud-only, inbox I-1c2a)
+// ============================================================================
+
+/**
+ * The local controller fields of the settings form, and the URL main had
+ * stored when Settings opened ('' when no local controller is configured).
+ */
+export interface LocalSectionInput {
+  urlField: string;
+  usernameField: string;
+  passwordField: string;
+  storedUrl: string;
+}
+
+/**
+ * Tells whether a settings save configures no local controller at all
+ * (main's isCloudOnlySave(), src/main/config-model.ts): the URL and username
+ * fields blank, no password typed, and no local controller stored. A
+ * partially filled local section is not cloud-only (the local checks and
+ * their texts apply, as before).
+ * @param {LocalSectionInput} input - The local fields and the stored URL.
+ * @returns {boolean} True for a cloud-only save.
+ */
+export function isCloudOnlyForm(input: LocalSectionInput): boolean {
+  return input.urlField.trim() === '' && input.usernameField.trim() === '' && input.passwordField === '' && input.storedUrl === '';
+}
+
+/**
+ * What the management-access and TP-Link cloud sections hold for a cloud-only
+ * save.
+ */
+export interface CloudOnlyFormInput {
+  // The management section: a staged removal, the raw Client ID and Client
+  // Secret fields
+  managementRemoveStaged: boolean;
+  managementClientIdField: string;
+  managementSecretField: string;
+  // The TP-Link cloud section (planCloudSave()'s input)
+  cloud: CloudFormInput;
+}
+
+/**
+ * A cloud-only save's refusals: the management fields need a local controller
+ * ('managementNeedsController'), a cloud refusal of planCloudSave(), or
+ * nothing configured at all ('fillUrlAndUser': the empty form's text, as
+ * before; main answers 'invalidUrl').
+ */
+export type CloudOnlyFormError = CloudFormError | 'managementNeedsController' | 'fillUrlAndUser';
+
+/**
+ * Result of planCloudOnlySave(): the payload fields besides url ('') /
+ * username ('') / language, or why the save is refused.
+ */
+export type CloudOnlyFormPlan =
+  | { ok: true; fields: CloudPayloadFields & Pick<ConfigSavePayload, 'removeManagementAccess'> }
+  | { ok: false; error: CloudOnlyFormError };
+
+/**
+ * Decides a cloud-only save (mirror of main's applyCloudOnlySave(), checked
+ * in the same order; main stays authoritative):
+ * - a typed management Client ID or Client Secret: 'managementNeedsController'
+ *   (management access belongs to a local controller); a staged removal is
+ *   sent as `removeManagementAccess` and changes nothing;
+ * - the cloud fields follow planCloudSave() (its refusals unchanged);
+ * - the save must remove cloud access or leave a cloud Client ID stored (the
+ *   typed one, or the stored one kept): otherwise nothing at all would be
+ *   configured — 'fillUrlAndUser', the empty form's text.
+ * @param {CloudOnlyFormInput} input - The sections' state.
+ * @returns {CloudOnlyFormPlan} The payload fields, or the refusal.
+ */
+export function planCloudOnlySave(input: CloudOnlyFormInput): CloudOnlyFormPlan {
+  if (!input.managementRemoveStaged && (input.managementClientIdField.trim() !== '' || input.managementSecretField !== '')) {
+    return { ok: false, error: 'managementNeedsController' };
+  }
+  const cloud = planCloudSave(input.cloud);
+  if (!cloud.ok) {
+    return cloud;
+  }
+  const removal = cloud.fields.removeCloudAccess === true;
+  const clientIdAfter = cloud.fields.cloudClientId ?? input.cloud.storedClientId;
+  if (!removal && clientIdAfter === '') {
+    return { ok: false, error: 'fillUrlAndUser' };
+  }
+  return { ok: true, fields: input.managementRemoveStaged ? { removeManagementAccess: true, ...cloud.fields } : { ...cloud.fields } };
+} // End of function planCloudOnlySave()
+
+// ============================================================================
 // The cloud:test reply
 // ============================================================================
 
@@ -315,7 +440,7 @@ export function hasUnsavedCloudChanges(input: {
  * malformed reply — with main's diagnostic when it sent a usable one.
  */
 export type ParsedCloudResult =
-  | { ok: true; controllers: CloudController[]; truncated: boolean }
+  | { ok: true; controllers: CloudController[]; truncated: boolean; localOmadacId?: string }
   | { ok: false; error: CloudAccessError | 'unknown' | 'invalid'; code: string | null; diagnostic: string | null };
 
 /**
@@ -377,11 +502,13 @@ export function parseCloudController(raw: unknown): CloudController | null {
 } // End of function parseCloudController()
 
 /**
- * Validates a cloud:test reply. A success needs a controller list of valid
- * DTOs (one malformed entry rejects the reply: the list would not be what
- * main sent) and a boolean or absent `truncated`. A failure needs an error
- * code: a known one, or one shaped like a code ('unknown': a code main may
- * add later, shown with its diagnostic); anything else is 'invalid'.
+ * Validates a cloud:test / cloud:controllers reply. A success needs a
+ * controller list of valid DTOs (one malformed entry rejects the reply: the
+ * list would not be what main sent) and a boolean or absent `truncated`; its
+ * `localOmadacId` is kept only when well-formed (parseLocalOmadacId(): a
+ * malformed one is dropped, the reply kept). A failure needs an error code:
+ * a known one, or one shaped like a code ('unknown': a code main may add
+ * later, shown with its diagnostic); anything else is 'invalid'.
  * @param {unknown} raw - The reply received over IPC.
  * @returns {ParsedCloudResult} The validated reply.
  */
@@ -406,7 +533,12 @@ export function parseCloudAccessResult(raw: unknown): ParsedCloudResult {
       }
       controllers.push(controller);
     }
-    return { ok: true, controllers, truncated: candidate.truncated === true };
+    const parsed: ParsedCloudResult = { ok: true, controllers, truncated: candidate.truncated === true };
+    const localOmadacId = parseLocalOmadacId(candidate.localOmadacId);
+    if (localOmadacId !== null) {
+      parsed.localOmadacId = localOmadacId;
+    }
+    return parsed;
   } // End of the success branch
   if (candidate.success !== false || typeof candidate.error !== 'string') {
     return invalid;
@@ -476,14 +608,16 @@ export const CLOUD_TEST_TEXT: Readonly<Record<Exclude<CloudTestDisplay, 'ok'>, k
 /**
  * What one finished "Test cloud access" run shows: the display, the detail
  * in parentheses after its text (main's diagnostic; for an unknown code, the
- * code and the diagnostic), and for a success the controllers and whether
- * the list may be incomplete.
+ * code and the diagnostic), and for a success the controllers, whether the
+ * list may be incomplete and — when main reported it — the local
+ * controller's omadacId (its cloud duplicate is marked "This network").
  */
 export interface CloudTestOutcome {
   display: CloudTestDisplay;
   detail: string | null;
   controllers: CloudController[];
   truncated: boolean;
+  localOmadacId?: string;
 }
 
 /**
@@ -521,7 +655,11 @@ function unknownErrorDetail(code: string, diagnostic: string | null): string {
  */
 export function cloudTestOutcome(result: ParsedCloudResult): CloudTestOutcome {
   if (result.ok) {
-    return { display: 'ok', detail: null, controllers: result.controllers, truncated: result.truncated };
+    const outcome: CloudTestOutcome = { display: 'ok', detail: null, controllers: result.controllers, truncated: result.truncated };
+    if (result.localOmadacId !== undefined) {
+      outcome.localOmadacId = result.localOmadacId;
+    }
+    return outcome;
   }
   const none = { controllers: [], truncated: false };
   switch (result.error) {

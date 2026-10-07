@@ -8,7 +8,10 @@
 // anything malformed refused), the code → text mapping (a refused
 // credential refined by TP-Link's errorCode, unknown codes shown with their
 // message), the es / en texts of every outcome, reason and save code, and the
-// late-reply guard.
+// late-reply guard; and (inbox I-1c2a) the local controller's omadacId of a
+// cloud reply (malformed → absent) with the "This network" mark, and the
+// cloud-only save of a configuration without a local controller, checked
+// against main's applyConfigSave() over a matrix.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -30,12 +33,17 @@ import {
   cloudTestSummaryKey,
   cloudTestTone,
   hasUnsavedCloudChanges,
+  isCloudControllerId,
+  isCloudOnlyForm,
   isCloudRegion,
   isCloudTestCurrent,
+  isLocalDuplicate,
   parseCloudAccessResult,
   parseCloudAccessStatus,
   parseCloudController,
   parseCloudDiagnostic,
+  parseLocalOmadacId,
+  planCloudOnlySave,
   planCloudSave,
   tpLinkErrorCode,
   type CloudFormInput,
@@ -448,5 +456,133 @@ describe('isCloudTestCurrent', () => {
     assert.equal(isCloudTestCurrent(3, 3, true), true);
     assert.equal(isCloudTestCurrent(3, 4, true), false);
     assert.equal(isCloudTestCurrent(3, 3, false), false);
+  });
+});
+
+describe('the local controller\'s omadacId in a cloud reply (inbox I-1c2a)', () => {
+  const LOCAL_ID = 'c0ffee00c0ffee00c0ffee00c0ffee00';
+
+  test('parseLocalOmadacId() / isCloudControllerId(): an omadacId as main sends it; anything else is absent (null), never a crash', () => {
+    assert.equal(parseLocalOmadacId(LOCAL_ID), LOCAL_ID);
+    for (const raw of [undefined, null, '', 'local', 'has space', 'x'.repeat(65), 7, {}, ['a']]) {
+      assert.equal(parseLocalOmadacId(raw), null, JSON.stringify(raw));
+    }
+    assert.equal(isCloudControllerId('4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d'), true);
+    assert.equal(isCloudControllerId('local'), false);
+  });
+
+  test('parseCloudAccessResult() keeps a well-formed localOmadacId on a success and drops a malformed one without refusing the reply', () => {
+    const controllers = mainDtos();
+    assert.deepEqual(parseCloudAccessResult({ success: true, controllers, truncated: false, localOmadacId: LOCAL_ID }), { ok: true, controllers, truncated: false, localOmadacId: LOCAL_ID });
+    for (const bad of ['local', '', 'a b', 42, null]) {
+      assert.deepEqual(parseCloudAccessResult({ success: true, controllers, truncated: false, localOmadacId: bad }), { ok: true, controllers, truncated: false }, JSON.stringify(bad));
+    }
+    assert.deepEqual(parseCloudAccessResult({ success: false, error: 'rateLimited', localOmadacId: LOCAL_ID }), { ok: false, error: 'rateLimited', code: 'rateLimited', diagnostic: null });
+  });
+
+  test('cloudTestOutcome() passes it on; isLocalDuplicate() names the controller Settings marks "This network"', () => {
+    const controllers = mainDtos();
+    const outcome = cloudTestOutcome({ ok: true, controllers, truncated: false, localOmadacId: controllers[0].omadacId });
+    assert.equal(outcome.localOmadacId, controllers[0].omadacId);
+    assert.equal('localOmadacId' in cloudTestOutcome({ ok: true, controllers, truncated: false }), false);
+    assert.deepEqual(controllers.map((controller) => isLocalDuplicate(controller, outcome.localOmadacId)), [true, false, false, false]);
+    assert.ok(controllers.every((controller) => !isLocalDuplicate(controller, undefined) && !isLocalDuplicate(controller, null) && !isLocalDuplicate(controller, 'local')));
+  });
+});
+
+describe('a configuration without a local controller: the cloud-only save (inbox I-1c2a)', () => {
+  const NO_LOCAL = { urlField: '', usernameField: '', passwordField: '', storedUrl: '' };
+
+  test('isCloudOnlyForm(): URL, username and password blank AND no local controller stored (main\'s isCloudOnlySave())', () => {
+    assert.equal(isCloudOnlyForm(NO_LOCAL), true);
+    assert.equal(isCloudOnlyForm({ ...NO_LOCAL, urlField: '  ', usernameField: ' ' }), true);
+    assert.equal(isCloudOnlyForm({ ...NO_LOCAL, urlField: URL_A }), false);
+    assert.equal(isCloudOnlyForm({ ...NO_LOCAL, usernameField: 'admin' }), false);
+    assert.equal(isCloudOnlyForm({ ...NO_LOCAL, passwordField: ' ' }), false, 'any typed password is a local section');
+    assert.equal(isCloudOnlyForm({ ...NO_LOCAL, storedUrl: URL_A }), false, 'a stored local controller is never emptied this way');
+  });
+
+  test('planCloudOnlySave(): typed management fields need a controller; the cloud plan; nothing configured is the empty form', () => {
+    const blank = { managementRemoveStaged: false, managementClientIdField: '', managementSecretField: '' };
+    assert.deepEqual(planCloudOnlySave({ ...blank, managementClientIdField: 'mgmt-1', cloud: input({ clientIdField: 'c', clientSecretField: 's' }) }), { ok: false, error: 'managementNeedsController' });
+    assert.deepEqual(planCloudOnlySave({ ...blank, managementSecretField: 'x', cloud: input({}) }), { ok: false, error: 'managementNeedsController' });
+    assert.deepEqual(planCloudOnlySave({ ...blank, cloud: input({ clientIdField: 'cloud-client-1', clientSecretField: TYPED_SECRET }) }), {
+      ok: true, fields: { cloudRegion: 'euw', cloudClientId: 'cloud-client-1', cloudClientSecret: TYPED_SECRET },
+    });
+    assert.deepEqual(planCloudOnlySave({ ...blank, cloud: input({ clientIdField: 'cloud-client-1', storedClientId: 'cloud-client-1', hasCloudSecret: true }) }), { ok: true, fields: {} });
+    assert.deepEqual(planCloudOnlySave({ ...blank, cloud: input({ removeStaged: true, storedClientId: 'cloud-client-1', hasCloudSecret: true }) }), { ok: true, fields: { removeCloudAccess: true } });
+    assert.deepEqual(planCloudOnlySave({ ...blank, managementRemoveStaged: true, cloud: input({ removeStaged: true }) }), { ok: true, fields: { removeManagementAccess: true, removeCloudAccess: true } });
+    assert.deepEqual(planCloudOnlySave({ ...blank, cloud: input({}) }), { ok: false, error: 'fillUrlAndUser' });
+    assert.deepEqual(planCloudOnlySave({ ...blank, cloud: input({ regionField: 'use' }) }), { ok: false, error: 'fillUrlAndUser' }, 'a region alone configures nothing');
+    assert.deepEqual(planCloudOnlySave({ ...blank, cloud: input({ clientSecretField: 's' }) }), { ok: false, error: 'cloudClientIdRequired' });
+  });
+
+  test('agrees with main\'s applyConfigSave() over a matrix of cloud-only states (stricter only for a blank Client ID while a credential is stored)', () => {
+    const base = { url: '', username: '', language: 'es' as const };
+    const storedStates: StoredConfig[] = [
+      { url: '', username: '', language: 'es' },
+      { url: '', username: '', language: 'es', cloudRegion: 'aps', cloudClientId: 'cloud-client-1', encryptedCloudClientSecret: box.encryptString('stored-secret'), activeController: '4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d' },
+      { url: '', username: '', language: 'es', cloudClientId: 'cloud-client-1' },
+    ];
+    let compared = 0;
+    for (const stored of storedStates) {
+      const status = cloudAccessStatus(stored, box, null);
+      for (const removeStaged of [false, true]) {
+        for (const regionField of [status.region, status.region === 'aps' ? 'use' : 'aps']) {
+          for (const clientIdField of ['', '  cloud-client-1 ', 'cloud-client-2', 'bad id!']) {
+            for (const clientSecretField of ['', TYPED_SECRET]) {
+              for (const managementClientIdField of ['', 'mgmt-client-1']) {
+                const cloud = input({ removeStaged, regionField, clientIdField, clientSecretField, storedRegion: status.region, storedClientId: status.clientId, hasCloudSecret: status.hasCloudSecret });
+                const plan = planCloudOnlySave({ managementRemoveStaged: false, managementClientIdField, managementSecretField: '', cloud });
+                const label = JSON.stringify({ stored: status, removeStaged, regionField, clientIdField, clientSecretField, managementClientIdField });
+                if (plan.ok) {
+                  const outcome = applyConfigSave(stored, { ...base, ...plan.fields }, box);
+                  assert.ok(outcome.ok, `main refused an accepted plan: ${label}`);
+                  if (!outcome.ok) continue;
+                  assert.equal(outcome.config.url, '', label);
+                  assert.equal(outcome.config.username, '', label);
+                  assert.equal(outcome.urlChanged, false, label);
+                  if (removeStaged) {
+                    assert.equal(outcome.config.cloudClientId, undefined, label);
+                  } else {
+                    assert.equal(outcome.config.cloudClientId, plan.fields.cloudClientId ?? stored.cloudClientId, label);
+                    assert.ok(outcome.config.cloudClientId, `a cloud-only config keeps a cloud Client ID: ${label}`);
+                  }
+                } else if (plan.error === 'cloudClientIdRequired' && clientIdField.trim() === '' && clientSecretField === '' && (status.clientId !== '' || status.hasCloudSecret)) {
+                  // Stricter on purpose (like the local path): "Remove cloud access" removes
+                  compared++;
+                  continue;
+                } else {
+                  const naive: ConfigSavePayload = { ...base };
+                  if (managementClientIdField !== '') naive.clientId = managementClientIdField;
+                  if (removeStaged) {
+                    naive.removeCloudAccess = true;
+                  } else {
+                    naive.cloudRegion = regionField as CloudRegion;
+                    if (clientIdField.trim() !== '') naive.cloudClientId = clientIdField;
+                    if (clientSecretField !== '') naive.cloudClientSecret = clientSecretField;
+                  }
+                  const outcome = applyConfigSave(stored, naive, box);
+                  const expected = plan.error === 'fillUrlAndUser' ? 'invalidUrl' : plan.error;
+                  assert.ok(!outcome.ok && outcome.error === expected, `main disagrees (${outcome.ok ? 'ok' : outcome.error} vs ${plan.error}): ${label}`);
+                }
+                compared++;
+              } // End of the loop over the management Client ID fields
+            } // End of the loop over the typed secrets
+          } // End of the loop over the Client ID fields
+        } // End of the loop over the region fields
+      } // End of the loop over the staged removals
+    } // End of the loop over the stored states
+    assert.equal(compared, 3 * 2 * 2 * 4 * 2 * 2);
+  }); // End of test "agrees with main's applyConfigSave() over a matrix of cloud-only states"
+
+  test('the new texts exist in both languages: the refusal points at the local controller, the certificate note at the cloud', () => {
+    for (const key of ['managementNeedsController', 'certCloudNote', 'thisNetwork', 'fillUrlAndUser'] as const) {
+      assert.ok(translations.es[key].trim() !== '' && translations.en[key].trim() !== '' && translations.es[key] !== translations.en[key], key);
+    }
+    assert.match(translations.en.certCloudNote, /verified normally/);
+    assert.match(translations.es.certCloudNote, /verifica de la forma habitual/);
+    assert.match(translations.en.managementNeedsController, /URL, username and password/);
+    assert.match(translations.es.managementNeedsController, /URL, usuario y contraseña/);
   });
 });

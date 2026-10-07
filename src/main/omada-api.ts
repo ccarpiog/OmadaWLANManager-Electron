@@ -9,7 +9,7 @@ import {
   validateSitePage,
   validateWlanGroups
 } from './omada-validators';
-import { OmadaTransport, parseOmadaResponse, ResponseHeaders } from './omada-transport';
+import { isUnreachableTransportError, OmadaTransport, parseOmadaResponse, ResponseHeaders } from './omada-transport';
 import { isSensitiveKey, redactErrorMessage } from './redact';
 
 // This module never imports Electron: all HTTP goes through the injected
@@ -96,6 +96,10 @@ export class OmadaController {
   // Shared in-flight re-login: concurrent session-expired requests all
   // await this single promise instead of starting competing logins
   private reloginPromise: Promise<void> | null = null;
+  // True when the latest connect() failed because the controller never
+  // answered its FIRST request, /api/info (inbox I-1c2a review): see
+  // connectUnreachable
+  private firstRequestUnanswered = false;
 
   /**
    * Creates a client for one controller. Nothing is sent until connect().
@@ -124,11 +128,21 @@ export class OmadaController {
    * @returns The connect outcome (authentication failures throw instead).
    */
   async connect(preferredSiteId?: string): Promise<ConnectOutcome> {
+    this.firstRequestUnanswered = false;
     try {
       // Step 1: Get controller info to retrieve omadacId, and keep the
       // controller version: it decides the group model (AP groups on 6.3+,
-      // legacy WLAN groups otherwise — see describeController())
-      const infoResponse = await this.request<{ omadacId: string; controllerVer?: unknown }>('/api/info', 'GET');
+      // legacy WLAN groups otherwise — see describeController()). Whether a
+      // failure of THIS request means "never answered" is recorded from the
+      // transport's typed failure (isUnreachableTransportError()); a failure
+      // of any later request never counts — the controller has answered
+      let infoResponse: OmadaApiResponse<{ omadacId: string; controllerVer?: unknown }>;
+      try {
+        infoResponse = await this.request<{ omadacId: string; controllerVer?: unknown }>('/api/info', 'GET');
+      } catch (error) {
+        this.firstRequestUnanswered = isUnreachableTransportError(error);
+        throw error;
+      }
 
       if (!infoResponse.result?.omadacId) {
         throw new Error('No se pudo obtener el ID del controlador');
@@ -178,6 +192,20 @@ export class OmadaController {
    */
   get controllerId(): string | null {
     return this.omadacId;
+  }
+
+  /**
+   * Whether the latest connect() failed because the controller never
+   * answered at all (inbox I-1c2a review): its first request, /api/info, got
+   * no response — the request timed out or failed with a net error such as a
+   * refused connection or an unresolved name (isUnreachableTransportError()).
+   * False after any response, so a timeout or reset during the login or the
+   * site list, an HTTP error and a certificate error never count. Reset by
+   * every connect().
+   * @returns {boolean} True for an unreachable controller.
+   */
+  get connectUnreachable(): boolean {
+    return this.firstRequestUnanswered;
   }
 
   /**

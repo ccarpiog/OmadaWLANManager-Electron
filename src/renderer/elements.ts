@@ -162,6 +162,9 @@ export const managementTestResult = document.getElementById('managementTestResul
 export const cloudHeading = document.getElementById('cloudHeading') as HTMLElement;
 export const cloudHelp = document.getElementById('cloudHelp') as HTMLElement;
 export const cloudCredentialHelp = document.getElementById('cloudCredentialHelp') as HTMLElement;
+// The certificate section's note on cloud controllers (inbox I-1c2a: their
+// certificate is verified normally; shown while a cloud credential is stored)
+export const certCloudNote = document.getElementById('certCloudNote') as HTMLElement;
 export const labelCloudRegion = document.getElementById('labelCloudRegion') as HTMLElement;
 export const cloudRegionSelect = document.getElementById('cloudRegionSelect') as HTMLSelectElement;
 export const labelCloudClientId = document.getElementById('labelCloudClientId') as HTMLElement;

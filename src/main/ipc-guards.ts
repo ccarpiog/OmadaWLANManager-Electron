@@ -4,8 +4,9 @@
 // Wi-Fi network writes of phase 18a, the binding write of phase 19a, the
 // controller data channels (requireSessionNonce(), parseApMoveRequest()) and
 // the controller switch (parseControllerTargetRequest()) of inbox phase
-// I-1b2b2 — plus the arity guard of the other channels
-// (requireNoExtraArguments()).
+// I-1b2b2 and the config-save payload (isValidConfigSavePayload(), inbox
+// I-1c2a: it answers a boolean, CONFIG_SAVE replies 'saveFailed') — plus the
+// arity guard of the other channels (requireNoExtraArguments()).
 // index.ts calls them right after assertTrustedIpcSender(); the
 // unit tests (tests/unit/ipc-guards.test.ts) and the smoke stub
 // (tests/smoke/stub-main.cjs, which requires the compiled module) use the very
@@ -17,10 +18,12 @@
 
 import { AP_GROUP_ID_REGEX } from './ap-group-policy';
 import { isOmadacId } from './cloud-account-model';
+import { isCloudRegion } from './cloud-hosts';
 import type {
   ApGroupCreateRequest,
   ApGroupDeleteRequest,
   ApGroupRenameRequest,
+  ConfigSavePayload,
   ControllerTarget,
   NetworkBand,
   NetworkBindingsRequest,
@@ -489,3 +492,113 @@ export function parseNetworkBindingsRequest(payload: unknown, extra: unknown[]):
   const raw = requireExactPayload(payload, extra, ['sessionNonce', 'networkId', 'apGroupIds'], [], 'Wi-Fi network bindings');
   return { sessionNonce: nonceField(raw), networkId: networkIdField(raw), apGroupIds: apGroupIdsField(raw) };
 }
+
+// ============================================================================
+// config:save (moved here from index.ts in inbox I-1c2a, so the unit tests and
+// the smoke stub use the very same guard)
+// ============================================================================
+
+// Length caps for the strings of a config-save payload (defense against absurd
+// payloads): the controller URL, the username, the password, the raw Client
+// ID fields (trimmed and validated against CLIENT_ID_REGEX by config-model.ts)
+// and the Client Secrets — of the management access and of the TP-Link cloud
+export const MAX_CONFIG_URL_LENGTH = 2048;
+export const MAX_CONFIG_USERNAME_LENGTH = 256;
+export const MAX_CONFIG_PASSWORD_LENGTH = 512;
+export const MAX_CONFIG_CLIENT_ID_LENGTH = 256;
+export const MAX_CONFIG_CLIENT_SECRET_LENGTH = 512;
+
+// The only keys a config-save payload may carry (ConfigSavePayload)
+const CONFIG_SAVE_KEYS: ReadonlySet<string> = new Set([
+  'url',
+  'username',
+  'language',
+  'password',
+  'clientId',
+  'clientSecret',
+  'removeManagementAccess',
+  'cloudRegion',
+  'cloudClientId',
+  'cloudClientSecret',
+  'removeCloudAccess'
+]);
+
+/**
+ * Tells whether an optional payload field is absent or a non-empty string
+ * within its cap.
+ * @param {unknown} value - The field.
+ * @param {number} max - Its length cap.
+ * @returns {boolean} True when acceptable.
+ */
+function isOptionalNonEmptyString(value: unknown, max: number): boolean {
+  return value === undefined || (typeof value === 'string' && value.length > 0 && value.length <= max);
+}
+
+/**
+ * Runtime shape guard of the config-save payload arriving over IPC: a plain
+ * object carrying only ConfigSavePayload keys, a supported language, and
+ * either the local controller section — non-empty string url / username
+ * within the caps, the password a string within its cap when present — or,
+ * for a configuration without a local controller (cloud-only, inbox I-1c2a),
+ * exactly '' as url and username with the password absent or ''. When
+ * present: clientId and clientSecret non-empty strings within their caps,
+ * removeManagementAccess only as the literal true and never with them; the
+ * same for the cloud fields (cloudRegion one of the regions, cloudClientId /
+ * cloudClientSecret non-empty strings within the caps, removeCloudAccess
+ * only as the literal true and never with the other three). A partially
+ * filled local section (an empty url or username beside a non-empty one or
+ * a typed password) is refused here, as before. Detailed value validation
+ * (URL normalization, the password, management-access and cloud-access
+ * keep/require rules, the cloud-only rules, the Client ID formats) stays in
+ * applyConfigSave() (config-model.ts).
+ * @param {unknown} payload - The raw IPC payload.
+ * @returns {payload is ConfigSavePayload} True when the shape is valid.
+ */
+export function isValidConfigSavePayload(payload: unknown): payload is ConfigSavePayload {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return false;
+  }
+  const raw = payload as Record<string, unknown>;
+  if (Object.keys(raw).some((key) => !CONFIG_SAVE_KEYS.has(key))) {
+    return false;
+  }
+  if (typeof raw.url !== 'string' || raw.url.length > MAX_CONFIG_URL_LENGTH) {
+    return false;
+  }
+  if (typeof raw.username !== 'string' || raw.username.length > MAX_CONFIG_USERNAME_LENGTH) {
+    return false;
+  }
+  if (raw.password !== undefined && (typeof raw.password !== 'string' || raw.password.length > MAX_CONFIG_PASSWORD_LENGTH)) {
+    return false;
+  }
+  const cloudOnlyShape = raw.url === '' && raw.username === '' && (raw.password === undefined || raw.password === '');
+  if (!cloudOnlyShape && (raw.url.length === 0 || raw.username.length === 0)) {
+    return false;
+  }
+  // Supported languages (see Language in shared/types.ts)
+  if (raw.language !== 'es' && raw.language !== 'en') {
+    return false;
+  }
+  if (!isOptionalNonEmptyString(raw.clientId, MAX_CONFIG_CLIENT_ID_LENGTH) || !isOptionalNonEmptyString(raw.clientSecret, MAX_CONFIG_CLIENT_SECRET_LENGTH)) {
+    return false;
+  }
+  if (raw.removeManagementAccess !== undefined && (raw.removeManagementAccess !== true || raw.clientId !== undefined || raw.clientSecret !== undefined)) {
+    return false;
+  }
+  if (raw.cloudRegion !== undefined && !isCloudRegion(raw.cloudRegion)) {
+    return false;
+  }
+  if (
+    !isOptionalNonEmptyString(raw.cloudClientId, MAX_CONFIG_CLIENT_ID_LENGTH) ||
+    !isOptionalNonEmptyString(raw.cloudClientSecret, MAX_CONFIG_CLIENT_SECRET_LENGTH)
+  ) {
+    return false;
+  }
+  if (
+    raw.removeCloudAccess !== undefined &&
+    (raw.removeCloudAccess !== true || raw.cloudRegion !== undefined || raw.cloudClientId !== undefined || raw.cloudClientSecret !== undefined)
+  ) {
+    return false;
+  }
+  return true;
+} // End of function isValidConfigSavePayload()

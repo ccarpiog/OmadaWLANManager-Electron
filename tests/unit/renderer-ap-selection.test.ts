@@ -15,9 +15,11 @@ import {
   distinctSsidCountKind,
   filterAccessPoints,
   GROUP_FILTER_UNASSIGNED,
+  GROUP_FILTER_UNKNOWN,
   indexGroupsByName,
   isFilterActive,
   matchesStatusFilter,
+  missingGroupKey,
   networkCountFor,
   networkListKeys,
   planRangeSelection,
@@ -30,6 +32,7 @@ import {
   type ApFilters,
 } from '../../src/renderer/ap-selection';
 import { translations } from '../../src/renderer/i18n-strings';
+import { hasUnknownGroup } from '../../src/renderer/move-plan';
 import { isValidWlanId } from '../../src/renderer/validation';
 
 /**
@@ -114,6 +117,42 @@ describe('filterAccessPoints / isFilterActive', () => {
     assert.equal(isValidWlanId(GROUP_FILTER_UNASSIGNED), false);
   });
 }); // End of describe filterAccessPoints
+
+describe('an AP whose group the controller did not report (cloud, inbox I-1c2a)', () => {
+  // A cloud AP without a reported group name: '' plus the flag, never "no group"
+  const unreported: AccessPoint = { ...ap('AA-00-00-00-00-06', 'Nube', '', 1), wlanGroupUnknown: true };
+  const mixed: AccessPoint[] = [...APS, unreported];
+
+  test('hasUnknownGroup() / missingGroupKey(): the flag only with an empty name; local data never reads as unknown', () => {
+    assert.equal(hasUnknownGroup(unreported), true);
+    assert.equal(hasUnknownGroup({ ...unreported, wlanGroup: 'Grupo A' }), false, 'a reported name wins');
+    assert.equal(hasUnknownGroup({ ...unreported, wlanGroupUnknown: 'yes' as unknown as true }), false, 'only the literal true');
+    assert.ok(APS.every((entry) => !hasUnknownGroup(entry)));
+    assert.equal(missingGroupKey(unreported), 'apGroupUnknown');
+    assert.equal(missingGroupKey(APS[3]), 'unassigned');
+    assert.equal(missingGroupKey(APS[0]), null);
+    assert.equal(translations.en.apGroupUnknown, 'Unknown group');
+    assert.equal(translations.es.apGroupUnknown, 'Grupo desconocido');
+  });
+
+  test('the "Unknown group" filter shows only those APs; "unassigned" ("") and a group name never include them', () => {
+    assert.deepEqual(names(filterAccessPoints(mixed, { ...NO_FILTERS, groupName: null, groupUnknown: true })), ['Nube']);
+    assert.deepEqual(names(filterAccessPoints(mixed, { ...NO_FILTERS, groupName: '' })), ['Patio']);
+    assert.deepEqual(names(filterAccessPoints(mixed, { ...NO_FILTERS, groupName: 'Grupo A' })), ['Aula 1', 'Aula 2']);
+    assert.deepEqual(names(filterAccessPoints(mixed, NO_FILTERS)), names(mixed));
+    assert.equal(isFilterActive({ ...NO_FILTERS, groupUnknown: true }), true);
+    assert.equal(isValidWlanId(GROUP_FILTER_UNKNOWN), false);
+    assert.notEqual(GROUP_FILTER_UNKNOWN, GROUP_FILTER_UNASSIGNED);
+  });
+
+  test('local data filters exactly as before (no flag, no groupUnknown)', () => {
+    for (const filters of [NO_FILTERS, { ...NO_FILTERS, groupName: '' }, { ...NO_FILTERS, groupName: 'Grupo B' }, { ...NO_FILTERS, text: 'a' }]) {
+      const before = APS.filter((entry) => filters.groupName === null || entry.wlanGroup === filters.groupName);
+      assert.deepEqual(names(filterAccessPoints(APS, filters)), names(before.filter((entry) => filters.text === '' || entry.name.toLowerCase().includes(filters.text) || entry.wlanGroup.toLowerCase().includes(filters.text))));
+    }
+    assert.equal(networkCountFor(unreported.wlanGroup, indexGroupsByName(GROUPS)), null, 'its networks are unknown, never a count');
+  });
+}); // End of describe "an AP whose group the controller did not report"
 
 describe('rangeBetween (Shift-click / Shift+Arrow ranges)', () => {
   test('forward and backward ranges include both ends', () => {

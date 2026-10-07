@@ -495,7 +495,7 @@ describe('cloud controller session: access points from ap-groups/aps', () => {
     });
     assert.deepEqual(byMac.get('AA-BB-CC-00-00-02'), { mac: 'AA-BB-CC-00-00-02', name: 'EAP Planta 4 Sur', type: 'ap', wlanGroup: 'zGrupo B', statusCategory: 3, clientNum: 0, wlanId: GRUPO_B_ID });
     // Every optional field missing or insane: unknown, never a real-looking default
-    assert.deepEqual(byMac.get('aa:bb:cc:00:00:03'), { mac: 'aa:bb:cc:00:00:03', name: 'aa:bb:cc:00:00:03', type: 'ap', wlanGroup: '', statusCategory: UNKNOWN_STATUS_CATEGORY });
+    assert.deepEqual(byMac.get('aa:bb:cc:00:00:03'), { mac: 'aa:bb:cc:00:00:03', name: 'aa:bb:cc:00:00:03', type: 'ap', wlanGroup: '', statusCategory: UNKNOWN_STATUS_CATEGORY, wlanGroupUnknown: true });
     assert.deepEqual(byMac.get('AA-BB-CC-00-00-04'), { mac: 'AA-BB-CC-00-00-04', name: 'EAP Almacén', type: 'ap', wlanGroup: 'zGrupo B', statusCategory: 0, clientNum: 2, wlanId: GRUPO_B_ID });
     assert.equal(byMac.has('AA-BB-CC-00-00-09'), false, 'the gateway row');
     assert.equal(aps.length, 4);
@@ -530,7 +530,10 @@ describe('cloud controller session: access points from ap-groups/aps', () => {
       assert.throws(() => validateOpenApiApGroupAp(entry), (error: unknown) => error instanceof OpenApiError && error.code === 'malformedResponse');
     }
     const unknown: AccessPoint = toCloudAccessPoint({ mac: 'AA-BB-CC-00-00-07' });
-    assert.deepEqual(unknown, { mac: 'AA-BB-CC-00-00-07', name: 'AA-BB-CC-00-00-07', type: 'ap', wlanGroup: '', statusCategory: -1 });
+    assert.deepEqual(unknown, { mac: 'AA-BB-CC-00-00-07', name: 'AA-BB-CC-00-00-07', type: 'ap', wlanGroup: '', statusCategory: -1, wlanGroupUnknown: true });
+    // An unreported group name is flagged unknown (inbox I-1c2a), a reported one never; the group id alone does not name it
+    assert.deepEqual(toCloudAccessPoint({ mac: 'm', apGroupId: DEFAULT_ID }), { mac: 'm', name: 'm', type: 'ap', wlanGroup: '', statusCategory: -1, wlanId: DEFAULT_ID, wlanGroupUnknown: true });
+    assert.equal('wlanGroupUnknown' in toCloudAccessPoint({ mac: 'm', apGroupName: 'Default' }), false);
     assert.equal(isApRow({ mac: 'm' }), true);
     assert.equal(isApRow({ mac: 'm', deviceType: 'EAP' }), true);
     assert.equal(isApRow({ mac: 'm', deviceType: 'gateway' }), false);

@@ -16,7 +16,11 @@
 // run number (resetCloudTest()), so a late reply never paints into a closed
 // or reopened Settings (isCloudTestCurrent()). Main itself answers
 // 'superseded' when the credential was saved or removed while it ran, which
-// is shown as such — never as a current result.
+// is shown as such — never as a current result. The controller whose
+// omadacId is the local controller's (main's `localOmadacId`, inbox I-1c2a)
+// is marked "This network" in the list. The certificate section's note on
+// cloud controllers (their certificate is verified normally) shows while a
+// cloud credential is stored.
 // ============================================================================
 
 import type { CloudController, CloudRegion, RendererConfig } from '../shared/types';
@@ -31,9 +35,11 @@ import {
   cloudTestTone,
   hasUnsavedCloudChanges,
   isCloudTestCurrent,
+  isLocalDuplicate,
   parseCloudAccessResult,
   parseCloudAccessStatus,
   planCloudSave,
+  type CloudFormInput,
   type CloudFormPlan,
   type CloudSecretAffordance,
   type CloudTestOutcome,
@@ -41,6 +47,7 @@ import {
 } from './cloud-form';
 import {
   cancelCloudRemoveBtn,
+  certCloudNote,
   cloudClientIdInput,
   cloudClientSecretInput,
   cloudCredentialHelp,
@@ -108,6 +115,7 @@ export function applyCloudTranslations(): void {
   cancelCloudRemoveBtn.textContent = t('cancel');
   confirmCloudRemoveBtn.textContent = t('cloudRemoveAction');
   testCloudBtn.textContent = t('cloudTest');
+  certCloudNote.textContent = t('certCloudNote');
 } // End of function applyCloudTranslations()
 
 /**
@@ -116,7 +124,8 @@ export function applyCloudTranslations(): void {
  * reaches the renderer; only `hasCloudSecret` does), the flags in state, no
  * removal staged, no confirmation open and no old test result. The flags
  * arriving over IPC are validated (parseCloudAccessStatus(): a missing or
- * malformed field reads as "nothing stored").
+ * malformed field reads as "nothing stored"). The certificate section's
+ * cloud note shows while a cloud Client ID or secret is stored.
  * @param {RendererConfig} config - The config from loadConfig().
  */
 export function loadCloudSection(config: RendererConfig): void {
@@ -131,6 +140,7 @@ export function loadCloudSection(config: RendererConfig): void {
   cloudClientIdInput.value = cloud.clientId;
   cloudClientSecretInput.value = '';
   cloudRemoveConfirm.hidden = true;
+  certCloudNote.hidden = cloud.clientId === '' && !cloud.hasCloudSecret;
   resetCloudTest();
   updateCloudAffordance();
 } // End of function loadCloudSection()
@@ -239,12 +249,12 @@ export function undoCloudRemoval(): void {
 }
 
 /**
- * The cloud-access part of a settings save, from the section's state
- * (planCloudSave(): the fields to send, or the refusal to show).
- * @returns {CloudFormPlan} The plan.
+ * The section's state as the pure save rules read it (planCloudSave(), and
+ * planCloudOnlySave() for a configuration without a local controller).
+ * @returns {CloudFormInput} The fields and what main reported on open.
  */
-export function planCloudSettingsSave(): CloudFormPlan {
-  return planCloudSave({
+export function cloudSettingsFormInput(): CloudFormInput {
+  return {
     removeStaged: state.settingsRemoveCloud,
     regionField: cloudRegionSelect.value,
     clientIdField: cloudClientIdInput.value,
@@ -252,8 +262,17 @@ export function planCloudSettingsSave(): CloudFormPlan {
     storedRegion: state.settingsCloudRegion,
     storedClientId: state.settingsCloudClientId,
     hasCloudSecret: state.settingsHasCloudSecret,
-  });
-} // End of function planCloudSettingsSave()
+  };
+} // End of function cloudSettingsFormInput()
+
+/**
+ * The cloud-access part of a settings save, from the section's state
+ * (planCloudSave(): the fields to send, or the refusal to show).
+ * @returns {CloudFormPlan} The plan.
+ */
+export function planCloudSettingsSave(): CloudFormPlan {
+  return planCloudSave(cloudSettingsFormInput());
+}
 
 /**
  * Empties the typed cloud Client Secret (Settings closed: a typed secret
@@ -290,20 +309,30 @@ export function handleCloudFieldEdit(): void {
 }
 
 /**
- * Builds one controller of a successful test: its name, its version when
+ * Builds one controller of a successful test: its name, "This network" when
+ * it is the local controller reached through the cloud (inbox I-1c2a: its
+ * omadacId is main's `localOmadacId`; `data-local="true"`), its version when
  * reported, and its status — available, or why it cannot be used. Every
  * value is set as text (names come from TP-Link). `data-reason` carries the
  * reason code ('none' when connectable).
  * @param {CloudController} controller - The validated controller.
+ * @param {string | undefined} localOmadacId - The local controller's omadacId, if main reported it.
  * @returns {HTMLLIElement} The list item.
  */
-function controllerItem(controller: CloudController): HTMLLIElement {
+function controllerItem(controller: CloudController, localOmadacId: string | undefined): HTMLLIElement {
   const item = document.createElement('li');
   item.dataset.reason = controller.reason ?? 'none';
   const name = document.createElement('span');
   name.className = 'cloud-controller-name';
   name.textContent = controller.name;
   item.append(name);
+  if (isLocalDuplicate(controller, localOmadacId)) {
+    item.dataset.local = 'true';
+    const local = document.createElement('span');
+    local.className = 'cloud-controller-local';
+    local.textContent = t('thisNetwork');
+    item.append(local);
+  }
   if (controller.version !== null) {
     const version = document.createElement('span');
     version.className = 'cloud-controller-version';
@@ -336,7 +365,7 @@ function showCloudTest(outcome: CloudTestOutcome): void {
     const list = document.createElement('ul');
     list.className = 'cloud-test-list';
     list.setAttribute('aria-label', t('cloudControllersLabel'));
-    list.append(...outcome.controllers.map(controllerItem));
+    list.append(...outcome.controllers.map((controller) => controllerItem(controller, outcome.localOmadacId)));
     children.push(list);
   }
   if (outcome.display === 'ok' && outcome.truncated) {

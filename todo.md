@@ -746,5 +746,102 @@ everything is built against the documented contract and fixtures.
     header controller name, the cloud error states, "Connect through TP-Link cloud" and a cloud-only start, the cloud
     certificate note in Settings, an AP with no reported group shown as unknown rather than "Unassigned" (I-1b1 leftover),
     smoke `[cloud]` es + en (four organizations: local duplicate hidden, one offline, one below 6.3, one connectable).
+    - **Split (2026-10-07, before starting — too big for one worker):**
+      - ✅ **I-1c2a (high):** the main-process and data side — `localOmadacId` to the renderer over a guarded reply, the
+        cloud-only save (main + the `saveSettings()` / `planCloudSave()` mirror), startup with a cloud-only config, the pure
+        switcher model with the "Connect through TP-Link cloud" decision and the busy predicate, es / en strings, the
+        Settings cloud certificate note, unknown AP groups shown as unknown, the smoke stub honoring the `cloudAccess`
+        flags. No switcher UI.
+      - **I-1c2b (high):** the switcher UI at the top of the sidebar, the state reset on a switch, the header controller
+        name, the cloud error states, "Connect through TP-Link cloud", the renderer `init()` cloud-only start, smoke
+        `[cloud]` es + en.
+    - **Done (I-1c2a)** (main, renderer models and Settings, smoke stub; no switcher UI):
+      - **`localOmadacId` to the renderer:** `CloudAccessService` takes `getLocalOmadacId` (config.ts), and a successful
+        `cloud:test` / `cloud:controllers` reply carries `localOmadacId` when a usable one is stored (read when the reply
+        is built; never on a failure, never in a diagnostic: a routing identifier like the DTOs' omadacIds). The renderer
+        keeps it only well-formed (`parseLocalOmadacId()`; a malformed one is dropped, the reply kept). Settings' Test
+        result **marks** the duplicate "This network" (`data-local`, `.cloud-controller-local`) instead of hiding it.
+        **Choice:** the cloud replies, not `config:load`, because the switcher needs it beside the list it filters.
+      - **Main's current target:** `config:load` adds `connectionTarget` (`'local'` or an omadacId,
+        `activeControllerValue(connectionManager.target)`): the stored `activeController` can differ after a startup
+        fallback (an unusable credential), so the switcher and `init()` must not read the stored value.
+      - **Cloud-only save:** `isCloudOnlySave()` / `applyCloudOnlySave()` (`config-model.ts`): URL and username `''`, no
+        password, none stored → the cloud rules alone; it must remove cloud access or leave a cloud Client ID stored, else
+        `invalidUrl` (the empty form's code, as before); the config keeps no local field; `urlChanged` false. **Choice
+        (management):** a management Client ID / Client Secret in a cloud-only save is refused with the new code
+        `managementNeedsController` (es / en text; a removal is accepted and changes nothing) — an Open API application
+        belongs to a local controller, and silently dropping a typed secret would hide the mistake. A partial local
+        section keeps today's codes. The shape guard moved to `ipc-guards.ts` (`isValidConfigSavePayload()`, used by
+        `index.ts`, the unit tests and the smoke stub): it accepts the cloud-only shape whole and still refuses a partial
+        local section (`saveFailed`). Renderer mirror: `isCloudOnlyForm()` / `planCloudOnlySave()` (`cloud-form.ts`) in
+        `saveSettings()`; a cloud-only save neither sets `hasStoredConfig` nor auto-connects (main's target may be the
+        unconfigured local controller — I-1c2b decides).
+      - **Startup:** no code change needed — `resolveStartupTarget()` already gives the stored cloud controller with a
+        usable credential and local otherwise (whose connect answers `configIncomplete`); tests and doc comment added.
+      - **Unreachable local controller:** a failed local connect whose controller never answered carries
+        `unreachable: true`; the `detail` is unchanged. The rule is typed (see the review fix below): the hardened
+        transport rejects with `TransportError` (`kind`, `netError`, `responded`), `OmadaController.connect()` records
+        `connectUnreachable` only when its first request, `/api/info`, failed that way (`isUnreachableTransportError()`:
+        the timeout or an `UNREACHABLE_NET_ERRORS` code before any response), and `ConnectionManager.connectLocal()` reads
+        it through `ManagedController.connectUnreachable` (`ControllerSession` → the local backend; cloud: always false).
+      - **Unknown AP group:** the cloud mapper sets `wlanGroupUnknown: true` when `apGroupName` is unreported; the
+        renderer keeps it only as `true` on an AP without a group name (`loadData()`), and `hasUnknownGroup()`
+        (`move-plan.ts`) / `missingGroupKey()` (`ap-selection.ts`) give "Unknown group" / "Grupo desconocido" in the AP
+        row, a separate "Unknown group" filter (`GROUP_FILTER_UNKNOWN`), the details pane ("Unknown: the controller did
+        not report this AP's group", `resolveApGroup()` kind `'unreported'`) and a move's sources (`groupUnknown`).
+        Local data renders byte-identically (no flag: the "Unassigned" paths are unchanged).
+      - **Pure switcher model:** new `src/renderer/controller-switcher-model.ts` — `buildControllerSwitcher()` (local first
+        when configured, cloud entries by name, the local duplicate hidden only while a local controller is configured,
+        disabled entries with the I-1c1 reason keys, the active entry marked, the local entry `viaCloud` while the session
+        is its cloud duplicate, an unlisted active cloud controller kept with `listed: false`, a failed list as
+        `{kind: 'failed', display, textKey, detail}` with the local entry still usable), `cloudFallbackTarget()` (only for
+        `isLocalUnreachable()`, a known `localOmadacId`, and a complete list showing it online and connectable),
+        `isSwitcherBusy()` (over the state flags: move, AP-group, network / binding writes, connect, disconnect, save,
+        certificate reset; a refresh does not block), `cloudConnectFailureKey()` (a refused cloud connect's text by its
+        code-first `detail`), `parseConnectionTarget()`, `localOmadacIdOf()`.
+      - **Strings (es / en):** `thisNetwork`, `controllerSwitcherLabel`, `controllerSwitcherCloudTag`,
+        `controllerSwitcherBusy`, `connectThroughCloud`, `cloudConnectOffline`, `cloudConnectCredentialExpired` /
+        `cloudConnectCredentialInvalid` / `cloudConnectNotConfigured` (pointing at Settings → TP-Link cloud),
+        `cloudConnectUnknownController`, `cloudListSuperseded`, `cloudListFailed`, `apGroupUnknown`, `apGroupNotReported`,
+        `certCloudNote`, `managementNeedsController`; `-7132` reuses `cloudTestRateLimited`.
+      - **Settings certificate note:** `#certCloudNote` in the certificate section ("TP-Link cloud controllers are reached
+        through TP-Link's cloud: their certificate is verified normally, with no pinning and no prompt."), shown while a
+        cloud Client ID or secret is stored (`loadCloudSection()`).
+      - **Smoke stub:** the cloud channels answer `notConfigured` without a saved credential in the `cloudAccess` flags
+        (a scripted `cloudResult` still wins) and carry the scenario's `localOmadacId`; CONFIG_SAVE uses the shared guard
+        and mirrors the cloud-only rule (`isCloudOnlyPayload()` / `cloudOnlySave()`); CONFIG_LOAD reports
+        `connectionTarget`. The user's `window-placement.cjs` lines are untouched.
+      - **Tests:** unit 1280 → 1339: new `renderer-controller-switcher.test.ts`; `config-cloud.test.ts` (cloud-only
+        saves), `ipc-guards.test.ts` (the moved guard), `cloud-access.test.ts` (`localOmadacId`), `connection-manager.test.ts`
+        and `omada-transport.test.ts` (unreachable), `connection-targets.test.ts` (cloud-only startup),
+        `renderer-cloud-form.test.ts` (`localOmadacId`, the cloud-only mirror against `applyConfigSave()` over a 192-case
+        matrix), `renderer-ap-selection` / `-inventory-model` / `-move-plan` (unknown group), `ipc-surface.test.ts`,
+        `cloud-controller-session.test.ts`. Smoke 291 → 295: `[es]` cloud channels (notConfigured, then the four DTOs
+        with `localOmadacId`), `[cloudset]` cloud note hidden / shown, "Esta red" / "This network" mark, a cloud-only save
+        with its refusals.
+      - **Review fix** (`docs/reviews/phaseI-1c2a.md`, Codex, 0 blockers, 1 should-fix): `unreachable` was inferred from
+        the failure text of the whole connect sequence, so a timeout or reset during the login or the site list counted;
+        now only a typed first-request failure before any response counts (above), with stage tests (`/api/info` timeout
+        and net error → unreachable; a login or site-list timeout, an HTTP error, a certificate error → not).
+      - **For I-1c2b:**
+        - Read `window.omadaAPI.loadConfig()`: `url` (local configured?), `cloudAccess` (credential stored:
+          `clientId !== '' && hasCloudSecret`), `parseConnectionTarget(config.connectionTarget)` (the active target).
+        - `init()`: connect when `config.url !== ''` (as today) **or** `parseConnectionTarget(...)?.kind === 'cloud'`
+          (main's startup target is a cloud controller); otherwise, with a cloud credential and no local URL, fetch
+          `getCloudControllers()` and show the switcher. After a cloud-only save do the same (read `connectionTarget`
+          again; `saveSettings()` skips the auto-connect for `payload.url === ''`).
+        - Switcher: `parseCloudAccessResult(await window.omadaAPI.getCloudControllers())` →
+          `buildControllerSwitcher({localConfigured, localName: controllerHostLabel(config.url, null), cloud,
+          localOmadacId: localOmadacIdOf(cloud), active, activeName: state.controllerName})`; texts `SWITCHER_TEXT`,
+          `entry.reasonKey`, `model.cloud.textKey` (+ `detail`); disable with `isSwitcherBusy(state)` and
+          `t(SWITCHER_TEXT.busy)`. Choosing an entry: `invalidateSession()` (generation + nonce), then
+          `window.omadaAPI.switchController(entry.target)` and handle the result like `connect()`
+          (`handleConnectResult()`), then re-read `loadConfig().connectionTarget`.
+        - Error states: for a cloud target's failed result, `cloudConnectFailureKey(result)` (null → the generic
+          `connectionError` + detail); after a failed LOCAL connect, `cloudFallbackTarget({localResult, cloud,
+          localOmadacId})` → show `t('connectThroughCloud')` that calls `switchController(target)`.
+        - The state reset on a switch, the header name (`state.controllerName` already labels cloud sessions), and smoke
+          `[cloud]` es + en over the stub (`cloudAccess` flags with a credential, `localOmadacId:
+          'c0ffee00c0ffee00c0ffee00c0ffee00'`, `cloudConnectResult`, a scripted connect with `unreachable: true`).
   - **I-1c3 (routine):** README cloud section and a cloud section in `docs/live-test-checklist.md` from
     `docs/omada-cloud-openapi.md` §11.

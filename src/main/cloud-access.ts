@@ -18,7 +18,10 @@
 //   service keeps a credential generation instead; a call whose credentials
 //   were saved, removed or replaced while it ran answers 'superseded'.
 // - Replies: the controller DTOs (toCloudController(): never a deviceId,
-//   serverHost or token) or a stable code with a codes-only diagnostic
+//   serverHost or token) — plus, on a success, the stored omadacId of the
+//   local controller (`localOmadacId`, inbox I-1c2a: the renderer lists its
+//   cloud duplicate once, as local; a routing identifier, never put in a
+//   diagnostic) — or a stable code with a codes-only diagnostic
 //   (TP-Link's message, redacted, only for an unknown errorCode), scrubbed of
 //   the live secret and tokens by value.
 // - A cloud target's connect (phase I-1b2b1, cloud-connect.ts) reads a fresh
@@ -33,6 +36,7 @@ import {
   CloudAccountErrorCode,
   CloudCredentials,
   CloudOrganization,
+  isOmadacId,
   MAX_CLOUD_DIAGNOSTIC_CHARS,
   toCloudController
 } from './cloud-account-model';
@@ -72,6 +76,10 @@ export interface CloudAccessServiceOptions {
   // Clock and sleep (tests inject fakes; they reach the client and the throttle)
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  // Optional (inbox I-1c2a; config.ts getLocalOmadacId() in production): the
+  // omadacId a local connect learned for the configured controller ('' when
+  // none). A successful reply carries it as `localOmadacId` when it is usable
+  getLocalOmadacId?: () => string;
 }
 
 /**
@@ -213,7 +221,12 @@ export class CloudAccessService {
       if (this.#isStale(generation, client)) {
         return { success: false, error: 'superseded' };
       }
-      return { success: true, controllers: list.items.map(toCloudController), truncated: list.truncated };
+      const reply: CloudAccessResult = { success: true, controllers: list.items.map(toCloudController), truncated: list.truncated };
+      const localOmadacId = this.#localOmadacId();
+      if (localOmadacId !== null) {
+        reply.localOmadacId = localOmadacId;
+      }
+      return reply;
     } catch (failure) {
       if (this.#isStale(generation, client)) {
         return { success: false, error: 'superseded' };
@@ -221,6 +234,21 @@ export class CloudAccessService {
       return this.#failureReply(failure, client);
     }
   } // End of function #run()
+
+  /**
+   * The stored omadacId of the local controller (getLocalOmadacId()), read
+   * when a reply is built so it is the current one; null when none is stored,
+   * it is not a usable omadacId (isOmadacId()) or reading it fails.
+   * @returns {string | null} The omadacId, or null.
+   */
+  #localOmadacId(): string | null {
+    try {
+      const value = this.#options.getLocalOmadacId?.();
+      return isOmadacId(value) ? value : null;
+    } catch {
+      return null;
+    }
+  } // End of function #localOmadacId()
 
   /**
    * Whether a call that started under `generation` with `client` is stale.

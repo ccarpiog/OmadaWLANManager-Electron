@@ -226,6 +226,18 @@ describe('index.ts registers every channel through the trusted registrar (struct
       assert.match(PRELOAD_SOURCE, new RegExp(`ipcRenderer\\.invoke\\(IPC_CHANNELS\\.${channel}\\)`), `the preload sends nothing on ${channel}`);
     }
   }); // End of test "the cloud channels (inbox I-1a) take no argument..."
+
+  test('inbox I-1c2a: config:save guards with the shared isValidConfigSavePayload(), config:load adds main\'s current target, the cloud replies get the stored localOmadacId', () => {
+    const save = registrations().find((registration) => registration.key === 'CONFIG_SAVE');
+    assert.ok(save);
+    assert.match(save.text, /if \(!isValidConfigSavePayload\(payload\)\) \{\s*return \{ success: false, error: 'saveFailed' \};/);
+    assert.match(INDEX_SOURCE, /import \{[^}]*\bisValidConfigSavePayload\b[^}]*\} from '\.\/ipc-guards';/);
+    assert.equal(/function isValidConfigSavePayload/.test(INDEX_SOURCE), false, 'one guard, in ipc-guards.ts');
+    const load = registrations().find((registration) => registration.key === 'CONFIG_LOAD');
+    assert.ok(load);
+    assert.match(load.text, /requireNoExtraArguments\(extra\);\s*return \{ \.\.\.getRendererConfig\(\), connectionTarget: activeControllerValue\(connectionManager\.target\) \};/);
+    assert.match(INDEX_SOURCE, /new CloudAccessService\(\{ getCredentials: getCloudCredentials, transport: cloudTransport, getLocalOmadacId \}\)/);
+  }); // End of test "inbox I-1c2a: config:save guards..."
 });
 
 /**

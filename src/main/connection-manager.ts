@@ -106,6 +106,12 @@ export interface ManagedController {
   // local controller's /api/info omadacId; null before it was read). A local
   // connect that installs the instance persists it as `localOmadacId`
   readonly omadacId?: string | null;
+  // Optional (inbox I-1c2a): true when the latest connect() failed because
+  // the controller never answered at all — its FIRST request got no response
+  // (ControllerSession: OmadaController.connectUnreachable, from the
+  // transport's typed failure). A failed local connect then carries
+  // `unreachable: true`
+  readonly connectUnreachable?: boolean;
 }
 
 /**
@@ -723,7 +729,12 @@ export class ConnectionManager<C extends ManagedController> {
    * (todo.md 4.4): the very first request (/api/info) is already gated by the
    * verify proc, so on a pin rejection the login POST is never sent; the
    * failure is reported as certificateUntrusted (with a trust nonce) or
-   * certificateChanged.
+   * certificateChanged. Any other failure is connectError with the redacted
+   * message as `detail`, plus `unreachable: true` when the controller never
+   * answered at all (inbox I-1c2a): the controller reports that its first
+   * request got no response (ManagedController.connectUnreachable — a timeout
+   * or an unreachable net error on /api/info, never a failure after any
+   * response, an HTTP error or a certificate error).
    * @param {ConnectionTarget} target - The local target.
    * @param {number} generation - The attempt's connect generation.
    * @returns {Promise<ConnectionResult>} The connect result.
@@ -777,7 +788,10 @@ export class ConnectionManager<C extends ManagedController> {
       if (certificateResult) {
         return certificateResult;
       }
-      return { success: false, error: 'connectError', detail };
+      // A controller that never answered at all is marked (inbox I-1c2a; the
+      // controller's own record of its first request, never the message
+      // text): the renderer may offer its cloud duplicate then
+      return controller.connectUnreachable === true ? { success: false, error: 'connectError', detail, unreachable: true } : { success: false, error: 'connectError', detail };
     }
   } // End of function connectLocal()
 

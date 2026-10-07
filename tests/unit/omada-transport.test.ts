@@ -11,9 +11,11 @@ import {
   createHardenedTransport,
   ERROR_BODY_EXCERPT_CHARS,
   errorBodyExcerpt,
+  isUnreachableTransportError,
   MAX_RESPONSE_BYTES,
   parseOmadaResponse,
   REQUEST_TIMEOUT_MS,
+  TransportError,
   type ClientRequestLike,
   type IncomingMessageLike,
   type ResponseHeaders,
@@ -351,3 +353,61 @@ describe('createHardenedTransport', () => {
     await assert.rejects(transport.send({ method: 'GET', url: 'nope', headers: {} }, () => {}), { message: 'invalid URL' });
   });
 }); // End of the describe block for createHardenedTransport
+
+describe('typed transport failures and "never answered" (inbox I-1c2a review)', () => {
+  /**
+   * What the hardened transport rejects with after `emit` runs.
+   * @param {(request: FakeClientRequest) => void} emit - Drives the fake request.
+   * @param {{ timeoutMs?: number }} [limits] - Transport limits.
+   * @returns {Promise<unknown>} The rejection.
+   */
+  async function rejection(emit: (request: FakeClientRequest) => void, limits?: { timeoutMs?: number }): Promise<unknown> {
+    const { transport, request } = setup(limits);
+    const pending = transport.send({ method: 'GET', url: 'https://c.invalid/x', headers: {} }, () => {});
+    emit(request);
+    try {
+      await pending;
+    } catch (error) {
+      return error;
+    }
+    return 'resolved';
+  } // End of function rejection()
+
+  test('a timeout, a request error and an abort reject with a TransportError (kind, net error code, responded); the messages are unchanged', async () => {
+    const timeout = await rejection(() => {}, { timeoutMs: 20 });
+    assert.ok(timeout instanceof TransportError);
+    assert.deepEqual([timeout.message, timeout.kind, timeout.netError, timeout.responded], ['Request timeout (0.02s)', 'timeout', null, false]);
+    const refused = await rejection((request) => request.emit('error', new Error('net::ERR_CONNECTION_REFUSED')));
+    assert.ok(refused instanceof TransportError);
+    assert.deepEqual([refused.message, refused.kind, refused.netError, refused.responded], ['No se pudo conectar al controlador: net::ERR_CONNECTION_REFUSED', 'network', 'ERR_CONNECTION_REFUSED', false]);
+    const odd = await rejection((request) => request.emit('error', new Error('socket hang up')));
+    assert.ok(odd instanceof TransportError && odd.netError === null);
+    const aborted = await rejection((request) => request.emit('abort'));
+    assert.ok(aborted instanceof TransportError && aborted.kind === 'aborted');
+    // A timeout after the response headers arrived (a slow body): the controller answered
+    const slowBody = await rejection((request) => request.respond(new FakeIncomingMessage(200)), { timeoutMs: 20 });
+    assert.ok(slowBody instanceof TransportError && slowBody.kind === 'timeout' && slowBody.responded === true);
+  }); // End of test "a timeout, a request error and an abort reject with a TransportError..."
+
+  test('isUnreachableTransportError(): a timeout or an unreachable net error before any response; never a certificate / unknown net error, an abort, a slow body, a size cap or a plain error', async () => {
+    for (const code of ['ERR_CONNECTION_REFUSED', 'ERR_NAME_NOT_RESOLVED', 'ERR_CONNECTION_TIMED_OUT', 'ERR_ADDRESS_UNREACHABLE', 'ERR_CONNECTION_RESET', 'ERR_INTERNET_DISCONNECTED']) {
+      assert.equal(isUnreachableTransportError(await rejection((request) => request.emit('error', new Error(`net::${code}`)))), true, code);
+    }
+    assert.equal(isUnreachableTransportError(await rejection(() => {}, { timeoutMs: 20 })), true, 'the request timeout');
+    for (const code of ['ERR_CERT_AUTHORITY_INVALID', 'ERR_CERT_COMMON_NAME_INVALID', 'ERR_SSL_PROTOCOL_ERROR', 'ERR_FAILED', 'ERR_ABORTED']) {
+      assert.equal(isUnreachableTransportError(await rejection((request) => request.emit('error', new Error(`net::${code}`)))), false, code);
+    }
+    assert.equal(isUnreachableTransportError(await rejection((request) => request.emit('abort'))), false, 'Request aborted');
+    assert.equal(isUnreachableTransportError(await rejection((request) => request.respond(new FakeIncomingMessage(200)), { timeoutMs: 20 })), false, 'a slow body');
+    const tooLarge = await rejection((request) => {
+      const response = new FakeIncomingMessage(200);
+      request.respond(response);
+      response.emit('data', Buffer.alloc(MAX_RESPONSE_BYTES + 1));
+    });
+    assert.ok(tooLarge instanceof Error && !(tooLarge instanceof TransportError) && tooLarge.message === 'Response too large');
+    assert.equal(isUnreachableTransportError(tooLarge), false);
+    // Text alone never counts: a plain Error with the very same message
+    assert.equal(isUnreachableTransportError(new Error('Request timeout (15s)')), false);
+    assert.equal(isUnreachableTransportError(new Error('No se pudo conectar al controlador: net::ERR_CONNECTION_REFUSED')), false);
+  }); // End of test "isUnreachableTransportError()..."
+}); // End of the describe block for the typed transport failures

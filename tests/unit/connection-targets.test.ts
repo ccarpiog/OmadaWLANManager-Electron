@@ -63,6 +63,7 @@ import {
 } from '../../src/main/controller-session';
 import { createTrustedIpcRegistrar } from '../../src/main/ipc-trust';
 import type { ConnectOutcome } from '../../src/main/omada-api';
+import { TransportError } from '../../src/main/omada-transport';
 import { OpenApiClient, TOKEN_PATH } from '../../src/main/openapi-client';
 import { REDACTED } from '../../src/main/redact';
 import type { CloudAccessStatus, ConfigSavePayload, ConnectionResult, ManagementAccessStatus, SiteInfo } from '../../src/shared/types';
@@ -70,7 +71,7 @@ import fourOrganizations from '../fixtures/cloud/organizations-four.json';
 import tunnel from '../fixtures/cloud/controller-tunnel.json';
 import responses from '../fixtures/controller/responses.json';
 import { FakeClock } from './helpers/fake-clock';
-import { FakeTransport, type FakeReply } from './helpers/fake-transport';
+import { FakeTransport, type FakeReply, type FakeRoute } from './helpers/fake-transport';
 
 // The code under test logs expected failures; keep the output readable
 mock.method(console, 'error', () => {});
@@ -875,6 +876,91 @@ class LiveHarness {
   }
 } // End of class LiveHarness
 
+describe('unreachable is decided by the stage of the local connect (inbox I-1c2a review; real session over the fake transport)', () => {
+  const INFO = '/api/info';
+  const LOGIN = `/${LOCAL_ID}/api/v2/login`;
+  const SITES = `/${LOCAL_ID}/api/v2/sites?currentPage=1&currentPageSize=100`;
+
+  /**
+   * A route that fails the way the hardened transport does before any
+   * response (TransportError, omada-transport.ts).
+   * @param {'timeout' | string} failure - 'timeout', or an Electron net error code.
+   * @returns {() => FakeReply} The route.
+   */
+  function failing(failure: string): () => FakeReply {
+    return () => {
+      if (failure === 'timeout') {
+        throw new TransportError('Request timeout (15s)', 'timeout', null, false);
+      }
+      throw new TransportError(`No se pudo conectar al controlador: net::${failure}`, 'network', failure, false);
+    };
+  } // End of function failing()
+
+  /**
+   * Runs one local connect with one route replaced.
+   * @param {'GET' | 'POST'} method - The route's method.
+   * @param {string} path - The route's path.
+   * @param {FakeRoute} route - Its replacement.
+   * @returns {Promise<{ result: ConnectionResult; requests: string[] }>} The connect result and the requests sent.
+   */
+  async function connectWith(method: 'GET' | 'POST', path: string, route: FakeRoute): Promise<{ result: ConnectionResult; requests: string[] }> {
+    const harness = new LiveHarness();
+    harness.localTransport.on(method, path, route);
+    const result = await harness.manager.connect();
+    return { result, requests: harness.localTransport.log() };
+  }
+
+  test('/api/info times out, or fails with an unreachable net error (refused, unresolved, reset): unreachable', async () => {
+    for (const failure of ['timeout', 'ERR_CONNECTION_REFUSED', 'ERR_NAME_NOT_RESOLVED', 'ERR_CONNECTION_RESET']) {
+      const { result, requests } = await connectWith('GET', INFO, failing(failure));
+      assert.equal(result.error, 'connectError', failure);
+      assert.equal(result.unreachable, true, failure);
+      assert.deepEqual(requests, [`GET ${INFO}`], 'nothing after the first request');
+    }
+  });
+
+  test('a timeout or a reset during the login, after /api/info answered: NOT unreachable', async () => {
+    for (const failure of ['timeout', 'ERR_CONNECTION_RESET']) {
+      const { result, requests } = await connectWith('POST', LOGIN, failing(failure));
+      assert.equal(result.error, 'connectError', failure);
+      assert.equal('unreachable' in result, false, failure);
+      assert.deepEqual(requests, [`GET ${INFO}`, `POST ${LOGIN}`]);
+    }
+  });
+
+  test('a timeout during the site list, after the login: NOT unreachable', async () => {
+    const { result, requests } = await connectWith('GET', SITES, failing('timeout'));
+    assert.equal(result.error, 'connectError');
+    assert.equal('unreachable' in result, false);
+    assert.deepEqual(requests.slice(0, 3), [`GET ${INFO}`, `POST ${LOGIN}`, `GET ${SITES}`], 'the logged-in attempt is then logged out');
+  });
+
+  test('an HTTP error, a certificate net error or an unknown failure on /api/info: NOT unreachable', async () => {
+    const routes: Array<[string, FakeRoute]> = [
+      ['HTTP 503', { status: 503, body: '<html>Service Unavailable</html>' }],
+      ['certificate', failing('ERR_CERT_AUTHORITY_INVALID')],
+      ['untyped', () => { throw new Error('Request timeout (15s)'); }],
+    ];
+    for (const [label, route] of routes) {
+      const { result } = await connectWith('GET', INFO, route);
+      assert.equal(result.error, 'connectError', label);
+      assert.equal('unreachable' in result, false, label);
+    }
+  });
+
+  test('a later data-load timeout is never a connect result, and the next connect starts unmarked', async () => {
+    const harness = new LiveHarness();
+    harness.localTransport.on('GET', INFO, failing('timeout'));
+    assert.equal((await harness.manager.connect()).unreachable, true);
+    harness.localTransport.on('GET', INFO, { body: responses.apiInfo, setCookie: 'TPOMADA_SESSIONID=session-2; Path=/; HttpOnly' });
+    const connected = await harness.manager.connect();
+    assert.equal(connected.success, true, JSON.stringify(connected));
+    assert.equal('unreachable' in connected, false);
+    harness.localTransport.on('GET', `/${LOCAL_ID}/api/v2/sites/${LOCAL_SITE}/devices`, failing('timeout'));
+    await assert.rejects(accessPointsReply(harness.manager, connected.sessionNonce as string), /Request timeout/);
+  }); // End of test "a later data-load timeout is never a connect result..."
+}); // End of describe 'unreachable is decided by the stage of the local connect'
+
 describe('cloud targets end to end (fixtures)', () => {
   test('the session is built from a fresh organization entry: Open API only, on the organization\'s tunnel, with the account token', async () => {
     const harness = new LiveHarness();
@@ -1115,6 +1201,47 @@ describe('the startup target (inbox I-1b2b2)', () => {
     assert.deepEqual(fresh.manager.target, { kind: 'local' });
     assert.equal(fresh.manager.startOn({ kind: 'local' }), true, 'the local default stays a valid start');
   }); // End of test "startOn()..."
+
+  test('a configuration without a local controller (cloud-only, inbox I-1c2a): the stored cloud controller with a usable credential; else local, whose connect is configIncomplete', async () => {
+    const box: SecretBox = {
+      isEncryptionAvailable: () => true,
+      isSecureStorageAvailable: () => true,
+      encryptString: (plainText) => `enc:${plainText}`,
+      decryptString: (blob) => blob.slice(4)
+    };
+    const cloudOnly: StoredConfig = { url: '', username: '', language: 'en', cloudClientId: 'cloud-client-1', encryptedCloudClientSecret: box.encryptString('s'), activeController: OMADAC_CLOUD };
+    /**
+     * The production usability probe for one config (config.ts getStartupTarget()).
+     * @param {StoredConfig} config - The stored config.
+     * @returns {() => boolean} Whether its cloud credential is usable now.
+     */
+    const usable = (config: StoredConfig) => (): boolean => cloudCredentialsOf(config, box, null) !== null;
+    assert.deepEqual(startupTargetOf(cloudOnly, usable(cloudOnly)), { kind: 'cloud', omadacId: OMADAC_CLOUD });
+    // A credential that is no longer usable (no secret): local — nothing is configured to connect to
+    const noSecret: StoredConfig = { ...cloudOnly, encryptedCloudClientSecret: undefined };
+    assert.deepEqual(startupTargetOf(noSecret, usable(noSecret)), { kind: 'local' });
+    // No cloud controller chosen yet, or nothing at all: local
+    const neverChosen: StoredConfig = { ...cloudOnly, activeController: undefined };
+    assert.deepEqual(startupTargetOf(neverChosen, usable(neverChosen)), { kind: 'local' });
+    assert.deepEqual(startupTargetOf({ url: '', username: '', language: 'es' }, () => false), { kind: 'local' });
+
+    // Wired: the first connect reaches the cloud target; the local fallback answers configIncomplete without a controller
+    const harness = new TargetHarness();
+    harness.url = '';
+    assert.equal(harness.manager.startOn(startupTargetOf(cloudOnly, usable(cloudOnly))), true);
+    const pending = harness.manager.connect();
+    await flush();
+    assert.deepEqual(harness.lookups.map((lookup) => lookup.omadacId), [OMADAC_CLOUD]);
+    harness.lookups[0].reply.resolve(harness.found(OMADAC_CLOUD));
+    await flush();
+    harness.latest.connectResult.resolve({ siteSelected: true, sites: [SITES[0]] });
+    assert.equal((await pending).success, true);
+    const fallback = new TargetHarness();
+    fallback.url = '';
+    assert.equal(fallback.manager.startOn(startupTargetOf(noSecret, usable(noSecret))), true);
+    assert.deepEqual(await fallback.manager.connect(), { success: false, error: 'configIncomplete' });
+    assert.equal(fallback.controllers.length, 0, 'nothing was created, nothing was sent');
+  }); // End of test "a configuration without a local controller..."
 }); // End of describe 'the startup target (inbox I-1b2b2)'
 
 describe('CONFIG_SAVE connectionReset (inbox I-1b2b2)', () => {

@@ -40,7 +40,8 @@
 //   (a listing not proven complete is 'listIncomplete', never a shorter
 //   list), mapped by toCloudAccessPoint(): a field the controller does not
 //   report sanely is unknown, never a default that looks real (status -1,
-//   no client count, no group id, '' as the group name).
+//   no client count, no group id, '' as the group name with
+//   `wlanGroupUnknown: true`).
 // - Groups: `GET …/sites/{siteId}/ap-groups` (the call and validator of the
 //   management views), mapped by toCloudGroupListing(): every group, empty
 //   ones included, with the Open API ids (a move target id IS the Open API
@@ -243,7 +244,8 @@ export function isApRow(row: OpenApiApGroupAp): boolean {
  * shape the internal list has. A missing field is unknown, never a default
  * that looks real: no name → the MAC (as the internal list does), no status
  * → UNKNOWN_STATUS_CATEGORY, no client count → absent, no group id → no
- * `wlanId`, no group name → ''.
+ * `wlanId`, no group name → '' with `wlanGroupUnknown: true` (inbox I-1c2a:
+ * the renderer shows it as an unknown group, never as "Unassigned").
  * @param {OpenApiApGroupAp} row - The validated row.
  * @returns {AccessPoint} The access point.
  */
@@ -260,6 +262,9 @@ export function toCloudAccessPoint(row: OpenApiApGroupAp): AccessPoint {
   }
   if (row.apGroupId !== undefined) {
     ap.wlanId = row.apGroupId;
+  }
+  if (row.apGroupName === undefined) {
+    ap.wlanGroupUnknown = true;
   }
   return ap;
 } // End of function toCloudAccessPoint()
@@ -335,6 +340,9 @@ function defaultSleep(ms: number): Promise<void> {
  */
 export class CloudControllerBackend implements ControllerBackend {
   readonly kind = 'cloud';
+  // A cloud connect never reports "unreachable" (the "Connect through TP-Link
+  // cloud" offer is for the local controller; ControllerBackend)
+  readonly connectUnreachable = false;
   readonly name: string;
   readonly #omadacId: string;
   readonly #info: ControllerInfo;

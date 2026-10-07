@@ -44,6 +44,7 @@ const { AP_GROUP_ID_REGEX, checkApGroupDeletion, hasApGroupNameConflict, toApGro
   path.join(distDir, 'main', 'ap-group-policy.js')
 );
 const {
+  isValidConfigSavePayload,
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
   parseApGroupRenameRequest,
@@ -68,28 +69,23 @@ const { bindingRefusalReply, buildBindingsBody, checkBindingRequest, checkBindin
 );
 
 // Format guards mirrored from src/main/index.ts (keep in sync; the AP-move
-// guards come with parseApMoveRequest() from the compiled ipc-guards.js)
+// guards come with parseApMoveRequest(), and the config-save shape guard
+// with isValidConfigSavePayload() — inbox I-1c2a, the cloud-only shape
+// included — from the compiled ipc-guards.js)
 const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SELECTION_NONCE_REGEX = /^[0-9a-f]{32}$/;
 const TRUST_NONCE_REGEX = /^[0-9a-f]{32}$/;
 const SESSION_NONCE_REGEX = /^[0-9a-f]{32}$/;
-const MAX_URL_LENGTH = 2048;
-const MAX_USERNAME_LENGTH = 256;
-const MAX_PASSWORD_LENGTH = 512;
-const MAX_CLIENT_ID_LENGTH = 256;
-const MAX_CLIENT_SECRET_LENGTH = 512;
-const CONFIG_SAVE_KEYS = new Set([
-  'url', 'username', 'language', 'password', 'clientId', 'clientSecret', 'removeManagementAccess',
-  'cloudRegion', 'cloudClientId', 'cloudClientSecret', 'removeCloudAccess',
-]);
+// An omadacId as main sends it (OMADAC_ID_REGEX of src/main/cloud-account-model.ts; never 'local')
+const OMADAC_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 // Mirrored from CLIENT_ID_REGEX in src/main/config-model.ts (keep in sync)
 const CLIENT_ID_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
 // The management-access flags of a RendererConfig with nothing stored
 // (ManagementAccessStatus in src/shared/types.ts)
 const NO_MANAGEMENT_ACCESS = { clientId: '', hasClientSecret: false, clientSecretSessionOnly: false };
-// The TP-Link cloud regions — mirrored from CLOUD_REGIONS / DEFAULT_CLOUD_REGION
-// in src/main/cloud-hosts.ts (keep in sync)
-const CLOUD_REGIONS = ['aps', 'euw', 'use'];
+// The default TP-Link cloud region — mirrored from DEFAULT_CLOUD_REGION in
+// src/main/cloud-hosts.ts (keep in sync; the region enum itself is checked
+// by the shared config-save guard)
 const DEFAULT_CLOUD_REGION = 'euw';
 // The cloud-access flags of a RendererConfig with nothing stored
 // (CloudAccessStatus in src/shared/types.ts, inbox I-1c1)
@@ -245,6 +241,12 @@ function defaultScenario() {
     // to one) returns this verbatim; null: main's refusal without a cloud
     // credential ({ success: false, error: 'connectError', detail: 'notConfigured' })
     cloudConnectResult: null,
+    // The omadacId a local connect "learned" for the configured controller
+    // (main's stored `localOmadacId`, inbox I-1c2a): a successful cloud:test /
+    // cloud:controllers reply carries it, like CloudAccessService; null (the
+    // default) carries none. CLOUD_STUB_LOCAL_OMADAC_ID is the four-organization
+    // account's local duplicate
+    localOmadacId: null,
     // Optional per-channel response delays in ms, e.g. { 'omada:get-aps': 400 }
     delays: {},
   };
@@ -365,75 +367,17 @@ function isTrustedIpcSender(event) {
 } // End of function isTrustedIpcSender()
 
 /**
- * Same shape guard as isValidConfigSavePayload() in src/main/index.ts.
- * @param {unknown} payload - The raw IPC payload.
- * @returns {boolean} True when the shape is valid.
- */
-function isValidConfigSavePayload(payload) {
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    return false;
-  }
-  if (Object.keys(payload).some((key) => !CONFIG_SAVE_KEYS.has(key))) {
-    return false;
-  }
-  if (typeof payload.url !== 'string' || payload.url.length === 0 || payload.url.length > MAX_URL_LENGTH) {
-    return false;
-  }
-  if (typeof payload.username !== 'string' || payload.username.length === 0 || payload.username.length > MAX_USERNAME_LENGTH) {
-    return false;
-  }
-  if (payload.language !== 'es' && payload.language !== 'en') {
-    return false;
-  }
-  if (payload.password !== undefined && (typeof payload.password !== 'string' || payload.password.length > MAX_PASSWORD_LENGTH)) {
-    return false;
-  }
-  if (payload.clientId !== undefined && (typeof payload.clientId !== 'string' || payload.clientId.length === 0 || payload.clientId.length > MAX_CLIENT_ID_LENGTH)) {
-    return false;
-  }
-  if (
-    payload.clientSecret !== undefined &&
-    (typeof payload.clientSecret !== 'string' || payload.clientSecret.length === 0 || payload.clientSecret.length > MAX_CLIENT_SECRET_LENGTH)
-  ) {
-    return false;
-  }
-  if (payload.removeManagementAccess !== undefined && (payload.removeManagementAccess !== true || payload.clientId !== undefined || payload.clientSecret !== undefined)) {
-    return false;
-  }
-  // The TP-Link cloud fields (inbox I-1a / I-1c1), as the real guard checks them
-  if (payload.cloudRegion !== undefined && !CLOUD_REGIONS.includes(payload.cloudRegion)) {
-    return false;
-  }
-  if (
-    payload.cloudClientId !== undefined &&
-    (typeof payload.cloudClientId !== 'string' || payload.cloudClientId.length === 0 || payload.cloudClientId.length > MAX_CLIENT_ID_LENGTH)
-  ) {
-    return false;
-  }
-  if (
-    payload.cloudClientSecret !== undefined &&
-    (typeof payload.cloudClientSecret !== 'string' || payload.cloudClientSecret.length === 0 || payload.cloudClientSecret.length > MAX_CLIENT_SECRET_LENGTH)
-  ) {
-    return false;
-  }
-  if (
-    payload.removeCloudAccess !== undefined &&
-    (payload.removeCloudAccess !== true || payload.cloudRegion !== undefined || payload.cloudClientId !== undefined || payload.cloudClientSecret !== undefined)
-  ) {
-    return false;
-  }
-  return true;
-} // End of function isValidConfigSavePayload()
-
-/**
  * Returns the current RendererConfig with the management-access defaults
- * filled in (nothing stored; the secret can be persisted) and the cloud-access
- * flags (the scenario's `cloudAccess` fields over NO_CLOUD_ACCESS).
+ * filled in (nothing stored; the secret can be persisted), the cloud-access
+ * flags (the scenario's `cloudAccess` fields over NO_CLOUD_ACCESS) and — like
+ * main's CONFIG_LOAD since inbox I-1c2a — the current connection target
+ * (`connectionTarget`: 'local' or the omadacId of stub.target).
  * @returns {object} The RendererConfig.
  */
 function currentRendererConfig() {
   const config = { pinnedFingerprint: null, ...NO_MANAGEMENT_ACCESS, canPersistClientSecret: true, ...stub.scenario.config };
-  return { ...config, cloudAccess: { ...NO_CLOUD_ACCESS, ...(stub.scenario.config.cloudAccess || {}) } };
+  const connectionTarget = stub.target.kind === 'cloud' ? stub.target.omadacId : 'local';
+  return { ...config, cloudAccess: { ...NO_CLOUD_ACCESS, ...(stub.scenario.config.cloudAccess || {}) }, connectionTarget };
 }
 
 /**
@@ -526,6 +470,67 @@ function applyCloudSave(payload, current) {
     cloud.hasCloudSecret !== current.hasCloudSecret || cloud.cloudSecretSessionOnly !== current.cloudSecretSessionOnly;
   return { ok: true, cloud, changed };
 } // End of function applyCloudSave()
+
+/**
+ * Mirrors isCloudOnlySave() in src/main/config-model.ts (inbox I-1c2a): the
+ * payload's URL and username are blank and its password absent or empty
+ * while no local controller is "stored" (the scenario config has no URL).
+ * @param {object} payload - The (shape-checked) ConfigSavePayload.
+ * @returns {boolean} True for a save without a local controller.
+ */
+function isCloudOnlyPayload(payload) {
+  return (
+    !stub.scenario.config.url &&
+    payload.url.trim() === '' &&
+    payload.username.trim() === '' &&
+    (payload.password === undefined || payload.password === '')
+  );
+}
+
+/**
+ * Mirrors applyCloudOnlySave() in src/main/config-model.ts on flags (inbox
+ * I-1c2a): a management Client ID or Client Secret is
+ * 'managementNeedsController' (management access belongs to a local
+ * controller); the cloud fields follow applyCloudSave(); a save that leaves
+ * no cloud Client ID stored and does not remove cloud access configures
+ * nothing ('invalidUrl', the empty form's code). The config keeps no local
+ * field. A cloud-credential change while the target is a cloud controller is
+ * a transition (connectionReset), as for any save.
+ * @param {object} payload - The (shape-checked) ConfigSavePayload.
+ * @returns {object} The ConfigSaveResult.
+ */
+function cloudOnlySave(payload) {
+  if (payload.clientId !== undefined || payload.clientSecret !== undefined) {
+    return { success: false, error: 'managementNeedsController' };
+  }
+  const current = currentRendererConfig();
+  const cloud = applyCloudSave(payload, current.cloudAccess);
+  if (!cloud.ok) {
+    return { success: false, error: cloud.error };
+  }
+  if (payload.removeCloudAccess !== true && !cloud.cloud.clientId) {
+    return { success: false, error: 'invalidUrl' };
+  }
+  const cloudReset = cloud.changed && stub.target.kind === 'cloud';
+  if (cloudReset) {
+    stub.pendingTrust = null;
+    stub.pendingSelection = null;
+    dropSession();
+  }
+  stub.scenario.config = {
+    url: '',
+    username: '',
+    language: payload.language,
+    hasPassword: false,
+    pinnedFingerprint: null,
+    ...NO_MANAGEMENT_ACCESS,
+    canPersistClientSecret: current.canPersistClientSecret,
+    cloudAccess: cloud.cloud,
+  };
+  const managementAccess = { ...NO_MANAGEMENT_ACCESS, canPersistClientSecret: current.canPersistClientSecret };
+  const cloudAccess = structuredClone(cloud.cloud);
+  return cloudReset ? { success: true, connectionReset: true, managementAccess, cloudAccess } : { success: true, managementAccess, cloudAccess };
+} // End of function cloudOnlySave()
 
 /**
  * "Installs" a controller session like ConnectionManager.install() +
@@ -991,7 +996,9 @@ const handlers = {
    * TP-Link cloud fields follow applyCloudSave() (flags only); a save that
    * changes the cloud credential while the target is a cloud controller is a
    * transition as well (connectionReset, like finishConfigSave()), and a
-   * success carries cloudAccess.
+   * success carries cloudAccess. The shape guard is main's own
+   * (isValidConfigSavePayload() of ipc-guards.js), and a save without any
+   * local controller follows cloudOnlySave() (inbox I-1c2a).
    * @param {unknown} payload - The ConfigSavePayload sent by the renderer.
    * @returns {object} The ConfigSaveResult.
    */
@@ -1001,6 +1008,9 @@ const handlers = {
     }
     if (!isValidConfigSavePayload(payload)) {
       return { success: false, error: 'saveFailed' };
+    }
+    if (isCloudOnlyPayload(payload)) {
+      return cloudOnlySave(payload);
     }
     const url = normalizeControllerUrl(payload.url);
     if (!url) {
@@ -1706,14 +1716,16 @@ const handlers = {
 // would build for a four-organization account (I-1c's smoke uses them): one
 // whose omadacId is the stub's local controller (CLOUD_STUB_LOCAL_OMADAC_ID,
 // what /api/info would report; I-1c lists it once, as local), one offline,
-// one below 6.3 and one connectable. Knobs (stub.configure()): `cloudResult`
-// — returned verbatim by both channels (e.g. { success: false, error:
-// 'credentialInvalid', diagnostic: 'credentialInvalid, errorCode -52602' },
-// or { success: false, error: 'notConfigured' } for main's answer without a
-// saved credential: the fakes do not read the config's cloudAccess flags);
-// `cloudControllers` — replaces the DTO list. A per-channel delay
-// (`delays`) plays a slow cloud. Nothing here sends a request (D4: no
-// tplinkcloud.com host is ever contacted).
+// one below 6.3 and one connectable. Like CloudAccessService, they honor the
+// config's cloudAccess flags (inbox I-1c2a): without a saved credential (no
+// cloud Client ID, or no usable secret) both answer { success: false, error:
+// 'notConfigured' }, and a success carries the scenario's `localOmadacId`
+// when it is set. Knobs (stub.configure()): `cloudResult` — returned
+// verbatim by both channels, whatever the flags (e.g. { success: false,
+// error: 'credentialInvalid', diagnostic: 'credentialInvalid, errorCode
+// -52602' }); `cloudControllers` — replaces the DTO list; `localOmadacId`.
+// A per-channel delay (`delays`) plays a slow cloud. Nothing here sends a
+// request (D4: no tplinkcloud.com host is ever contacted).
 
 // The local controller's omadacId in the cloud fixtures
 const CLOUD_STUB_LOCAL_OMADAC_ID = 'c0ffee00c0ffee00c0ffee00c0ffee00';
@@ -1729,10 +1741,13 @@ const CLOUD_STUB_CONTROLLERS = [
 stub.cloudLocalOmadacId = CLOUD_STUB_LOCAL_OMADAC_ID;
 
 /**
- * The fake answer of both cloud channels: the scripted `cloudResult`, else the
- * DTO list (`cloudControllers` or the four-organization default). Mirrors the
- * real arity guard (requireNoExtraArguments() of ipc-guards.ts): any argument
- * is refused.
+ * The fake answer of both cloud channels: the scripted `cloudResult`; else
+ * 'notConfigured' while the config's cloudAccess flags hold no saved
+ * credential (a cloud Client ID and a usable secret, cloudCredentialsOf() in
+ * config-model.ts); else the DTO list (`cloudControllers` or the
+ * four-organization default) with the scenario's `localOmadacId` when it is
+ * a usable omadacId (inbox I-1c2a). Mirrors the real arity guard
+ * (requireNoExtraArguments() of ipc-guards.ts): any argument is refused.
  * @param {unknown[]} extra - The call's arguments (must be none).
  * @returns {object} The CloudAccessResult.
  */
@@ -1743,8 +1758,17 @@ function cloudAccessReply(extra) {
   if (stub.scenario.cloudResult) {
     return structuredClone(stub.scenario.cloudResult);
   }
+  const flags = currentRendererConfig().cloudAccess;
+  if (!flags.clientId || flags.hasCloudSecret !== true) {
+    return { success: false, error: 'notConfigured' };
+  }
   const controllers = stub.scenario.cloudControllers || CLOUD_STUB_CONTROLLERS;
-  return { success: true, controllers: structuredClone(controllers), truncated: false };
+  const reply = { success: true, controllers: structuredClone(controllers), truncated: false };
+  const localOmadacId = stub.scenario.localOmadacId;
+  if (typeof localOmadacId === 'string' && localOmadacId !== 'local' && OMADAC_ID_REGEX.test(localOmadacId)) {
+    reply.localOmadacId = localOmadacId;
+  }
+  return reply;
 } // End of function cloudAccessReply()
 
 /**

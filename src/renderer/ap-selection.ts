@@ -11,7 +11,7 @@
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
 import { networkScopeKind, type NetworkScopeKind } from './inventory-model';
-import { hasUnknownNetworks } from './move-plan';
+import { hasUnknownGroup, hasUnknownNetworks } from './move-plan';
 
 // Status filter values besides a numeric statusCategory ('0'..'4')
 export const STATUS_FILTER_ALL = 'all';
@@ -21,11 +21,13 @@ export const STATUS_FILTER_UNKNOWN = 'unknown';
 // other value is the "unknown" status
 export const KNOWN_STATUS_CATEGORIES: readonly number[] = [0, 1, 2, 3, 4];
 
-// Group filter values of the Access points view besides a group id. Neither
+// Group filter values of the Access points view besides a group id. None
 // can collide with a group id: ids never are empty and never contain ':'
-// (isValidWlanId() in validation.ts)
+// (isValidWlanId() in validation.ts). GROUP_FILTER_UNKNOWN (inbox I-1c2a)
+// selects the APs whose group the controller did not report (cloud only)
 export const GROUP_FILTER_ALL = '';
 export const GROUP_FILTER_UNASSIGNED = ':unassigned';
+export const GROUP_FILTER_UNKNOWN = ':unknown';
 
 /**
  * The filters of the Access points list.
@@ -36,9 +38,43 @@ export interface ApFilters {
   text: string;
   // STATUS_FILTER_ALL, STATUS_FILTER_UNKNOWN or a statusCategory as a string
   status: string;
-  // Name of the group the AP must be in; '' for APs without a group; null
-  // for no group filter
+  // Name of the group the AP must be in; '' for APs without a group (never
+  // one whose group was not reported); null for no group filter
   groupName: string | null;
+  // Present (true) for the "Unknown group" filter: only the APs whose group
+  // the controller did not report (hasUnknownGroup()); groupName is then null
+  groupUnknown?: true;
+}
+
+/**
+ * The text key that stands in for an AP's group name when it has none to
+ * show: 'apGroupUnknown' when the controller did not report it
+ * (hasUnknownGroup() of move-plan.ts, inbox I-1c2a), 'unassigned' when the
+ * AP reports no group; null when it has a name.
+ * @param {AccessPoint} ap - The access point.
+ * @returns {'apGroupUnknown' | 'unassigned' | null} The key, or null.
+ */
+export function missingGroupKey(ap: AccessPoint): 'apGroupUnknown' | 'unassigned' | null {
+  if (ap.wlanGroup !== '') {
+    return null;
+  }
+  return hasUnknownGroup(ap) ? 'apGroupUnknown' : 'unassigned';
+}
+
+/**
+ * Tells whether an AP passes the group filter: any AP without one; with
+ * "Unknown group" only the APs whose group was not reported; otherwise the
+ * APs carrying that group name ('' = no group), never one whose group was
+ * not reported.
+ * @param {AccessPoint} ap - The access point.
+ * @param {ApFilters} filters - The current filters.
+ * @returns {boolean} True when the AP passes.
+ */
+function matchesGroupFilter(ap: AccessPoint, filters: ApFilters): boolean {
+  if (filters.groupUnknown === true) {
+    return hasUnknownGroup(ap);
+  }
+  return filters.groupName === null || (ap.wlanGroup === filters.groupName && !hasUnknownGroup(ap));
 }
 
 /**
@@ -63,7 +99,7 @@ export function matchesStatusFilter(statusCategory: number, filter: string): boo
  * @returns {boolean} True when at least one filter is active.
  */
 export function isFilterActive(filters: ApFilters): boolean {
-  return filters.text !== '' || filters.status !== STATUS_FILTER_ALL || filters.groupName !== null;
+  return filters.text !== '' || filters.status !== STATUS_FILTER_ALL || filters.groupName !== null || filters.groupUnknown === true;
 }
 
 /**
@@ -77,7 +113,7 @@ export function filterAccessPoints(accessPoints: readonly AccessPoint[], filters
   return accessPoints.filter(ap =>
     (text === '' || ap.name.toLowerCase().includes(text) || ap.wlanGroup.toLowerCase().includes(text)) &&
     matchesStatusFilter(ap.statusCategory, filters.status) &&
-    (filters.groupName === null || ap.wlanGroup === filters.groupName)
+    matchesGroupFilter(ap, filters)
   );
 }
 

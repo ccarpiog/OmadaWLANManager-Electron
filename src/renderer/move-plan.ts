@@ -23,7 +23,9 @@
 // concerns (they are counted apart, `unreportedSourceCount`), it is never
 // pinned under "Silence", and the destination search matches it by its own
 // name only (it has no network name to match). Local data never sets the
-// flag, so every result for it is unchanged.
+// flag, so every result for it is unchanged. Likewise an AP whose group the
+// controller did not report (`wlanGroupUnknown`, cloud only, inbox I-1c2a;
+// hasUnknownGroup()) is a source of its own, never "no group".
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
 
@@ -35,6 +37,10 @@ const MAX_ERROR_LENGTH = 200;
 const IPC_ERROR_PREFIX = /^Error invoking remote method '[^']*': /;
 // Leading error-class name of a serialized error ("Error: ", "TypeError: ")
 const ERROR_NAME_PREFIX = /^[A-Za-z]*Error: /;
+
+// The planMove() source key of the moving APs whose group the controller did
+// not report (hasUnknownGroup()): a symbol, so no group name can collide
+const UNREPORTED_SOURCE: unique symbol = Symbol('unreportedGroup');
 
 /**
  * One Wi-Fi network a move adds or removes, with the number of moving APs
@@ -60,11 +66,14 @@ export interface NetworkDiff {
 
 /**
  * A group the moving APs currently are in, with how many of them ('' is the
- * name of "no group").
+ * name of "no group"). `groupUnknown` (inbox I-1c2a) is present, and true,
+ * on the entry of the moving APs whose group the controller did not report
+ * (hasUnknownGroup(); its name is ''), kept apart from "no group".
  */
 export interface SourceGroup {
   name: string;
   count: number;
+  groupUnknown?: true;
 }
 
 /**
@@ -223,6 +232,19 @@ export function hasUnknownNetworks(group: WlanGroup): boolean {
 }
 
 /**
+ * Tells whether the controller did not report an AP's group (inbox I-1c2a;
+ * cloud sessions only: `wlanGroupUnknown` with an empty group name). Such an
+ * AP's group is unknown — shown as "Unknown group", never as "Unassigned",
+ * and kept apart from the APs without a group wherever groups are listed,
+ * filtered or counted by name. Local data never sets the flag.
+ * @param {AccessPoint} ap - The access point.
+ * @returns {boolean} True when its group was not reported.
+ */
+export function hasUnknownGroup(ap: AccessPoint): boolean {
+  return ap.wlanGroupUnknown === true && ap.wlanGroup === '';
+}
+
+/**
  * Returns a group's Wi-Fi network names, in order, without repetitions
  * (none for a group whose list is unknown: hasUnknownNetworks() tells that
  * apart from a group without networks).
@@ -323,12 +345,15 @@ export function planMove(selectedAps: readonly AccessPoint[], destination: WlanG
   }
 
   const destinationUnknown = hasUnknownNetworks(destination);
-  const sourceCounts = new Map<string, number>();
+  // Keyed by group name; the APs whose group was not reported share one key
+  // of their own (UNREPORTED_SOURCE), apart from '' ("no group")
+  const sourceCounts = new Map<string | typeof UNREPORTED_SOURCE, number>();
   const sourceNetworks: string[][] = [];
   let unreportedSourceCount = 0;
   const clients: ClientTotals = { total: 0, reporting: 0, missing: 0 };
   for (const ap of moving) {
-    sourceCounts.set(ap.wlanGroup, (sourceCounts.get(ap.wlanGroup) ?? 0) + 1);
+    const sourceKey = hasUnknownGroup(ap) ? UNREPORTED_SOURCE : ap.wlanGroup;
+    sourceCounts.set(sourceKey, (sourceCounts.get(sourceKey) ?? 0) + 1);
     const source = findUniqueGroupByName(groups, ap.wlanGroup);
     if (source !== null && (destinationUnknown || hasUnknownNetworks(source))) {
       unreportedSourceCount++;
@@ -348,7 +373,7 @@ export function planMove(selectedAps: readonly AccessPoint[], destination: WlanG
     ambiguousDestination: false,
     moving,
     alreadyThere,
-    sources: Array.from(sourceCounts, ([name, count]) => ({ name, count })),
+    sources: Array.from(sourceCounts, ([key, count]): SourceGroup => (key === UNREPORTED_SOURCE ? { name: '', count, groupUnknown: true } : { name: key, count })),
     knownSourceCount: sourceNetworks.length,
     unknownSourceCount: moving.length - sourceNetworks.length - unreportedSourceCount,
     networks: diffNetworks(sourceNetworks, networkNames(destination)),

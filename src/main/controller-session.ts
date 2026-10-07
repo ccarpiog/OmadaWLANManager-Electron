@@ -666,6 +666,10 @@ export interface ControllerBackend {
   readonly site: SiteInfo | null;
   readonly info: ControllerInfo;
   readonly name: string | null;
+  // True when the latest connect() failed because the controller never
+  // answered its first request (local only, inbox I-1c2a review; a cloud
+  // backend's is always false)
+  readonly connectUnreachable: boolean;
   connect(preferredSiteId?: string): Promise<ConnectOutcome>;
   selectSite(siteId: string): boolean;
   // Ends the data side for good (the internal logout; a cloud backend closes
@@ -724,6 +728,15 @@ class LocalControllerBackend implements ControllerBackend {
    */
   get site(): SiteInfo | null {
     return this.#internal.selectedSite;
+  }
+
+  /**
+   * Whether the latest connect() failed because the controller never
+   * answered its first request (OmadaController.connectUnreachable).
+   * @returns {boolean} True for an unreachable controller.
+   */
+  get connectUnreachable(): boolean {
+    return this.#internal.connectUnreachable;
   }
 
   /**
@@ -936,6 +949,17 @@ export class ControllerSession implements ManagedController {
    */
   get omadacId(): string | null {
     return this.#backend.omadacId;
+  }
+
+  /**
+   * Whether the latest connect() failed because the controller never
+   * answered at all (ManagedController.connectUnreachable; inbox I-1c2a):
+   * a local controller whose first request (/api/info) got no response — a
+   * timeout or an unreachable net error. Always false for a cloud controller.
+   * @returns {boolean} True for an unreachable local controller.
+   */
+  get connectUnreachable(): boolean {
+    return this.#backend.connectUnreachable;
   }
 
   /**

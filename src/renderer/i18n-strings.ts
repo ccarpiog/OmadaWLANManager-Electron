@@ -694,6 +694,34 @@ export interface Translations {
   statusApIsolated: string;
   statusApDisconnected: string;
   statusApUnknown: string;
+
+  // The controller switcher and TP-Link cloud connections (inbox I-1c2a;
+  // controller-switcher-model.ts holds the rules, the switcher UI is I-1c2b):
+  // the local controller's label ("This network"; also the mark of its cloud
+  // duplicate in Settings' Test cloud access list), the cloud tag, the
+  // switcher's label and its hint while an operation runs, the offer to reach
+  // the local controller through the cloud, the texts of a refused cloud
+  // connect (offline, an expired / deleted or another refused credential,
+  // none saved, a controller the account no longer lists) and of a failed
+  // controller list; then an AP whose group the controller did not report
+  // (the row / filter / move label and the details pane's), the cloud
+  // certificate note of Settings and the cloud-only save refusal
+  thisNetwork: string;
+  controllerSwitcherLabel: string;
+  controllerSwitcherCloudTag: string;
+  controllerSwitcherBusy: string;
+  connectThroughCloud: string;
+  cloudConnectOffline: string;
+  cloudConnectCredentialExpired: string;
+  cloudConnectCredentialInvalid: string;
+  cloudConnectNotConfigured: string;
+  cloudConnectUnknownController: string;
+  cloudListSuperseded: string;
+  cloudListFailed: string;
+  apGroupUnknown: string;
+  apGroupNotReported: string;
+  certCloudNote: string;
+  managementNeedsController: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -1282,6 +1310,22 @@ export const translations: Record<Language, Translations> = {
     statusApIsolated: 'Aislado',
     statusApDisconnected: 'Desconectado',
     statusApUnknown: 'Estado desconocido',
+    thisNetwork: 'Esta red',
+    controllerSwitcherLabel: 'Controlador',
+    controllerSwitcherCloudTag: 'Nube',
+    controllerSwitcherBusy: 'Espera a que termine la operación en curso para cambiar de controlador.',
+    connectThroughCloud: 'Conectar a través de la nube de TP-Link',
+    cloudConnectOffline: 'El controlador no está en línea en la nube de TP-Link: la aplicación solo puede llegar a él mientras está en línea. Vuelve a intentarlo más tarde.',
+    cloudConnectCredentialExpired: 'TP-Link indica que la credencial de la nube ha caducado o ya no existe. Crea otra en el portal de Omada en la nube de TP-Link y guárdala en Ajustes → Nube de TP-Link.',
+    cloudConnectCredentialInvalid: 'TP-Link rechazó la credencial de la nube. Revísala en Ajustes → Nube de TP-Link con "Probar el acceso a la nube".',
+    cloudConnectNotConfigured: 'No hay ninguna credencial de la nube de TP-Link que se pueda usar. Guárdala en Ajustes → Nube de TP-Link.',
+    cloudConnectUnknownController: 'La cuenta de la nube de TP-Link ya no muestra este controlador.',
+    cloudListSuperseded: 'La credencial de la nube cambió mientras se leía la lista de controladores. Vuelve a intentarlo.',
+    cloudListFailed: 'No se pudo leer la lista de controladores de la nube de TP-Link.',
+    apGroupUnknown: 'Grupo desconocido',
+    apGroupNotReported: 'Desconocido: el controlador no informó del grupo de este AP',
+    certCloudNote: 'Los controladores de la nube de TP-Link se alcanzan a través de la nube de TP-Link: su certificado se verifica de la forma habitual, sin fijarlo ni preguntar.',
+    managementNeedsController: 'El acceso de gestión pertenece a un controlador de esta red: introduce primero su URL, usuario y contraseña, o deja vacíos el Client ID y el Client Secret.',
   },
   en: {
     disconnected: 'Disconnected',
@@ -1868,6 +1912,22 @@ export const translations: Record<Language, Translations> = {
     statusApIsolated: 'Isolated',
     statusApDisconnected: 'Disconnected',
     statusApUnknown: 'Unknown status',
+    thisNetwork: 'This network',
+    controllerSwitcherLabel: 'Controller',
+    controllerSwitcherCloudTag: 'Cloud',
+    controllerSwitcherBusy: 'Wait for the current operation to finish before switching controllers.',
+    connectThroughCloud: 'Connect through TP-Link cloud',
+    cloudConnectOffline: 'The controller is offline in the TP-Link cloud: the app can only reach it while it is online. Try again later.',
+    cloudConnectCredentialExpired: 'TP-Link says the cloud credential has expired or no longer exists. Create a new one in the TP-Link Omada cloud portal and save it in Settings → TP-Link cloud.',
+    cloudConnectCredentialInvalid: 'TP-Link rejected the cloud credential. Check it in Settings → TP-Link cloud with "Test cloud access".',
+    cloudConnectNotConfigured: 'No usable TP-Link cloud credential is saved. Save one in Settings → TP-Link cloud.',
+    cloudConnectUnknownController: 'The TP-Link cloud account no longer lists this controller.',
+    cloudListSuperseded: 'The cloud credential changed while the controllers were being listed. Try again.',
+    cloudListFailed: 'The controllers of the TP-Link cloud could not be listed.',
+    apGroupUnknown: 'Unknown group',
+    apGroupNotReported: 'Unknown: the controller did not report this AP\'s group',
+    certCloudNote: 'TP-Link cloud controllers are reached through TP-Link\'s cloud: their certificate is verified normally, with no pinning and no prompt.',
+    managementNeedsController: 'Management access belongs to a controller on this network: enter its URL, username and password first, or leave the Client ID and Client Secret empty.',
   },
 };
 

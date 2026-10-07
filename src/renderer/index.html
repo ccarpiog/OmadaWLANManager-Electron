@@ -318,10 +318,14 @@
           </select>
         </div>
         <!-- Trusted controller certificate (TOFU pin): the fingerprint and
-             an inline, two-step reset (settings-modal.ts) -->
+             an inline, two-step reset (settings-modal.ts); the note on
+             TP-Link cloud controllers, whose certificate is verified
+             normally, shows while a cloud credential is stored
+             (cloud-settings.ts) -->
         <div class="form-group cert-pin-group" role="group" aria-labelledby="labelCertPin">
           <div class="form-label" id="labelCertPin"></div>
           <p class="cert-fingerprint cert-pin-value" id="certPinValue"></p>
+          <p class="form-help cert-cloud-note" id="certCloudNote" hidden></p>
           <button class="btn btn-secondary btn-compact" id="resetCertBtn"></button>
           <div class="cert-reset-confirm" id="certResetConfirm" hidden>
             <p id="certResetMessage"></p>

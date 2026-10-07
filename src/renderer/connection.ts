@@ -654,7 +654,9 @@ export async function loadData(ticket: SessionTicket | null = captureSessionTick
     // Keep only entries whose identifiers have a valid format: they cross the
     // IPC boundary again when APs are moved, and a malformed id coming
     // from a compromised controller must never reach the UI or the main
-    // process. The optional client count is kept only as a non-negative integer
+    // process. The optional client count is kept only as a non-negative
+    // integer, and the unreported-group flag (cloud only, inbox I-1c2a) only
+    // as exactly `true` on an AP without a group name
     state.accessPoints = aps
       .filter(ap => {
         if (!isValidMac(ap.mac)) {
@@ -663,9 +665,10 @@ export async function loadData(ticket: SessionTicket | null = captureSessionTick
         }
         return true;
       })
-      .map(({ clientNum, ...ap }) => {
+      .map(({ clientNum, wlanGroupUnknown, ...ap }) => {
         const clients = sanitizeClientCount(clientNum);
-        return clients === undefined ? ap : { ...ap, clientNum: clients };
+        const kept: AccessPoint = clients === undefined ? ap : { ...ap, clientNum: clients };
+        return wlanGroupUnknown === true && kept.wlanGroup === '' ? { ...kept, wlanGroupUnknown: true } : kept;
       });
     state.groupModel = listing.groupModel;
     state.controllerVersion = listing.controllerVersion;

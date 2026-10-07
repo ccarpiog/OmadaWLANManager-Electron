@@ -181,6 +181,9 @@ const EXPECTED_BRIDGE = [
 ];
 // The keys of a CloudController DTO (src/shared/types.ts), sorted: nothing else may cross
 const CLOUD_CONTROLLER_DTO_KEYS = ['connectable', 'name', 'omadacId', 'online', 'reason', 'version'];
+// The local controller's omadacId in the stub's four-organization account
+// (CLOUD_STUB_LOCAL_OMADAC_ID in stub-main.cjs; inbox I-1c2a `localOmadacId`)
+const CLOUD_LOCAL_OMADAC_ID = 'c0ffee00c0ffee00c0ffee00c0ffee00';
 // The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
 const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
 // One launch per run*() function in main()
@@ -1533,29 +1536,44 @@ async function checkWindowLikeRealApp(session) {
 
 /**
  * Checks the TP-Link cloud channels through the real preload bridge (inbox
- * I-1a; no UI yet): testCloudAccess() and getCloudControllers() send no
- * argument and answer while disconnected with the stub's four controller
- * DTOs — exactly the DTO keys, never a deviceId, serverHost or token.
+ * I-1a; no switcher UI yet): testCloudAccess() and getCloudControllers() send
+ * no argument; with no cloud credential saved both answer notConfigured (the
+ * stub honors the config's cloudAccess flags like main, inbox I-1c2a); with
+ * one they answer while disconnected with the stub's four controller DTOs —
+ * exactly the DTO keys, never a deviceId, serverHost or token — plus main's
+ * stored `localOmadacId` when one is set. The config is restored afterwards.
  * @param {object} session - The launch.
  * @returns {Promise<void>}
  */
 async function checkCloudChannels(session) {
-  await check(`[${session.label}] cloud channels: testCloudAccess() and getCloudControllers() go through the preload with no argument and answer while disconnected with the four controller DTOs only`, async () => {
-    const replies = await session.page.evaluate(async () => ({
+  await check(`[${session.label}] cloud channels: testCloudAccess() and getCloudControllers() go through the preload with no argument; without a saved cloud credential they answer notConfigured, with one the four controller DTOs only (plus the stored localOmadacId), while disconnected`, async () => {
+    /**
+     * Calls both channels through the preload.
+     * @returns {Promise<{ test: object; controllers: object }>} Their replies.
+     */
+    const ask = () => session.page.evaluate(async () => ({
       test: await window.omadaAPI.testCloudAccess(),
       controllers: await window.omadaAPI.getCloudControllers(),
     }));
+    const none = await ask();
+    const original = (await stubState(session)).scenario.config;
+    await configureStub(session, { config: { ...original, cloudAccess: { clientId: 'smoke-cloud-client', hasCloudSecret: true } }, localOmadacId: CLOUD_LOCAL_OMADAC_ID });
+    const replies = await ask();
+    await configureStub(session, { config: original, localOmadacId: null });
     const state = await stubState(session);
     const calls = (state.calls || []).filter((call) => call.channel.startsWith('cloud:'));
     const wellFormed = [replies.test, replies.controllers].every((reply) =>
       reply.success === true && reply.truncated === false && Array.isArray(reply.controllers) && reply.controllers.length === 4 &&
-      reply.controllers.every((controller) => isDeepStrictEqual(Object.keys(controller).sort(), CLOUD_CONTROLLER_DTO_KEYS)));
+      reply.controllers.every((controller) => isDeepStrictEqual(Object.keys(controller).sort(), CLOUD_CONTROLLER_DTO_KEYS)) &&
+      reply.localOmadacId === CLOUD_LOCAL_OMADAC_ID);
     const reasons = replies.controllers.controllers?.map((controller) => controller.reason);
     return verdict(
+      isDeepStrictEqual(none, { test: { success: false, error: 'notConfigured' }, controllers: { success: false, error: 'notConfigured' } }) &&
       wellFormed && isDeepStrictEqual(reasons, [null, 'offline', 'versionTooOld', null]) &&
       !/deviceId|serverHost|tplinkcloud|AccessToken/.test(JSON.stringify(replies)) &&
-      isDeepStrictEqual(calls.map((call) => [call.channel, call.args.length]), [['cloud:test', 0], ['cloud:controllers', 0]]) && state.connected === false,
-      { replies, calls, connected: state.connected }
+      isDeepStrictEqual(calls.map((call) => [call.channel, call.args.length]), [['cloud:test', 0], ['cloud:controllers', 0], ['cloud:test', 0], ['cloud:controllers', 0]]) &&
+      state.connected === false && isDeepStrictEqual(state.scenario.config, original),
+      { none, replies, calls, connected: state.connected }
     );
   }); // End of check "[label] cloud channels"
 } // End of function checkCloudChannels()
@@ -2889,6 +2907,9 @@ async function runSpanishFirstRun(electronInfo) {
   try {
     await checkWindowLikeRealApp(session);
     await checkTranslations(session, 'es');
+    // The first-run Settings has loaded its config before the cloud check
+    // briefly stores a cloud credential in the stub (and restores it)
+    await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
     await checkCloudChannels(session);
     await checkSwitchChannel(session);
 
@@ -5130,6 +5151,9 @@ const CLOUD_TEXT = {
     expired: 'TP-Link indica que esta credencial ha caducado o ya no existe. Crea otra en el portal de Omada en la nube de TP-Link y guárdala aquí.',
     unknownError: 'La prueba de la nube de TP-Link falló con un error desconocido.',
     listLabel: 'Controladores de la cuenta de la nube de TP-Link',
+    thisNetwork: 'Esta red',
+    managementNeedsController: 'El acceso de gestión pertenece a un controlador de esta red: introduce primero su URL, usuario y contraseña, o deja vacíos el Client ID y el Client Secret.',
+    fillUrlAndUser: 'Por favor, completa la URL y el usuario',
     status: {
       none: 'Disponible',
       notController: 'No se puede usar: no es un controlador Omada.',
@@ -5158,6 +5182,9 @@ const CLOUD_TEXT = {
     expired: 'TP-Link says this credential has expired or no longer exists. Create a new one in the TP-Link Omada cloud portal and save it here.',
     unknownError: 'The TP-Link cloud test failed with an unknown error.',
     listLabel: 'Controllers of the TP-Link cloud account',
+    thisNetwork: 'This network',
+    managementNeedsController: 'Management access belongs to a controller on this network: enter its URL, username and password first, or leave the Client ID and Client Secret empty.',
+    fillUrlAndUser: 'Please fill in the URL and username',
     status: {
       none: 'Available',
       notController: 'Cannot be used: not an Omada controller.',
@@ -5284,6 +5311,28 @@ function readCloudTest(page) {
     };
   }); // End of the in-page cloud-test probe
 } // End of function readCloudTest()
+
+/**
+ * Reads the inbox I-1c2a additions of Settings: the "This network" mark of
+ * each listed controller in the test result (name, data-local, the mark's
+ * text) and the certificate section's cloud note (shown or not, its text).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<{ marks: Array<[string, string | null, string | null]>; noteShown: boolean; note: string }>} What they show.
+ */
+function readCloudMarks(page) {
+  return page.evaluate(() => {
+    const note = document.getElementById('certCloudNote');
+    return {
+      marks: Array.from(document.querySelectorAll('#cloudTestResult .cloud-test-list li')).map((item) => [
+        item.querySelector('.cloud-controller-name')?.textContent ?? '',
+        item.dataset.local ?? null,
+        item.querySelector('.cloud-controller-local')?.textContent ?? null,
+      ]),
+      noteShown: Boolean(note) && !note.hidden && note.closest('[hidden]') === null,
+      note: note?.textContent ?? '',
+    };
+  }); // End of the in-page probe
+} // End of function readCloudMarks()
 
 /**
  * Clicks "Test cloud access" and waits until the result box shows the given
@@ -5438,6 +5487,11 @@ async function runCloudSettings(electronInfo) {
       );
     }); // End of check "[cloudset] es: Settings shows the cloud section"
 
+    await check('[cloudset] es: with no cloud credential stored, the certificate section shows no cloud note (inbox I-1c2a)', async () => {
+      const read = await readCloudMarks(page);
+      return verdict(read.noteShown === false && read.note === uiStrings.es['#certCloudNote'], read);
+    }); // End of check "[cloudset] es: no cloud note"
+
     await check('[cloudset] es: "Probar el acceso a la nube" with nothing saved asks main once (no argument) and says no credential is saved; with an unsaved Client ID, Client Secret or region it says "Guarda primero los cambios: …" without calling main', async () => {
       await configureStub(session, { cloudResult: { success: false, error: 'notConfigured' } });
       const none = await runCloudTestFor(page, 'notConfigured');
@@ -5548,6 +5602,23 @@ async function runCloudSettings(electronInfo) {
         { calls, running, items: four.items, note: four.note, others: others.items.map((item) => [item.reason, item.status, item.version]), othersNote: others.note }
       );
     }); // End of check "[cloudset] es: a successful test..."
+
+    await check('[cloudset] es: with main\'s localOmadacId (inbox I-1c2a) the test marks the local controller\'s cloud duplicate "Esta red" and no other; without it nothing is marked; the certificate section says cloud controllers are verified normally while a credential is stored', async () => {
+      await configureStub(session, { localOmadacId: CLOUD_LOCAL_OMADAC_ID, cloudResult: null });
+      await runCloudTestFor(page, 'ok');
+      const marked = await readCloudMarks(page);
+      await configureStub(session, { localOmadacId: null });
+      await runCloudTestFor(page, 'ok');
+      const unmarked = await readCloudMarks(page);
+      return verdict(
+        isDeepStrictEqual(marked.marks, [
+          ['Omada red antigua (Proxmox)', 'true', es.thisNetwork], ['OC200 Planta 3', null, null], ['OC200 Planta 2', null, null], ['OC200 Planta 4', null, null],
+        ]) &&
+        unmarked.marks.length === 4 && unmarked.marks.every(([, local, text]) => local === null && text === null) &&
+        marked.noteShown === true && marked.note === uiStrings.es['#certCloudNote'],
+        { marked, unmarked }
+      );
+    }); // End of check "[cloudset] es: the local duplicate is marked"
 
     await check('[cloudset] es: errors — rate limiting (-7132) and an expired or deleted credential (-52602) have their own Spanish texts with main\'s diagnostic; an unknown code shows the code and its message; superseded says the credential changed and lists nothing', async () => {
       await configureStub(session, { cloudResult: CLOUD_RATE_LIMITED });
@@ -5699,6 +5770,18 @@ async function runCloudSettings(electronInfo) {
       );
     }); // End of check "[cloudset] en: Test cloud access..."
 
+    await check('[cloudset] en: the local controller\'s cloud duplicate reads "This network" in the test result, and the certificate section\'s cloud note is in English (inbox I-1c2a)', async () => {
+      await configureStub(session, { localOmadacId: CLOUD_LOCAL_OMADAC_ID, cloudResult: null });
+      await runCloudTestFor(page, 'ok');
+      const read = await readCloudMarks(page);
+      await configureStub(session, { localOmadacId: null });
+      return verdict(
+        isDeepStrictEqual(read.marks[0], ['Omada red antigua (Proxmox)', 'true', en.thisNetwork]) && read.marks.slice(1).every(([, local]) => local === null) &&
+        read.noteShown === true && read.note === uiStrings.en['#certCloudNote'],
+        read
+      );
+    }); // End of check "[cloudset] en: This network"
+
     await check('[cloudset] en: "Remove cloud access" asks inline in English; confirmed, it says "Cloud access will be removed when you save." and clears the result; Save sends removeCloudAccess alone; reopened, nothing is stored and no secret leaked', async () => {
       await page.click('#removeCloudBtn');
       await page.waitForFunction(() => document.activeElement?.id === 'cancelCloudRemoveBtn', null, { timeout: WAIT_MS });
@@ -5724,6 +5807,35 @@ async function runCloudSettings(electronInfo) {
         { asking, staged, stagedTest, payload: save.payload, cloudAccess: save.config.cloudAccess, after, leaks }
       );
     }); // End of check "[cloudset] en: Remove cloud access..."
+
+    await check('[cloudset] en: without a local controller (inbox I-1c2a) Settings saves the cloud credential alone — "" as URL and username with the cloud fields, no connect follows; typed management fields and an empty form are refused with their texts before sending', async () => {
+      const before = (await stubState(session)).scenario.config;
+      await configureStub(session, { config: { url: '', username: '', language: 'en', hasPassword: false, pinnedFingerprint: null, cloudAccess: { ...before.cloudAccess } } });
+      const connectsBefore = callsTo(await stubState(session), 'omada:connect').length;
+      const savesBefore = (await latestSave(session)).count;
+      await openSettingsWhenIdle(page);
+      await saveExpectingToast(page, en.fillUrlAndUser);
+      await page.fill('#clientIdInput', 'mgmt-client');
+      await page.fill('#cloudClientIdInput', 'owm-cloud-only');
+      await page.fill('#cloudClientSecretInput', CLOUD_SECRETS[3]);
+      await saveExpectingToast(page, en.managementNeedsController);
+      await page.fill('#clientIdInput', '');
+      const refusedSends = (await latestSave(session)).count - savesBefore;
+      await clearToasts(page);
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      const save = await latestSave(session);
+      await page.waitForTimeout(300);
+      const connects = callsTo(await stubState(session), 'omada:connect').length - connectsBefore;
+      const leaks = await countCloudSecretLeaks(page);
+      return verdict(
+        refusedSends === 0 && save.count === savesBefore + 1 &&
+        isDeepStrictEqual(save.payload, { url: '', username: '', language: 'en', cloudRegion: 'euw', cloudClientId: 'owm-cloud-only', cloudClientSecret: CLOUD_SECRETS[3] }) &&
+        save.config.url === '' && save.config.cloudAccess.clientId === 'owm-cloud-only' && save.config.cloudAccess.hasCloudSecret === true &&
+        connects === 0 && leaks === 0,
+        { refusedSends, count: save.count - savesBefore, payload: withoutCloudSecret(save.payload), url: save.config.url, cloudAccess: save.config.cloudAccess, connects, leaks }
+      );
+    }); // End of check "[cloudset] en: without a local controller..."
   } finally {
     session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
     await session.app.close().catch(() => {});

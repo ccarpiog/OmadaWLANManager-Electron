@@ -89,6 +89,84 @@ export interface ClientRequestLike {
 export type RequestFactory = (options: { method: string; url: string }) => ClientRequestLike;
 
 /**
+ * How a request failed in the hardened transport before a complete response
+ * (inbox I-1c2a review): 'timeout' — the request timeout fired; 'network' — the
+ * request itself failed (Electron's net error, e.g. a refused connection or a
+ * certificate error); 'aborted' — the request was aborted from outside.
+ */
+export type TransportFailureKind = 'timeout' | 'network' | 'aborted';
+
+/**
+ * The failure of a hardened-transport request, typed at its source: the kind,
+ * Electron's net error code when the request failed with one (e.g.
+ * 'ERR_CONNECTION_REFUSED'; null otherwise) and whether a response (its
+ * headers) had arrived before it failed. The message is unchanged ("Request
+ * timeout (15s)", "No se pudo conectar al controlador: net::ERR_…", "Request
+ * aborted"), so text-based callers keep working.
+ */
+export class TransportError extends Error {
+  readonly kind: TransportFailureKind;
+  readonly netError: string | null;
+  readonly responded: boolean;
+
+  /**
+   * Creates the failure.
+   * @param {string} message - The message (unchanged from before the type).
+   * @param {TransportFailureKind} kind - How the request failed.
+   * @param {string | null} netError - Electron's net error code, if any.
+   * @param {boolean} responded - Whether response headers had arrived.
+   */
+  constructor(message: string, kind: TransportFailureKind, netError: string | null, responded: boolean) {
+    super(message);
+    this.kind = kind;
+    this.netError = netError;
+    this.responded = responded;
+  }
+} // End of class TransportError
+
+// Electron net errors that mean the controller could not be reached at all
+// (the name did not resolve, no route, the connection was refused, reset,
+// closed or timed out before any answer, the network changed or is down). A
+// certificate or SSL error (ERR_CERT_*, ERR_SSL_*) is a trust decision and
+// never counts, nor does any code not listed here (fail-closed)
+const UNREACHABLE_NET_ERRORS: ReadonlySet<string> = new Set([
+  'ERR_NAME_NOT_RESOLVED',
+  'ERR_NAME_RESOLUTION_FAILED',
+  'ERR_ADDRESS_UNREACHABLE',
+  'ERR_ADDRESS_INVALID',
+  'ERR_CONNECTION_REFUSED',
+  'ERR_CONNECTION_RESET',
+  'ERR_CONNECTION_CLOSED',
+  'ERR_CONNECTION_ABORTED',
+  'ERR_CONNECTION_FAILED',
+  'ERR_CONNECTION_TIMED_OUT',
+  'ERR_TIMED_OUT',
+  'ERR_EMPTY_RESPONSE',
+  'ERR_NETWORK_CHANGED',
+  'ERR_INTERNET_DISCONNECTED',
+  'ERR_NETWORK_ACCESS_DENIED'
+]);
+
+// Electron's net error message ("net::ERR_CONNECTION_REFUSED")
+const NET_ERROR_MESSAGE_REGEX = /^net::(ERR_[A-Z0-9_]+)$/;
+
+/**
+ * Tells whether a failure means the controller never answered the request
+ * (inbox I-1c2a review): a TransportError raised before any response arrived
+ * — the request timeout, or a net error of UNREACHABLE_NET_ERRORS. Anything
+ * else (a certificate or unknown net error, an abort, a response that did
+ * arrive, an HTTP error, any other error) is not.
+ * @param {unknown} failure - What the request threw.
+ * @returns {boolean} True when the controller did not answer at all.
+ */
+export function isUnreachableTransportError(failure: unknown): boolean {
+  if (!(failure instanceof TransportError) || failure.responded) {
+    return false;
+  }
+  return failure.kind === 'timeout' || (failure.kind === 'network' && failure.netError !== null && UNREACHABLE_NET_ERRORS.has(failure.netError));
+} // End of function isUnreachableTransportError()
+
+/**
  * Tunable limits for createHardenedTransport(). Production uses the defaults;
  * unit tests shrink them to exercise the timeout and size-cap paths quickly.
  */
@@ -145,7 +223,10 @@ export function parseOmadaResponse<T>(statusCode: number, body: string, knownSec
  * proc). Hardened: aborts after REQUEST_TIMEOUT_MS (covers connect + body
  * download), caps the response body at MAX_RESPONSE_BYTES, and settles each
  * request exactly once — the timeout timer is cleared on every terminal path
- * (resolve and reject both go through the settle helpers).
+ * (resolve and reject both go through the settle helpers). A timeout, a
+ * request error and an abort reject with a TransportError (kind, net error
+ * code, whether a response had arrived); the size cap and a response stream
+ * error with a plain Error.
  * @param {RequestFactory} requestFactory - Creates the outgoing request.
  * @param {TransportLimits} [limits] - Overrides for the timeout / size cap.
  * @returns {OmadaTransport} The transport.
@@ -171,6 +252,8 @@ export function createHardenedTransport(requestFactory: RequestFactory, limits: 
       });
 
       let settled = false;
+      // Whether this request's response headers arrived (TransportError.responded)
+      let responded = false;
       let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
       /** Clear the timeout timer so it cannot fire after the request settles. */
@@ -207,7 +290,7 @@ export function createHardenedTransport(requestFactory: RequestFactory, limits: 
 
       // Abort requests that take too long (covers connect + body download)
       timeoutTimer = setTimeout(() => {
-        settleReject(new Error(`Request timeout (${timeoutMs / 1000}s)`));
+        settleReject(new TransportError(`Request timeout (${timeoutMs / 1000}s)`, 'timeout', null, responded));
         request.abort();
       }, timeoutMs);
 
@@ -228,6 +311,7 @@ export function createHardenedTransport(requestFactory: RequestFactory, limits: 
           return;
         }
 
+        responded = true;
         onResponseHeaders(response.headers);
 
         const statusCode = response.statusCode;
@@ -258,12 +342,13 @@ export function createHardenedTransport(requestFactory: RequestFactory, limits: 
       }); // End of the request response handler
 
       request.on('error', (error: Error) => {
-        settleReject(new Error(`No se pudo conectar al controlador: ${error.message}`));
+        const netError = NET_ERROR_MESSAGE_REGEX.exec(error.message)?.[1] ?? null;
+        settleReject(new TransportError(`No se pudo conectar al controlador: ${error.message}`, 'network', netError, responded));
       });
 
       request.on('abort', () => {
         // Only reached when the abort was not initiated by a settle path
-        settleReject(new Error('Request aborted'));
+        settleReject(new TransportError('Request aborted', 'aborted', null, responded));
       });
 
       // Send body if present

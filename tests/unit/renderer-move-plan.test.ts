@@ -19,6 +19,7 @@ import {
   describeMoveError,
   diffNetworks,
   findUniqueGroupByName,
+  hasUnknownGroup,
   hasUnknownNetworks,
   isAmbiguousGroup,
   isApInGroup,
@@ -501,3 +502,32 @@ describe('unknown network lists (ssidListUnknown: the controller did not report 
     assert.deepEqual(partitionDestinations(CLOUD_GROUPS, 'casa'), { networks: [DEFAULT, OFFICE], silence: [] });
   });
 }); // End of the describe block for unknown network lists
+
+describe('an AP whose group the controller did not report (wlanGroupUnknown, cloud only, inbox I-1c2a)', () => {
+  /**
+   * Builds a cloud AP whose group name was not reported.
+   * @param {string} mac - MAC address.
+   * @param {string} name - AP name.
+   * @returns {AccessPoint} The AP ('' plus the flag).
+   */
+  function unreported(mac: string, name: string): AccessPoint {
+    return { ...ap(mac, name, ''), wlanGroupUnknown: true };
+  }
+
+  test('a source of its own, kept apart from "no group" (and never merged with it), in order of first appearance', () => {
+    const selected = [unreported('m1', 'N1'), ap('m2', 'A2', ''), ap('m3', 'A3', 'Oficina'), unreported('m4', 'N4')];
+    const plan = planMove(selected, SILENT, GROUPS);
+    assert.deepEqual(plan.sources, [{ name: '', count: 2, groupUnknown: true }, { name: '', count: 1 }, { name: 'Oficina', count: 1 }]);
+    // Its current networks are unknown, like an AP without a group
+    assert.equal(plan.knownSourceCount, 1);
+    assert.equal(plan.unknownSourceCount, 3);
+    assert.equal(plan.moving.length, 4);
+  });
+
+  test('local data plans exactly as before (no flag, no groupUnknown entry)', () => {
+    const selected = [ap('m1', 'A1', 'Oficina'), ap('m2', 'A2', ''), ap('m3', 'A3', 'Oficina')];
+    assert.deepEqual(planMove(selected, SILENT, GROUPS).sources, [{ name: 'Oficina', count: 2 }, { name: '', count: 1 }]);
+    assert.equal(hasUnknownGroup(ap('m2', 'A2', '')), false);
+    assert.equal(hasUnknownGroup(unreported('m1', 'N1')), true);
+  });
+}); // End of the describe block for unreported AP groups

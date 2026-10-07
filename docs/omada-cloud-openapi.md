@@ -243,6 +243,13 @@ Other outcomes:
   `config:save`, sent alone like `removeManagementAccess`. It deletes the region, the Client ID, the blob, the
   session-only secret, `cloudSites` and `activeController`, so the local controller is active again.
   `localOmadacId` belongs to the configured controller and stays.
+- **No local controller (cloud-only, phase I-1c2a):** a save with `''` as URL and username and no password, while no
+  local controller is stored, keeps the cloud fields only (`isCloudOnlySave()` / `applyCloudOnlySave()` in
+  `config-model.ts`; the shape guard `isValidConfigSavePayload()` in `ipc-guards.ts` accepts that shape whole and still
+  refuses a partial local section). It must remove cloud access or leave a cloud Client ID stored, else `invalidUrl` (the
+  empty form, as before). The management Client ID / Client Secret belong to a local controller: either one is refused
+  with `managementNeedsController`. The renderer mirrors the rule (`isCloudOnlyForm()`, `planCloudOnlySave()` in
+  `src/renderer/cloud-form.ts`) and does not auto-connect after such a save.
 - **What the renderer sees:** `RendererConfig.cloudAccess` and `ConfigSaveResult.cloudAccess` are
   `{region, clientId, hasCloudSecret, cloudSecretSessionOnly, canPersistCloudSecret, activeController}`, never the
   secret.
@@ -260,7 +267,10 @@ Other outcomes:
     call must work while disconnected from, or unable to reach, the local controller; it reads only the account and
     targets no controller. Stale replies are refused in main instead: a reply whose credentials were saved, removed
     or replaced meanwhile answers `superseded`.
-  - Replies are the DTOs above or a stable code with a codes-only diagnostic.
+  - Replies are the DTOs above or a stable code with a codes-only diagnostic. A success also carries the stored
+    `localOmadacId` (phase I-1c2a) when one is stored: the renderer lists the organization with that omadacId once, as
+    the local controller (Settings' Test result marks it "This network"; the switcher hides it). It never enters a
+    diagnostic.
 - **Redaction:** `src/main/redact.ts` covers:
   - `client_secret` / `clientSecret` in any casing and separator;
   - `AccessToken=…`, `Bearer AK-…`;
@@ -331,8 +341,9 @@ It is Electron-free and unit-tested on fixtures (`tests/unit/cloud-controller-se
 
 - **Access points** (`toCloudAccessPoint()`), the renderer's `AccessPoint`:
   - A field not reported sanely is unknown, never a default that looks real. No `statusCategory` → `-1` (shown as
-    unknown, not as disconnected); no `clientNum` → absent; no `apGroupId` → no `wlanId`; no `apGroupName` → `''`;
-    no name → the MAC (as the internal list does).
+    unknown, not as disconnected); no `clientNum` → absent; no `apGroupId` → no `wlanId`; no `apGroupName` → `''`
+    with `wlanGroupUnknown: true` (phase I-1c2a: the renderer shows "Unknown group", never "Unassigned", in the AP row,
+    the group filter, the details pane and a move's sources); no name → the MAC (as the internal list does).
   - `wlanId` (new, optional) is the AP's group id.
   - A row whose `deviceType` is `Gateway` or `Switch` is left out. Every other row is an AP, one without the field
     included.
@@ -409,7 +420,12 @@ I-1c).
   the account's live secrets.
 - **Local connect:** unchanged. A successful one (installed, or completed by a site choice) persists the
   `/api/info` `omadacId` as `localOmadacId`, only when it is usable and differs from the stored one, and only for
-  the URL that connect used.
+  the URL that connect used. A failed one whose controller never answered at all carries `unreachable: true` beside
+  `connectError` (phase I-1c2a): its first request, `/api/info`, got no response — the request timeout or an Electron
+  net error such as `ERR_CONNECTION_REFUSED` or `ERR_NAME_NOT_RESOLVED` (the transport's typed `TransportError`,
+  `isUnreachableTransportError()`, recorded as `OmadaController.connectUnreachable`). A failure after any response (a
+  timeout or reset during the login or the site list), an HTTP error and a certificate error never count. The renderer
+  may then offer "Connect through TP-Link cloud" for the local controller's cloud duplicate.
 - **Cloud credential change:** a save that changes the cloud credential while the target is a cloud controller runs
   the same transition (`applyConfigSave()`, `cloudCredentialsChanged`), and the `config:save` reply then carries
   `connectionReset: true`, as for a URL change (`finishConfigSave()`), so the renderer drops its connected UI. On
@@ -423,7 +439,10 @@ I-1c).
   credential is usable (a Client ID with a secret, the session-only fallback included). Otherwise it returns local:
   `activeController` survives a dropped credential and is not rewritten. `startOn()` sets the target without a
   transition, a write or a connect, and only while nothing has run yet; the renderer's first `omada:connect` then
-  connects that target. With the local controller active the start is unchanged.
+  connects that target. With the local controller active the start is unchanged. A cloud-only configuration (phase
+  I-1c2a) starts on its stored cloud controller while the credential is usable; otherwise on local, whose connect
+  answers `configIncomplete`. `config:load` reports main's current target as `connectionTarget` (`'local'` or the
+  omadacId), so the renderer knows what its first `omada:connect` reaches.
 - **Switch IPC** (`omada:switch-controller`, preload `switchController(target)`, reply: the new target's
   `ConnectionResult`): the trusted sender, then `parseControllerTargetRequest()` (`ipc-guards.ts`), which accepts
   exactly `{kind: 'local'}` or `{kind: 'cloud', omadacId}` (a plain object, no other key, `isOmadacId()`) and

@@ -22,8 +22,10 @@ import {
   filterAccessPoints,
   GROUP_FILTER_ALL,
   GROUP_FILTER_UNASSIGNED,
+  GROUP_FILTER_UNKNOWN,
   indexGroupsByName,
   isFilterActive,
+  missingGroupKey,
   networkCountFor,
   planRangeSelection,
   STATUS_FILTER_ALL,
@@ -47,6 +49,7 @@ import {
   selectAllApsBtn,
 } from './elements';
 import { t, tFormat, tGroup } from './i18n';
+import { hasUnknownGroup } from './move-plan';
 import { state } from './state';
 
 // Order of the per-status options in the status filter (the presentation of
@@ -73,9 +76,10 @@ function createOption(value: string, label: string): HTMLOptionElement {
 /**
  * Rebuilds the status and group filter options in the active language: every
  * status (plus "unknown"), and every loaded group (plus "Unassigned" when an
- * AP has no group). A group filter whose group is gone after a reload falls
- * back to "All groups". Called after each data load, on clearing the data,
- * and by applyTranslations().
+ * AP has no group, and "Unknown group" when the controller did not report an
+ * AP's group — cloud only, inbox I-1c2a). A group filter whose group is gone
+ * after a reload falls back to "All groups". Called after each data load, on
+ * clearing the data, and by applyTranslations().
  */
 export function renderApFilterOptions(): void {
   apStatusFilterSelect.replaceChildren(
@@ -91,8 +95,11 @@ export function renderApFilterOptions(): void {
     createOption(GROUP_FILTER_ALL, t('groupFilterAll')),
     ...state.wlanGroups.map((group: WlanGroup) => createOption(group.wlanId, group.wlanName)),
   ];
-  if (state.accessPoints.some(ap => ap.wlanGroup === '')) {
+  if (state.accessPoints.some(ap => missingGroupKey(ap) === 'unassigned')) {
     groupOptions.push(createOption(GROUP_FILTER_UNASSIGNED, t('unassigned')));
+  }
+  if (state.accessPoints.some(hasUnknownGroup)) {
+    groupOptions.push(createOption(GROUP_FILTER_UNKNOWN, t('apGroupUnknown')));
   }
   apGroupFilterSelect.replaceChildren(...groupOptions);
   if (!groupOptions.some(option => option.value === state.apGroupFilter)) {
@@ -225,8 +232,10 @@ function createApRow(ap: AccessPoint, index: number, groupsByName: ReadonlyMap<s
   details.id = detailsId;
   const group = document.createElement('span');
   group.className = 'ap-row-group';
-  // "AP group: <name>" on Omada 6.3+, "WLAN: <name>" before (tGroup())
-  group.textContent = `${tGroup('groupLabel')}: ${ap.wlanGroup || t('unassigned')}`;
+  // "AP group: <name>" on Omada 6.3+, "WLAN: <name>" before (tGroup());
+  // "Unassigned" for no group, "Unknown group" when it was not reported
+  const missing = missingGroupKey(ap);
+  group.textContent = `${tGroup('groupLabel')}: ${missing === null ? ap.wlanGroup : t(missing)}`;
   details.appendChild(group);
   const countsText = describeApCounts(ap, groupsByName);
   if (countsText !== '') {

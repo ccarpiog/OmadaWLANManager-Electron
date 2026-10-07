@@ -5,7 +5,7 @@
 // ============================================================================
 
 import { t, tFormat } from './i18n';
-import type { MovePlan, NetworkChange, RetryCheck } from './move-plan';
+import type { MovePlan, NetworkChange, RetryCheck, SourceGroup } from './move-plan';
 
 // How many network names a group's preview lists before "+N more"
 const MAX_PREVIEW_NETWORKS = 3;
@@ -175,14 +175,29 @@ export function unreportedSourcesNote(plan: MovePlan): string | null {
 
 /**
  * The current groups of the moving APs with their counts, e.g.
- * "zGrupo B (1 AP) · Default (2 APs)" ("Unassigned" for APs without one).
+ * "zGrupo B (1 AP) · Default (2 APs)" ("Unassigned" for APs without one,
+ * "Unknown group" for APs whose group the controller did not report).
  * @param {MovePlan} plan - The move plan.
  * @returns {string} The localized list.
  */
 export function sourceGroupsText(plan: MovePlan): string {
   return plan.sources
-    .map(source => `${source.name === '' ? t('unassigned') : source.name} (${apCountText(source.count)})`)
+    .map(source => `${sourceGroupName(source)} (${apCountText(source.count)})`)
     .join(' · ');
+}
+
+/**
+ * The name shown for one source group of a move: its name, "Unknown group"
+ * when the controller did not report the APs' group (inbox I-1c2a), or
+ * "Unassigned" for APs without one.
+ * @param {SourceGroup} source - The source group.
+ * @returns {string} The localized name.
+ */
+function sourceGroupName(source: SourceGroup): string {
+  if (source.groupUnknown === true) {
+    return t('apGroupUnknown');
+  }
+  return source.name === '' ? t('unassigned') : source.name;
 }
 
 /**

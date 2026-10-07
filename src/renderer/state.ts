@@ -57,7 +57,7 @@ export interface RendererState {
   isConnected: boolean;
   // Access points list filters: search text, status filter (see
   // STATUS_FILTER_ALL in ap-selection.ts) and group filter (a group id,
-  // GROUP_FILTER_ALL or GROUP_FILTER_UNASSIGNED)
+  // GROUP_FILTER_ALL, GROUP_FILTER_UNASSIGNED or GROUP_FILTER_UNKNOWN)
   apFilterText: string;
   apStatusFilter: string;
   apGroupFilter: string;

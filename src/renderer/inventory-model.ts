@@ -19,7 +19,9 @@
 //   only SSID names), consistently with the sidebar's distinct-name count.
 // - An AP's group is resolved by name; a name several groups share is
 //   "ambiguous" (its members cannot be told apart), a name the listing does
-//   not have is "unlisted", and '' means the AP reports no group. APs whose
+//   not have is "unlisted", and '' means the AP reports no group — or, with
+//   `wlanGroupUnknown` (cloud only, inbox I-1c2a), that the controller did
+//   not report it ("unreported", shown as unknown, never as unassigned). APs whose
 //   group cannot be resolved are never counted as members of any group or
 //   broadcasters of any network. For a network they are counted apart as
 //   APs that MAY broadcast it (unknown), unless none of the groups with
@@ -38,7 +40,7 @@
 //   unchanged (the optional fields are then absent).
 
 import type { AccessPoint, WlanGroup } from '../shared/types';
-import { hasUnknownNetworks, networkNames, normalizeSearch } from './move-plan';
+import { hasUnknownGroup, hasUnknownNetworks, networkNames, normalizeSearch } from './move-plan';
 import type { LinkTarget } from './nav-history';
 
 /**
@@ -47,6 +49,7 @@ import type { LinkTarget } from './nav-history';
 export type ApGroupResolution =
   | { kind: 'group'; group: WlanGroup }
   | { kind: 'unassigned' }
+  | { kind: 'unreported' }
   | { kind: 'unlisted'; name: string }
   | { kind: 'ambiguous'; name: string };
 
@@ -132,12 +135,18 @@ export interface ApDetailsModel {
 }
 
 /**
- * Resolves an AP's group (APs name their group; they carry no group id).
+ * Resolves an AP's group (APs name their group; they carry no group id):
+ * 'unreported' when the controller did not report it (hasUnknownGroup(),
+ * cloud only, inbox I-1c2a — never 'unassigned'), 'unassigned' when the AP
+ * reports no group.
  * @param {AccessPoint} ap - The access point.
  * @param {readonly WlanGroup[]} groups - The loaded groups.
  * @returns {ApGroupResolution} The group, or why it cannot be resolved.
  */
 export function resolveApGroup(ap: AccessPoint, groups: readonly WlanGroup[]): ApGroupResolution {
+  if (hasUnknownGroup(ap)) {
+    return { kind: 'unreported' };
+  }
   if (ap.wlanGroup === '') {
     return { kind: 'unassigned' };
   }

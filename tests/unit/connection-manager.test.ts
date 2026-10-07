@@ -72,6 +72,9 @@ class FakeController implements ManagedController {
   readonly preferredSiteIds: Array<string | undefined> = [];
   readonly logoutSessions: number[] = [];
   selectedSite: string | null = null;
+  // What the controller reports about its failed connect (ManagedController
+  // .connectUnreachable): its first request got no response
+  connectUnreachable = false;
   private sites: SiteInfo[] = [];
   private readonly harness: Harness;
 
@@ -708,3 +711,46 @@ describe('ConnectionManager: a new connect closes the installed controller befor
     assert.equal(old.events.filter((event) => event === 'logout').length, 1, 'the disconnect logged it out');
   }); // End of test "a failed, incomplete or superseded attempt still closed the installed controller..."
 }); // End of describe 'a new connect closes the installed controller before its first await'
+
+describe('a local connect whose controller never answered is marked unreachable (inbox I-1c2a)', () => {
+  test('connectError carries unreachable: true exactly when the controller reports it (its own record of the first request), whatever the text; the detail is unchanged', async () => {
+    const cases: Array<[Error, boolean, boolean]> = [
+      [new Error('No se pudo conectar al controlador: net::ERR_CONNECTION_REFUSED'), true, true],
+      [new Error('Request timeout (15s)'), true, true],
+      // The same texts after the controller had answered (a timeout or reset during the login or the site list)
+      [new Error('Request timeout (15s)'), false, false],
+      [new Error('No se pudo conectar al controlador: net::ERR_CONNECTION_RESET'), false, false],
+      [new Error('Error de autenticación'), false, false],
+      [new Error('HTTP 502: Bad gateway'), false, false],
+    ];
+    for (const [failure, reported, unreachable] of cases) {
+      const harness = new Harness();
+      const pending = (await harness.startConnect()).result;
+      harness.latest.connectUnreachable = reported;
+      harness.latest.connectResult.reject(failure);
+      const result = await pending;
+      const expected: ConnectionResult = unreachable
+        ? { success: false, error: 'connectError', detail: failure.message, unreachable: true }
+        : { success: false, error: 'connectError', detail: failure.message };
+      assert.deepEqual(result, expected, `${failure.message} (reported: ${reported})`);
+    }
+  }); // End of test "connectError carries unreachable: true exactly when the controller reports it..."
+
+  test('a certificate rejection keeps its precedence (never unreachable), and a superseded attempt stays superseded', async () => {
+    const harness = new Harness();
+    const pending = (await harness.startConnect()).result;
+    harness.manager.recordPinRejection({ kind: 'first-use', hostname: HOST_A, fingerprint: FINGERPRINT });
+    harness.latest.connectUnreachable = true;
+    harness.latest.connectResult.reject(new Error('No se pudo conectar al controlador: net::ERR_FAILED'));
+    const result = await pending;
+    assert.equal(result.error, 'certificateUntrusted');
+    assert.equal('unreachable' in result, false);
+    const second = new Harness();
+    const stale = (await second.startConnect()).result;
+    const controller = second.latest;
+    await second.manager.disconnect();
+    controller.connectUnreachable = true;
+    controller.connectResult.reject(new Error('net::ERR_CONNECTION_REFUSED'));
+    assert.deepEqual(await stale, { success: false, error: 'connectionSuperseded' });
+  }); // End of test "a certificate rejection keeps its precedence..."
+}); // End of describe 'a local connect whose controller never answered is marked unreachable'

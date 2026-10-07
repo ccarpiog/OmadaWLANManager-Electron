@@ -23,9 +23,9 @@ import {
 import { CertificateTrustSource, ControllerTlsSessions, installCertificateVerifyProc, isCertificateErrorAllowed } from './cert-verify';
 import { CloudAccessService } from './cloud-access';
 import { createCloudControllerLookup } from './cloud-connect';
-import { isCloudRegion } from './cloud-hosts';
 import { createCloudSession } from './cloud-transport';
 import { ConnectionManager } from './connection-manager';
+import { activeControllerValue } from './connection-target';
 import {
   accessPointsReply,
   AppliedConfigSave,
@@ -48,6 +48,7 @@ import {
   wlanGroupsReply
 } from './controller-session';
 import {
+  isValidConfigSavePayload,
   NONCE_REGEX,
   parseApGroupCreateRequest,
   parseApGroupDeleteRequest,
@@ -71,7 +72,6 @@ import {
   ApGroupActionResult,
   CertificateActionResult,
   CloudAccessResult,
-  ConfigSavePayload,
   ConfigSaveResult,
   IPC_CHANNELS,
   ConnectionResult,
@@ -140,8 +140,10 @@ function getCloudSession(): Electron.Session {
 const cloudTransport = createCloudNetTransport(getCloudSession);
 
 // The cloud access: one CloudAccountClient (and throttle) per saved cloud
-// credential, over the cloud transport
-const cloudAccess = new CloudAccessService({ getCredentials: getCloudCredentials, transport: cloudTransport });
+// credential, over the cloud transport. Its successful replies carry the
+// stored `localOmadacId` (inbox I-1c2a), so the renderer lists the local
+// controller's cloud duplicate once, as local
+const cloudAccess = new CloudAccessService({ getCredentials: getCloudCredentials, transport: cloudTransport, getLocalOmadacId });
 
 // ============================================================================
 // Connection state machine and certificate trust-on-first-use (todo.md 3.12,
@@ -213,30 +215,9 @@ const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 // payloads with the guards of ipc-guards.ts (pure, unit-tested, shared with
 // the smoke stub)
 
-// Length caps for strings arriving over IPC (defense against absurd payloads)
-const MAX_URL_LENGTH = 2048;
-const MAX_USERNAME_LENGTH = 256;
-const MAX_PASSWORD_LENGTH = 512;
-// Open API management access and TP-Link cloud access: the raw Client ID
-// fields (trimmed and validated against CLIENT_ID_REGEX by config-model.ts)
-// and the Client Secrets
-const MAX_CLIENT_ID_LENGTH = 256;
-const MAX_CLIENT_SECRET_LENGTH = 512;
-
-// The only keys a config-save payload may carry (ConfigSavePayload)
-const CONFIG_SAVE_KEYS = new Set([
-  'url',
-  'username',
-  'language',
-  'password',
-  'clientId',
-  'clientSecret',
-  'removeManagementAccess',
-  'cloudRegion',
-  'cloudClientId',
-  'cloudClientSecret',
-  'removeCloudAccess'
-]);
+// The config-save payload's keys, length caps and shape guard live in
+// ipc-guards.ts (isValidConfigSavePayload(), shared with the unit tests and
+// the smoke stub)
 
 /**
  * Returns true when an IPC call originates from the app's own renderer: the
@@ -298,79 +279,6 @@ function storedSecrets(): string[] {
 // IPC_CHANNELS channel through it exactly once and nothing through ipcMain
 // directly
 const handleTrusted = createTrustedIpcRegistrar<IpcMainInvokeEvent>(ipcMain, isTrustedIpcSender, storedSecrets).handle;
-
-/**
- * Runtime shape guard for the config-save payload arriving over IPC: it must
- * be a plain object carrying only ConfigSavePayload keys, with non-empty
- * string url/username within the length caps, a supported language, and —
- * when present — a string password, a non-empty string clientId and a
- * non-empty string clientSecret within their length caps, and
- * removeManagementAccess only as the literal true and never together with
- * clientId/clientSecret; the same for the cloud fields (cloudRegion one of the
- * regions, cloudClientId / cloudClientSecret non-empty strings within the
- * caps, removeCloudAccess only as the literal true and never with the other
- * three). Detailed value validation (URL normalization, the password,
- * management-access and cloud-access keep/require rules, the Client ID
- * formats) stays in saveConfig().
- * @param {unknown} payload - The raw IPC payload.
- * @returns {payload is ConfigSavePayload} True when the shape is valid.
- */
-function isValidConfigSavePayload(payload: unknown): payload is ConfigSavePayload {
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    return false;
-  }
-  const raw = payload as Record<string, unknown>;
-  if (Object.keys(raw).some((key) => !CONFIG_SAVE_KEYS.has(key))) {
-    return false;
-  }
-  if (typeof raw.url !== 'string' || raw.url.length === 0 || raw.url.length > MAX_URL_LENGTH) {
-    return false;
-  }
-  if (typeof raw.username !== 'string' || raw.username.length === 0 || raw.username.length > MAX_USERNAME_LENGTH) {
-    return false;
-  }
-  // Supported languages (see Language in shared/types.ts)
-  if (raw.language !== 'es' && raw.language !== 'en') {
-    return false;
-  }
-  if (raw.password !== undefined && (typeof raw.password !== 'string' || raw.password.length > MAX_PASSWORD_LENGTH)) {
-    return false;
-  }
-  if (raw.clientId !== undefined && (typeof raw.clientId !== 'string' || raw.clientId.length === 0 || raw.clientId.length > MAX_CLIENT_ID_LENGTH)) {
-    return false;
-  }
-  if (
-    raw.clientSecret !== undefined &&
-    (typeof raw.clientSecret !== 'string' || raw.clientSecret.length === 0 || raw.clientSecret.length > MAX_CLIENT_SECRET_LENGTH)
-  ) {
-    return false;
-  }
-  if (raw.removeManagementAccess !== undefined && (raw.removeManagementAccess !== true || raw.clientId !== undefined || raw.clientSecret !== undefined)) {
-    return false;
-  }
-  if (raw.cloudRegion !== undefined && !isCloudRegion(raw.cloudRegion)) {
-    return false;
-  }
-  if (
-    raw.cloudClientId !== undefined &&
-    (typeof raw.cloudClientId !== 'string' || raw.cloudClientId.length === 0 || raw.cloudClientId.length > MAX_CLIENT_ID_LENGTH)
-  ) {
-    return false;
-  }
-  if (
-    raw.cloudClientSecret !== undefined &&
-    (typeof raw.cloudClientSecret !== 'string' || raw.cloudClientSecret.length === 0 || raw.cloudClientSecret.length > MAX_CLIENT_SECRET_LENGTH)
-  ) {
-    return false;
-  }
-  if (
-    raw.removeCloudAccess !== undefined &&
-    (raw.removeCloudAccess !== true || raw.cloudRegion !== undefined || raw.cloudClientId !== undefined || raw.cloudClientSecret !== undefined)
-  ) {
-    return false;
-  }
-  return true;
-} // End of function isValidConfigSavePayload()
 
 /**
  * Creates the main window: sandboxed renderer with context isolation and the
@@ -538,10 +446,13 @@ app.on('before-quit', (event) => {
 // lengths, no extra argument) before use.
 
 // Load configuration (sanitized: the renderer never receives the password or
-// the Client Secret, only the hasPassword / hasClientSecret flags)
+// the Client Secret, only the hasPassword / hasClientSecret flags), plus the
+// current connection target (inbox I-1c2a: 'local' or the cloud omadacId
+// connect() reaches now — the stored activeController unless the startup fell
+// back to local), so the renderer knows what a connect() will reach
 handleTrusted(IPC_CHANNELS.CONFIG_LOAD, async (_event, ...extra: unknown[]): Promise<RendererConfig> => {
   requireNoExtraArguments(extra);
-  return getRendererConfig();
+  return { ...getRendererConfig(), connectionTarget: activeControllerValue(connectionManager.target) };
 });
 
 // Save configuration. The handler shape-checks the payload (known keys only,
@@ -574,6 +485,11 @@ handleTrusted(IPC_CHANNELS.CONFIG_LOAD, async (_event, ...extra: unknown[]): Pro
 // in flight answers superseded); the reply carries the cloud-access flags,
 // never the secret.
 // The cloud account is not tied to the controller URL: a URL change keeps it.
+// A configuration without a local controller (inbox I-1c2a) is saved with ''
+// as URL and username and no password: the guard accepts that shape only
+// whole, and applyConfigSave() only while no local controller is stored and
+// with a cloud credential left stored (or removed); management fields are
+// then refused ('managementNeedsController').
 handleTrusted(IPC_CHANNELS.CONFIG_SAVE, async (_event, payload: unknown, ...extra: unknown[]): Promise<ConfigSaveResult> => {
   requireNoExtraArguments(extra);
   if (!isValidConfigSavePayload(payload)) {
@@ -858,7 +774,8 @@ handleTrusted(IPC_CHANNELS.MANAGEMENT_NETWORK_BINDINGS, async (_event, payload: 
 // and must work while disconnected from (or unable to reach) the local
 // controller; a reply for credentials saved or removed meanwhile is
 // 'superseded' instead. Replies: controller DTOs (never a deviceId,
-// serverHost or token) or codes-only diagnostics, redacted.
+// serverHost or token) — plus, on a success, the stored `localOmadacId`
+// (inbox I-1c2a) — or codes-only diagnostics, redacted.
 
 // "Test cloud access": a fresh token plus the organization list
 handleTrusted(IPC_CHANNELS.CLOUD_TEST, async (_event, ...extra: unknown[]): Promise<CloudAccessResult> => {

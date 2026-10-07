@@ -7,7 +7,8 @@
 // account surviving a controller URL change while `localOmadacId` is dropped
 // with it, the renderer view (flags only) and the credential accessor; and
 // the persistence helpers of the connection targets (inbox I-1b2b1:
-// localOmadacId, activeController, cloudSites).
+// localOmadacId, activeController, cloudSites); and the cloud-only save of a
+// configuration without a local controller (inbox I-1c2a).
 // Encryption is a fake SecretBox (no Electron safeStorage).
 
 import assert from 'node:assert/strict';
@@ -19,6 +20,7 @@ import {
   cloudCredentialsOf,
   cloudSiteOf,
   ConfigSaveOutcome,
+  isCloudOnlySave,
   MAX_CLOUD_SITES,
   normalizeCloudSites,
   SecretBox,
@@ -362,3 +364,124 @@ describe('the persistence helpers of the connection targets (inbox I-1b2b1)', ()
     assert.deepEqual(validateStoredConfig(JSON.parse(JSON.stringify(many))).cloudSites, many.cloudSites, 'loads back');
   }); // End of test "cloudSiteOf() / withCloudSite()..."
 }); // End of describe 'the persistence helpers of the connection targets'
+
+describe('applyConfigSave: a configuration without a local controller (cloud-only, inbox I-1c2a)', () => {
+  /**
+   * A stored config without a local controller.
+   * @param {Partial<StoredConfig>} [extra] - Cloud fields to store.
+   * @returns {StoredConfig} The config.
+   */
+  function noLocal(extra: Partial<StoredConfig> = {}): StoredConfig {
+    return { url: '', username: '', language: 'es', ...extra };
+  }
+
+  /**
+   * A cloud-only save payload ('' as URL and username, no password).
+   * @param {Partial<ConfigSavePayload>} overrides - Fields to add.
+   * @returns {ConfigSavePayload} The payload.
+   */
+  function cloudOnly(overrides: Partial<ConfigSavePayload>): ConfigSavePayload {
+    return { url: '', username: '', language: 'en', ...overrides };
+  }
+
+  const STORED_CLOUD: Partial<StoredConfig> = {
+    cloudRegion: 'aps',
+    cloudClientId: 'cloud-client-1',
+    encryptedCloudClientSecret: box.encryptString(CLOUD_SECRET),
+    activeController: OMADAC_REMOTE,
+    cloudSites: { [OMADAC_REMOTE]: 'site-remote' }
+  };
+
+  test('isCloudOnlySave(): URL, username and password all empty AND no local controller stored', () => {
+    assert.equal(isCloudOnlySave(noLocal(), cloudOnly({})), true);
+    assert.equal(isCloudOnlySave(noLocal(), cloudOnly({ url: '  ', username: ' ', password: '' })), true);
+    assert.equal(isCloudOnlySave(noLocal(), cloudOnly({ password: 'p' })), false, 'a typed password is a local section');
+    assert.equal(isCloudOnlySave(noLocal(), cloudOnly({ url: URL_A })), false);
+    assert.equal(isCloudOnlySave(noLocal(), cloudOnly({ username: 'admin' })), false);
+    assert.equal(isCloudOnlySave(storedWithCloud(), cloudOnly({})), false, 'a stored local controller is never emptied this way');
+  });
+
+  test('a first cloud credential without a local controller: only the cloud fields are stored (the secret as a blob), no local field', () => {
+    const outcome = expectOk(applyConfigSave(noLocal(), cloudOnly({ cloudRegion: 'aps', cloudClientId: ' cloud-client-1 ', cloudClientSecret: CLOUD_SECRET }), box));
+    assert.deepEqual(Object.keys(outcome.config).sort(), ['cloudClientId', 'cloudRegion', 'encryptedCloudClientSecret', 'language', 'url', 'username']);
+    assert.equal(outcome.config.url, '');
+    assert.equal(outcome.config.username, '');
+    assert.equal(outcome.config.language, 'en');
+    assert.equal(outcome.config.cloudClientId, 'cloud-client-1');
+    assert.equal(box.decryptString(outcome.config.encryptedCloudClientSecret as string), CLOUD_SECRET);
+    assertNoPlaintext(outcome.config, CLOUD_SECRET);
+    assert.equal(outcome.urlChanged, false, 'no controller transition');
+    assert.equal(outcome.cloudCredentialsChanged, true);
+    assert.equal(outcome.sessionClientSecret, null);
+    assert.deepEqual(cloudCredentialsOf(outcome.config, box, outcome.sessionCloudClientSecret), { region: 'aps', clientId: 'cloud-client-1', clientSecret: CLOUD_SECRET });
+  });
+
+  test('without secure storage the typed cloud secret is session-only there too (never on disk)', () => {
+    const insecure = fakeBox({ secure: false });
+    const outcome = expectOk(applyConfigSave(noLocal(), cloudOnly({ cloudClientId: 'cloud-client-1', cloudClientSecret: CLOUD_SECRET }), insecure));
+    assert.equal(outcome.config.encryptedCloudClientSecret, undefined);
+    assert.equal(outcome.sessionCloudClientSecret, CLOUD_SECRET);
+    assertNoPlaintext(outcome.config, CLOUD_SECRET);
+  });
+
+  test('a stored credential is kept by a save that touches no cloud field (e.g. the language), with activeController and cloudSites', () => {
+    const outcome = expectOk(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ language: 'es' }), box, null, 'session-cloud'));
+    assert.deepEqual(outcome.config, { url: '', username: '', language: 'es', ...STORED_CLOUD });
+    assert.equal(outcome.cloudCredentialsChanged, false);
+    assert.equal(outcome.sessionCloudClientSecret, 'session-cloud');
+    // The same region and Client ID with a blank secret keep it too
+    assert.equal(expectOk(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ cloudRegion: 'aps', cloudClientId: 'cloud-client-1' }), box)).config.encryptedCloudClientSecret, STORED_CLOUD.encryptedCloudClientSecret);
+  });
+
+  test('Remove cloud access without a local controller leaves an empty configuration (the local controller active)', () => {
+    const outcome = expectOk(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ removeCloudAccess: true }), box, null, 'session-cloud'));
+    assert.deepEqual(outcome.config, { url: '', username: '', language: 'en' });
+    assert.equal(outcome.sessionCloudClientSecret, null);
+    assert.equal(outcome.cloudCredentialsChanged, true);
+    assert.equal(activeControllerOf(outcome.config), 'local');
+  });
+
+  test('nothing configured at all (the empty form, a region alone) stays invalidUrl, as the empty form always was', () => {
+    assert.deepEqual(applyConfigSave(noLocal(), cloudOnly({}), box), { ok: false, error: 'invalidUrl' });
+    assert.deepEqual(applyConfigSave(noLocal(), cloudOnly({ cloudRegion: 'use' }), box), { ok: false, error: 'invalidUrl' });
+  });
+
+  test('management access needs a local controller: a Client ID or Client Secret is managementNeedsController; a removal changes nothing', () => {
+    for (const fields of [{ clientId: 'mgmt-client' }, { clientSecret: 'mgmt-secret' }, { clientId: 'mgmt-client', clientSecret: 'mgmt-secret' }]) {
+      assert.deepEqual(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly(fields), box), { ok: false, error: 'managementNeedsController' }, JSON.stringify(fields));
+    }
+    const removed = expectOk(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ removeManagementAccess: true }), box, 'mgmt-session'));
+    assert.equal(removed.config.clientId, undefined);
+    assert.equal(removed.sessionClientSecret, null);
+    assert.deepEqual(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ removeManagementAccess: false as unknown as true }), box), { ok: false, error: 'saveFailed' });
+    // The management check comes first, like the local path's order
+    assert.deepEqual(applyConfigSave(noLocal(), cloudOnly({ clientId: 'mgmt-client', cloudClientSecret: 's' }), box), { ok: false, error: 'managementNeedsController' });
+  });
+
+  test('the cloud field rules apply unchanged', () => {
+    assert.deepEqual(applyConfigSave(noLocal(), cloudOnly({ cloudClientSecret: 's' }), box), { ok: false, error: 'cloudClientIdRequired' });
+    assert.deepEqual(applyConfigSave(noLocal(), cloudOnly({ cloudClientId: 'bad id!', cloudClientSecret: 's' }), box), { ok: false, error: 'invalidCloudClientId' });
+    assert.deepEqual(applyConfigSave(noLocal(), cloudOnly({ cloudClientId: 'cloud-client-new' }), box), { ok: false, error: 'cloudClientSecretRequired' });
+    assert.deepEqual(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ cloudRegion: 'euw' }), box), { ok: false, error: 'cloudClientSecretRequired' });
+  });
+
+  test('a partially filled local section keeps the local rules and codes (exactly as before)', () => {
+    assert.deepEqual(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ username: 'admin' }), box), { ok: false, error: 'invalidUrl' });
+    assert.deepEqual(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ password: 'pw' }), box), { ok: false, error: 'invalidUrl' });
+    assert.deepEqual(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ url: URL_A }), box), { ok: false, error: 'saveFailed' }, 'a URL without a username');
+    assert.deepEqual(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ url: URL_A, username: 'admin' }), box), { ok: false, error: 'passwordRequired' });
+    assert.deepEqual(applyConfigSave(noLocal(STORED_CLOUD), cloudOnly({ url: 'http://192.168.1.130', username: 'admin', password: 'pw' }), box), { ok: false, error: 'invalidUrl' });
+    // An emptied local section while a local controller is stored: the local rules (invalidUrl), never a silent removal
+    assert.deepEqual(applyConfigSave(storedWithCloud(), cloudOnly({}), box), { ok: false, error: 'invalidUrl' });
+  });
+
+  test('adding a local controller later is a URL change: a typed password is required, the cloud account and choices are kept', () => {
+    assert.deepEqual(applyConfigSave(noLocal(STORED_CLOUD), payload({ url: URL_A }), box), { ok: false, error: 'passwordRequired' });
+    const outcome = expectOk(applyConfigSave(noLocal(STORED_CLOUD), payload({ url: URL_A, password: 'password-for-A' }), box));
+    assert.equal(outcome.urlChanged, true);
+    assert.equal(outcome.config.url, URL_A);
+    assert.equal(outcome.config.cloudClientId, 'cloud-client-1');
+    assert.equal(outcome.config.activeController, OMADAC_REMOTE);
+    assert.equal(outcome.cloudCredentialsChanged, false);
+  });
+}); // End of describe 'applyConfigSave: a configuration without a local controller'

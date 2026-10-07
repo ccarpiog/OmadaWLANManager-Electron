@@ -240,3 +240,48 @@ describe('CloudAccessService.findOrganization(): a cloud target\'s fresh organiz
     assert.deepEqual(await pending, { success: false, error: 'superseded' });
   }); // End of test "failures: notConfigured, unknownController..."
 }); // End of describe 'CloudAccessService.findOrganization()'
+
+describe('CloudAccessService: the local controller\'s omadacId on a success (inbox I-1c2a)', () => {
+  const LOCAL_ID = 'c0ffee00c0ffee00c0ffee00c0ffee00';
+
+  /**
+   * Builds a service whose stored local omadacId the test controls.
+   * @param {() => string} getLocalOmadacId - The stored value (or a throwing getter).
+   * @returns {{ service: CloudAccessService; transport: FakeTransport }} The parts.
+   */
+  function setupWithLocal(getLocalOmadacId: () => string): { service: CloudAccessService; transport: FakeTransport } {
+    const clock = new FakeClock();
+    const transport = new FakeTransport(EUW);
+    const service = new CloudAccessService({ getCredentials: () => CREDENTIALS, transport, now: clock.now, sleep: clock.sleep, getLocalOmadacId });
+    transport.on('POST', CLOUD_TOKEN_PATH, tokenReply('a1-AT-tokenOneValue00000000000001')).on('GET', ORGS_PAGE_1, { body: fourOrganizations.page });
+    return { service, transport };
+  } // End of function setupWithLocal()
+
+  test('cloud:test and cloud:controllers carry the stored localOmadacId beside the DTOs, read when the reply is built', async () => {
+    let stored = LOCAL_ID;
+    const { service } = setupWithLocal(() => stored);
+    assert.deepEqual(await service.test(), { success: true, controllers: fourOrganizations.expected, truncated: false, localOmadacId: LOCAL_ID });
+    stored = '4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d';
+    assert.equal((await service.controllers()).localOmadacId, stored, 'the current value, not one cached from an earlier call');
+  });
+
+  test('none stored, an unusable value or a failing getter: no localOmadacId (the reply is otherwise unchanged)', async () => {
+    for (const getter of [() => '', () => 'local', () => 'not an id', () => { throw new Error(`boom ${SECRET}`); }]) {
+      const { service } = setupWithLocal(getter);
+      const reply = await service.controllers();
+      assert.deepEqual(reply, { success: true, controllers: fourOrganizations.expected, truncated: false });
+    }
+  });
+
+  test('a failure never carries it, and it never enters a diagnostic', async () => {
+    const clock = new FakeClock();
+    const transport = new FakeTransport(EUW);
+    const service = new CloudAccessService({ getCredentials: () => CREDENTIALS, transport, now: clock.now, sleep: clock.sleep, getLocalOmadacId: () => LOCAL_ID });
+    transport.on('POST', CLOUD_TOKEN_PATH, { body: guide.liveCredentialExpired });
+    const reply = await service.test();
+    assert.deepEqual(reply, { success: false, error: 'credentialInvalid', diagnostic: 'credentialInvalid, errorCode -52602' });
+    assert.ok(!JSON.stringify(reply).includes(LOCAL_ID));
+    const none = new CloudAccessService({ getCredentials: () => null, transport, getLocalOmadacId: () => LOCAL_ID });
+    assert.deepEqual(await none.controllers(), { success: false, error: 'notConfigured' });
+  });
+}); // End of describe 'CloudAccessService: the local controller\'s omadacId on a success'

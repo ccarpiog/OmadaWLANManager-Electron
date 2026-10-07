@@ -47,7 +47,13 @@ export interface CloudAccessStatus {
 // flags above and the cloud-access flags in `cloudAccess`).
 // `pinnedFingerprint` is the SHA-256 fingerprint of the trusted controller
 // certificate (public data, shown in Settings), or null when no certificate is
-// pinned for the configured controller.
+// pinned for the configured controller. `url` is '' when no local controller
+// is configured (a first run, or a cloud-only configuration, inbox I-1c2a).
+// `connectionTarget` (config:load only, inbox I-1c2a) is main's CURRENT
+// connection target — 'local' or the omadacId of the TP-Link cloud
+// controller connect() reaches now (ConnectionManager.target) —, which is the
+// stored `cloudAccess.activeController` unless the startup fell back to the
+// local controller (an unusable cloud credential) or no switch ran yet.
 export interface RendererConfig extends ManagementAccessStatus {
   url: string;
   username: string;
@@ -55,6 +61,7 @@ export interface RendererConfig extends ManagementAccessStatus {
   hasPassword: boolean;
   pinnedFingerprint: string | null;
   cloudAccess: CloudAccessStatus;
+  connectionTarget?: string;
 }
 
 // Payload the renderer sends when saving settings. `password` is present only
@@ -81,6 +88,11 @@ export interface RendererConfig extends ManagementAccessStatus {
 //   — stored and session-only —, the per-controller site choices) and makes
 //   the local controller the active one; sent alone, never with the three
 //   fields above.
+// No local controller (cloud-only, inbox I-1c2a): `url` and `username` are ''
+// and `password` absent (or ''), which main accepts only while no local
+// controller is stored and only when the save removes cloud access or leaves
+// a cloud Client ID stored; the management fields (local-controller scoped)
+// are then refused ('managementNeedsController'), a removal aside.
 export interface ConfigSavePayload {
   url: string;
   username: string;
@@ -103,6 +115,9 @@ export interface ConfigSavePayload {
 // The cloud-access codes mirror them: 'invalidCloudClientId',
 // 'cloudClientIdRequired', 'cloudClientSecretRequired' (a new cloud Client ID
 // or a new region came without a typed cloud secret).
+// 'managementNeedsController' (inbox I-1c2a): a cloud-only save (no local
+// controller) carried a management Client ID or Client Secret — management
+// access belongs to a local controller.
 export type ConfigSaveError =
   | 'invalidUrl'
   | 'passwordRequired'
@@ -112,7 +127,8 @@ export type ConfigSaveError =
   | 'clientSecretRequired'
   | 'invalidCloudClientId'
   | 'cloudClientIdRequired'
-  | 'cloudClientSecretRequired';
+  | 'cloudClientSecretRequired'
+  | 'managementNeedsController';
 
 // Result of a config save. `connectionReset` is true when the save changed the
 // controller URL, or changed the TP-Link cloud credential while the connection
@@ -138,7 +154,10 @@ export interface ConfigSaveResult {
 // only when the source reports one: the cloud controller session's Open API
 // `ap-groups/aps` list (the internal device list carries no group id). A
 // cloud AP whose status is not reported has statusCategory -1 (shown as
-// unknown, never as disconnected).
+// unknown, never as disconnected). `wlanGroupUnknown` (cloud session only,
+// inbox I-1c2a) is present, and true, when the controller did not report the
+// AP's group name: `wlanGroup` is then '' and means "unknown", never "no
+// group" (the internal list never sets it).
 export interface AccessPoint {
   mac: string;
   name: string;
@@ -147,6 +166,7 @@ export interface AccessPoint {
   statusCategory: number;
   clientNum?: number;
   wlanId?: string;
+  wlanGroupUnknown?: true;
 }
 
 // A group access points are assigned to: an AP group on Omada 6.3+, a WLAN
@@ -289,10 +309,21 @@ export interface SiteInfo {
 // first-use result also carries `trustNonce`, an opaque one-time token the
 // renderer echoes back verbatim through trustCertificate() — main then pins
 // the fingerprint IT recorded, never one supplied by the renderer.
+// `unreachable` (inbox I-1c2a) is present, and true, only on a failed LOCAL
+// connect (connectError) whose controller never answered at all: its FIRST
+// request (/api/info) got no response — the request timeout, or a net error
+// such as a refused, reset or timed-out connection or an unresolved name
+// (the transport's typed failure, omada-transport.ts
+// isUnreachableTransportError(), recorded by OmadaController
+// .connectUnreachable). Never once any response arrived (a timeout or reset
+// during the login or the site list), never a certificate result, a login
+// refusal or an HTTP error. The renderer offers "Connect through TP-Link
+// cloud" only then.
 export interface ConnectionResult {
   success: boolean;
   error?: ConnectionErrorCode;
   detail?: string;
+  unreachable?: true;
   needsSiteSelection?: boolean;
   sites?: SiteInfo[];
   selectionNonce?: string;
@@ -797,12 +828,18 @@ export type CloudAccessError =
 // and `truncated` tells that the list may be incomplete (the page cap, or a
 // walk that could not prove completeness). `diagnostic` is built by main from
 // codes (plus TP-Link's redacted message for 'apiError'), never a secret.
+// `localOmadacId` (inbox I-1c2a; a success only) is the omadacId a local
+// connect learned for the configured controller URL, when one is stored: the
+// renderer lists the organization with that omadacId once, as the local
+// controller. It is a routing identifier, not a secret (the DTOs carry
+// omadacIds too); it never enters a diagnostic.
 export interface CloudAccessResult {
   success: boolean;
   error?: CloudAccessError;
   diagnostic?: string;
   controllers?: CloudController[];
   truncated?: boolean;
+  localOmadacId?: string;
 }
 
 // Data loaded from controller

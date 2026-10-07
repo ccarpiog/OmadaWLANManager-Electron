@@ -4,8 +4,15 @@
 
 import type { ConfigSavePayload, Language, RendererConfig } from '../shared/types';
 import { applyTranslations } from './apply-translations';
-import { CLOUD_SAVE_ERROR_TEXT, cloudSaveErrorKey } from './cloud-form';
-import { cancelCloudRemovalIfOpen, clearCloudSecret, loadCloudSection, planCloudSettingsSave, resetCloudTest } from './cloud-settings';
+import { CLOUD_SAVE_ERROR_TEXT, cloudSaveErrorKey, isCloudOnlyForm, planCloudOnlySave, type CloudOnlyFormError } from './cloud-form';
+import {
+  cancelCloudRemovalIfOpen,
+  clearCloudSecret,
+  cloudSettingsFormInput,
+  loadCloudSection,
+  planCloudSettingsSave,
+  resetCloudTest,
+} from './cloud-settings';
 import { connect, disconnect, handleConnectionReset } from './connection';
 import {
   cancelCertResetBtn,
@@ -186,6 +193,20 @@ const MANAGEMENT_ERROR_KEYS: Record<ManagementFormError, keyof Translations> = {
   clientIdRequired: 'clientIdRequired',
   clientSecretRequired: 'clientSecretRequired',
 };
+
+/**
+ * The text of a cloud-only save's refusal (planCloudOnlySave()): management
+ * fields without a local controller, a cloud refusal, or nothing configured
+ * at all (the empty form's text, as before).
+ * @param {CloudOnlyFormError} error - The refusal.
+ * @returns {keyof Translations} The text's key.
+ */
+function cloudOnlyErrorKey(error: CloudOnlyFormError): keyof Translations {
+  if (error === 'managementNeedsController' || error === 'fillUrlAndUser') {
+    return error;
+  }
+  return CLOUD_SAVE_ERROR_TEXT[error];
+}
 
 /**
  * Fills the management-access section from the loaded config: the stored
@@ -419,6 +440,13 @@ export async function confirmCertificateReset(): Promise<void> {
  * the cloud Client ID with a typed cloud secret, nothing when unchanged, a
  * staged removal as `removeCloudAccess`; the three cloud save codes
  * (renderer- or main-side) have their own texts.
+ * A form without any local controller — URL, username and password blank,
+ * none stored — is a cloud-only save (inbox I-1c2a; isCloudOnlyForm(),
+ * planCloudOnlySave() mirror main): it sends '' as URL and username with
+ * the cloud fields, refuses typed management fields
+ * ('managementNeedsController') and an empty form ("fill in the URL and
+ * username", as before), and neither marks a local configuration as stored
+ * nor auto-connects.
  * The URL is validated/normalized here and again in the main process. A save
  * that changed the controller URL makes the main process close the current
  * connection (reported as `connectionReset`): the connected UI is dropped
@@ -445,78 +473,103 @@ export async function saveSettings(): Promise<void> {
     const url = urlInput.value.trim();
     const username = usernameInput.value.trim();
     const typedPassword = passwordInput.value;
+    let payload: ConfigSavePayload;
 
-    if (!url || !username) {
-      showToast(t('fillUrlAndUser'), 'error');
-      return;
-    }
-
-    const normalizedUrl = validateControllerUrl(url);
-    if (!normalizedUrl) {
-      showToast(t('invalidUrl'), 'error');
-      return;
-    }
-
-    if (!typedPassword) {
-      const existingConfig = await window.omadaAPI.loadConfig();
-      if (!existingConfig.hasPassword || !isSameControllerUrl(existingConfig.url, normalizedUrl)) {
-        // Blank field with nothing stored, or with a password that belongs to
-        // another controller URL: refuse (mirrors applyConfigSave())
-        showToast(t('passwordRequired'), 'error');
+    if (isCloudOnlyForm({ urlField: url, usernameField: username, passwordField: typedPassword, storedUrl: state.settingsStoredUrl })) {
+      // No local controller at all (inbox I-1c2a): only the TP-Link cloud
+      // credential is saved (mirrors main's cloud-only rules; management
+      // access needs a local controller)
+      const plan = planCloudOnlySave({
+        managementRemoveStaged: state.settingsRemoveManagement,
+        managementClientIdField: clientIdInput.value,
+        managementSecretField: clientSecretInput.value,
+        cloud: cloudSettingsFormInput(),
+      });
+      if (!plan.ok) {
+        showToast(t(cloudOnlyErrorKey(plan.error)), 'error');
         return;
       }
-      // Blank field, same controller: the main process keeps the stored password
-    }
+      payload = { url: '', username: '', language: languageSelect.value as Language, ...plan.fields };
+    } else {
+      if (!url || !username) {
+        showToast(t('fillUrlAndUser'), 'error');
+        return;
+      }
 
-    // Management access (optional): the Client ID / typed Client Secret, a
-    // staged removal, or nothing when unchanged (mirrors the main rules)
-    const management = planManagementSave({
-      removeStaged: state.settingsRemoveManagement,
-      clientIdField: clientIdInput.value,
-      clientSecretField: clientSecretInput.value,
-      storedClientId: state.settingsClientId,
-      hasClientSecret: state.settingsHasClientSecret,
-      sameUrl: isSameControllerUrl(state.settingsStoredUrl, normalizedUrl),
-    });
-    if (!management.ok) {
-      showToast(t(MANAGEMENT_ERROR_KEYS[management.error]), 'error');
-      return;
-    }
+      const normalizedUrl = validateControllerUrl(url);
+      if (!normalizedUrl) {
+        showToast(t('invalidUrl'), 'error');
+        return;
+      }
 
-    // TP-Link cloud access (optional): the region, the cloud Client ID and a
-    // typed cloud secret, a staged removal, or nothing when unchanged
-    // (mirrors the main rules; the account is not tied to the URL)
-    const cloud = planCloudSettingsSave();
-    if (!cloud.ok) {
-      showToast(t(CLOUD_SAVE_ERROR_TEXT[cloud.error]), 'error');
-      return;
-    }
+      if (!typedPassword) {
+        const existingConfig = await window.omadaAPI.loadConfig();
+        if (!existingConfig.hasPassword || !isSameControllerUrl(existingConfig.url, normalizedUrl)) {
+          // Blank field with nothing stored, or with a password that belongs to
+          // another controller URL: refuse (mirrors applyConfigSave())
+          showToast(t('passwordRequired'), 'error');
+          return;
+        }
+        // Blank field, same controller: the main process keeps the stored password
+      }
 
-    const payload: ConfigSavePayload = {
-      url: normalizedUrl,
-      username,
-      language: languageSelect.value as Language,
-      ...management.fields,
-      ...cloud.fields
-    };
-    // Send the password only when the user typed a new one
-    if (typedPassword) {
-      payload.password = typedPassword;
-    }
+      // Management access (optional): the Client ID / typed Client Secret, a
+      // staged removal, or nothing when unchanged (mirrors the main rules)
+      const management = planManagementSave({
+        removeStaged: state.settingsRemoveManagement,
+        clientIdField: clientIdInput.value,
+        clientSecretField: clientSecretInput.value,
+        storedClientId: state.settingsClientId,
+        hasClientSecret: state.settingsHasClientSecret,
+        sameUrl: isSameControllerUrl(state.settingsStoredUrl, normalizedUrl),
+      });
+      if (!management.ok) {
+        showToast(t(MANAGEMENT_ERROR_KEYS[management.error]), 'error');
+        return;
+      }
+
+      // TP-Link cloud access (optional): the region, the cloud Client ID and a
+      // typed cloud secret, a staged removal, or nothing when unchanged
+      // (mirrors the main rules; the account is not tied to the URL)
+      const cloud = planCloudSettingsSave();
+      if (!cloud.ok) {
+        showToast(t(CLOUD_SAVE_ERROR_TEXT[cloud.error]), 'error');
+        return;
+      }
+
+      payload = {
+        url: normalizedUrl,
+        username,
+        language: languageSelect.value as Language,
+        ...management.fields,
+        ...cloud.fields
+      };
+      // Send the password only when the user typed a new one
+      if (typedPassword) {
+        payload.password = typedPassword;
+      }
+    } // End of the local-controller branch
+    const cloudOnly = payload.url === '';
 
     const result = await window.omadaAPI.saveConfig(payload);
 
     if (result.success) {
-      // A usable configuration now exists: the views can offer connecting
-      // instead of configuring, and the header's Connect works
-      state.hasStoredConfig = true;
-      connectBtn.disabled = false;
+      // A usable local configuration now exists: the views can offer
+      // connecting instead of configuring, and the header's Connect works.
+      // A cloud-only save changes neither (inbox I-1c2a: connecting a cloud
+      // controller is the controller switcher's, I-1c2b)
+      if (!cloudOnly) {
+        state.hasStoredConfig = true;
+        connectBtn.disabled = false;
+      }
 
       // Auto-connect only when the save's session is still current: a save
       // that completes after a disconnect (or after a newer operation
       // started) must not start a connection. Decided before the connection
-      // reset below, which starts a new local session itself
-      connectAfterSave = generation === state.sessionGeneration;
+      // reset below, which starts a new local session itself. A cloud-only
+      // save does not auto-connect (main's target may be the unconfigured
+      // local controller)
+      connectAfterSave = !cloudOnly && generation === state.sessionGeneration;
       if (result.connectionReset) {
         // The controller URL changed: main already closed the connection
         handleConnectionReset();
@@ -543,6 +596,8 @@ export async function saveSettings(): Promise<void> {
       showToast(t('passwordRequired'), 'error');
     } else if (result.error === 'invalidClientId' || result.error === 'clientIdRequired' || result.error === 'clientSecretRequired') {
       showToast(t(MANAGEMENT_ERROR_KEYS[result.error]), 'error');
+    } else if (result.error === 'managementNeedsController') {
+      showToast(t('managementNeedsController'), 'error');
     } else {
       // A cloud save code has its own text; anything else is a generic failure
       showToast(t(cloudSaveErrorKey(result.error) ?? 'saveError'), 'error');

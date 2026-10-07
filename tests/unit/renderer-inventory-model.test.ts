@@ -359,3 +359,23 @@ describe('unknown network lists (ssidListUnknown: the controller did not report 
     assert.deepEqual(describeApDetails(ALTILLO, CLOUD_GROUPS).networks, ['Casa', 'Trabajo']);
   });
 }); // End of the describe block for unknown network lists
+
+describe('an AP whose group the controller did not report (wlanGroupUnknown, cloud only, inbox I-1c2a)', () => {
+  const NUBE = { ...ap('AA-00-00-00-00-08', 'Nube', ''), wlanGroupUnknown: true as const };
+
+  test('it resolves as "unreported" — never "unassigned" — with no group link and unknown networks', () => {
+    assert.deepEqual(resolveApGroup(NUBE, GROUPS), { kind: 'unreported' });
+    assert.equal(apGroupLink(resolveApGroup(NUBE, GROUPS)), null);
+    assert.equal(describeApDetails(NUBE, GROUPS).networks, null);
+    // The genuine no-group case of local data is unchanged
+    assert.deepEqual(resolveApGroup(BODEGA, GROUPS), { kind: 'unassigned' });
+  });
+
+  test('it is a member of no group and may broadcast any network, exactly like an AP without a group', () => {
+    const withNube = [...APS, NUBE];
+    const withBodegaTwin = [...APS, ap('AA-00-00-00-00-08', 'Nube', '')];
+    assert.deepEqual(buildGroupRows(GROUPS, withNube), buildGroupRows(GROUPS, withBodegaTwin));
+    assert.deepEqual(buildNetworkRows(GROUPS, withNube), buildNetworkRows(GROUPS, withBodegaTwin));
+    assert.deepEqual(networkBroadcasters('Casa', GROUPS, withNube)?.unknownApCount, networkBroadcasters('Casa', GROUPS, withBodegaTwin)?.unknownApCount);
+  });
+}); // End of the describe block for unreported AP groups

@@ -12,11 +12,20 @@
 // parsed request is a fresh copy carrying nothing else — and (inbox
 // I-1b2b2) the AP move's arguments (nonce first, then the MAC and the group
 // id) and the controller switch's target (exactly {kind: 'local'} or
-// {kind: 'cloud', omadacId} with a usable omadacId).
+// {kind: 'cloud', omadacId} with a usable omadacId) — and (inbox I-1c2a) the
+// config-save payload, moved here from index.ts: the local section whole or
+// the cloud-only shape ('' URL and username, no password), never a partial
+// one.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
+  isValidConfigSavePayload,
+  MAX_CONFIG_CLIENT_ID_LENGTH,
+  MAX_CONFIG_CLIENT_SECRET_LENGTH,
+  MAX_CONFIG_PASSWORD_LENGTH,
+  MAX_CONFIG_URL_LENGTH,
+  MAX_CONFIG_USERNAME_LENGTH,
   MAX_NETWORK_AP_GROUP_IDS,
   MAX_RAW_AP_GROUP_NAME_LENGTH,
   MAX_RAW_NETWORK_NAME_LENGTH,
@@ -342,3 +351,62 @@ describe('controller data and switch guards (inbox I-1b2b2)', () => {
     assert.throws(() => parseControllerTargetRequest({ kind: 'local' }, [1]), /unexpected arguments/);
   }); // End of test "parseControllerTargetRequest(): every other shape..."
 }); // End of the describe block for the controller data and switch guards
+
+describe('isValidConfigSavePayload(): the config:save shape guard (moved from index.ts; cloud-only shape, inbox I-1c2a)', () => {
+  const LOCAL = { url: 'https://192.168.1.130:8043', username: 'admin', language: 'es' };
+  const CLOUD_ONLY = { url: '', username: '', language: 'en' };
+
+  test('the local section as before: non-empty url and username, an optional password, every known key within its cap', () => {
+    assert.equal(isValidConfigSavePayload(LOCAL), true);
+    assert.equal(isValidConfigSavePayload({ ...LOCAL, password: 'pw', clientId: 'c', clientSecret: 's', cloudRegion: 'aps', cloudClientId: 'cc', cloudClientSecret: 'cs' }), true);
+    assert.equal(isValidConfigSavePayload({ ...LOCAL, password: '' }), true, 'a blank password keeps the stored one');
+    assert.equal(isValidConfigSavePayload({ ...LOCAL, removeManagementAccess: true, removeCloudAccess: true }), true);
+    assert.equal(isValidConfigSavePayload({ ...LOCAL, url: 'x'.repeat(MAX_CONFIG_URL_LENGTH + 1) }), false);
+    assert.equal(isValidConfigSavePayload({ ...LOCAL, username: 'x'.repeat(MAX_CONFIG_USERNAME_LENGTH + 1) }), false);
+    assert.equal(isValidConfigSavePayload({ ...LOCAL, password: 'x'.repeat(MAX_CONFIG_PASSWORD_LENGTH + 1) }), false);
+    assert.equal(isValidConfigSavePayload({ ...LOCAL, clientId: 'x'.repeat(MAX_CONFIG_CLIENT_ID_LENGTH + 1) }), false);
+    assert.equal(isValidConfigSavePayload({ ...LOCAL, cloudClientSecret: 'x'.repeat(MAX_CONFIG_CLIENT_SECRET_LENGTH + 1) }), false);
+  });
+
+  test('the cloud-only shape: exactly "" as url and username, the password absent or ""', () => {
+    assert.equal(isValidConfigSavePayload(CLOUD_ONLY), true);
+    assert.equal(isValidConfigSavePayload({ ...CLOUD_ONLY, password: '' }), true);
+    assert.equal(isValidConfigSavePayload({ ...CLOUD_ONLY, cloudRegion: 'euw', cloudClientId: 'cc', cloudClientSecret: 'cs' }), true);
+    assert.equal(isValidConfigSavePayload({ ...CLOUD_ONLY, removeCloudAccess: true }), true);
+    // Management fields pass the shape guard; main's rules refuse them (managementNeedsController)
+    assert.equal(isValidConfigSavePayload({ ...CLOUD_ONLY, clientId: 'c' }), true);
+  });
+
+  test('a partially filled local section is refused here, as before (CONFIG_SAVE answers saveFailed)', () => {
+    for (const partial of [
+      { ...CLOUD_ONLY, url: 'https://192.168.1.130:8043' },
+      { ...CLOUD_ONLY, username: 'admin' },
+      { ...CLOUD_ONLY, password: 'pw' },
+      { ...CLOUD_ONLY, url: ' ' },
+      { ...LOCAL, url: '' },
+      { ...LOCAL, username: '' },
+    ]) {
+      assert.equal(isValidConfigSavePayload(partial), false, JSON.stringify(partial));
+    }
+  });
+
+  test('the other rules are unchanged: plain object, known keys, a language, non-empty optional strings, removals alone', () => {
+    for (const bad of [
+      null, [], 'payload', 7,
+      { ...LOCAL, extra: true },
+      { ...LOCAL, language: 'fr' },
+      { ...CLOUD_ONLY, language: undefined },
+      { ...LOCAL, url: 7 },
+      { ...LOCAL, clientId: '' },
+      { ...LOCAL, clientSecret: 5 },
+      { ...LOCAL, removeManagementAccess: true, clientId: 'c' },
+      { ...LOCAL, removeManagementAccess: 'yes' },
+      { ...CLOUD_ONLY, cloudRegion: 'eu' },
+      { ...CLOUD_ONLY, cloudClientId: '' },
+      { ...CLOUD_ONLY, removeCloudAccess: true, cloudRegion: 'aps' },
+      { ...CLOUD_ONLY, removeCloudAccess: false },
+    ]) {
+      assert.equal(isValidConfigSavePayload(bad), false, JSON.stringify(bad));
+    }
+  });
+}); // End of the describe block for the config-save guard
