@@ -362,7 +362,8 @@
    "risk": "high",
    "summary": "Lets the connection manager target the local or a cloud controller, persists the choice with a local fallback, and adds race tests.",
    "review": "docs/reviews/phaseI-1b2b1.md",
-   "narrative": "docs/progress-archive/phase-i-1b2b1.md"
+   "narrative": "docs/progress-archive/phase-i-1b2b1.md",
+   "commit": "e24eb47"
   },
   {
    "id": "I-1b2b2",
