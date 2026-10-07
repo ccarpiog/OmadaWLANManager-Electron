@@ -301,3 +301,4 @@ Phases 1–7 are done, committed, and pushed (plus releases v1.0.0/v1.1.0). On 2
 - Phase 18b: `ecd9d3d` ("Add Wi-Fi network create, edit, password, enable and delete to the networks view"), pushed to origin/main (`a5c3e02..ecd9d3d`). A follow-up commit records this SHA. Tree clean after it.
 - Inbox triage (I-1 queued): `71826e3` (script commit), pushed with phase 19a.
 - Phase 19a: `afa7182` ("Add the Wi-Fi network AP-group binding write with capacity checks behind guarded IPC"), pushed to origin/main (`eb581f4..afa7182`). A follow-up commit records this SHA. Tree clean after it.
+- Phase 19b: `f91eae6` ("Add the Broadcast on editor that picks which AP groups carry a Wi-Fi network"), pushed to origin/main (`3d505e8..f91eae6`). A follow-up commit records this SHA. Tree clean after it except the user's own uncommitted files (`tests/smoke/window-placement.cjs`, `tests/smoke/stub-main.cjs`, `tests/tls-probe/app-main.cjs`; see Open risks), deliberately left out.
