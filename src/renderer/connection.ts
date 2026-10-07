@@ -18,7 +18,8 @@ import { showCertificateChanged, showCertificateTrust } from './cert-modal';
 import { renderDestinationList, renderMovePreview } from './destination-pane';
 import { apFilterInput, connectBtn, destinationSearchInput, refreshBtn, settingsBtn } from './elements';
 import { t } from './i18n';
-import { loadManagementCapabilities } from './management';
+import { loadManagedGroups, resetManagedGroups } from './managed-groups';
+import { beginCapabilityCheck, loadManagementCapabilities } from './management';
 import { isAmbiguousGroup } from './move-plan';
 import { renderInventoryViews, resetInventoryViews } from './navigation';
 import { renderNotices } from './notices';
@@ -85,12 +86,17 @@ function connectionErrorMessage(result: { error?: string; detail?: string }): st
  * begins a new session generation, so any stale in-flight load from a
  * previous session discards its result. Its own generation is re-checked
  * after every await: should this session ever be superseded while awaiting,
- * no stale UI commit (status, button label, data) goes through.
+ * no stale UI commit (status, button label, data) goes through. The
+ * management capabilities on screen are dropped at once (a reconnect, e.g.
+ * after a settings save): main closes the installed session's management
+ * side as the attempt starts and the new session runs its own checks, so
+ * no AP-group write action outlives the old verdict.
  * @returns {Promise<void>}
  */
 export async function connect(): Promise<void> {
   if (isOperationInProgress()) return;
   invalidateSession();
+  beginCapabilityCheck();
   // This connection's session generation: every post-await UI commit below
   // is discarded when it no longer matches (belt-and-braces on top of the
   // in-flight serialization)
@@ -244,7 +250,8 @@ async function runCertificateChanged(rawCertificate: unknown, generation: number
  * header — main reports it for single-site controllers and remembered sites
  * too; `fallbackSiteName` (the name picked in the site modal) covers a result
  * without one — and the opaque session nonce of the management-access calls.
- * The management capabilities of the new session are unknown until fetched.
+ * The management capabilities of the new session, and the fresh Open API
+ * view of its AP groups, are unknown until fetched.
  * @param {ConnectionResult} result - The successful result.
  * @param {string | null} fallbackSiteName - Site name to use when the result has none.
  */
@@ -252,6 +259,7 @@ function applySessionDetails(result: ConnectionResult, fallbackSiteName: string 
   state.siteName = parseSiteName(result.siteName) ?? fallbackSiteName;
   state.sessionNonce = parseSessionNonce(result.sessionNonce);
   state.managementCapabilities = null;
+  resetManagedGroups();
 }
 
 /**
@@ -417,6 +425,9 @@ function clearData(): void {
   state.controllerVersion = null;
   state.sessionNonce = null;
   state.managementCapabilities = null;
+  // The fresh Open API view of the AP groups goes with the session too (a
+  // read in flight is discarded)
+  resetManagedGroups();
   state.lastUpdatedAt = null;
   state.refreshError = false;
   state.selectedApMacs = new Set<string>();
@@ -662,7 +673,9 @@ export async function loadData(): Promise<void> {
  * (connect/save/move/load) is pending. The loaded data stays on screen while
  * refreshing; on failure it stays (re-rendered), the header keeps the
  * previous "Updated hh:mm" time marked as stale, the refresh notice states
- * it (loadData()), and an error toast is shown.
+ * it (loadData()), and an error toast is shown. A successful refresh also
+ * re-reads the fresh Open API view of the AP groups in the background
+ * (while AP-group management is on).
  * @returns {Promise<void>}
  */
 export async function refreshData(): Promise<void> {
@@ -670,6 +683,7 @@ export async function refreshData(): Promise<void> {
 
   try {
     await loadData();
+    void loadManagedGroups(state.sessionGeneration);
   } catch (error) {
     // An unreachable controller is an expected outcome, reported by the toast
     console.warn('Error refreshing data:', error);

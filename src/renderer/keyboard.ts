@@ -6,12 +6,13 @@
 //     list first; the destination picker has its own search);
 //   - Escape, in priority order (escapeAction() in view-state.ts): clears
 //     the current search, then exits edit mode (no view has one yet: phases
-//     16–19 plug theirs into isEditModeActive() / exitEditMode() below),
+//     18–19 plug theirs into isEditModeActive() / exitEditMode() below; the AP
+//     group actions use dialogs),
 //     then closes the top dialog.
 // The search fields that clear themselves on Escape (AP groups, Wi-Fi
 // networks, destination) mark the event handled (preventDefault), so this
-// handler skips it. The move, site-selection and certificate dialogs close
-// themselves on Escape through their own listeners (their pending promises
+// handler skips it. The move, AP group, site-selection and certificate
+// dialogs close themselves on Escape through their own listeners (their pending promises
 // must settle through their cancel paths); the settings modal is closed
 // here.
 // ============================================================================
@@ -95,7 +96,8 @@ function focusViewSearch(): void {
 
 /**
  * Tells whether the top context is in edit mode. No view has an edit mode
- * yet; the editing phases (16–19) report theirs here.
+ * yet (the AP group actions use dialogs); the editing phases (18–19) report
+ * theirs here.
  * @returns {boolean} False until a view has an edit mode.
  */
 function isEditModeActive(): boolean {
@@ -107,13 +109,13 @@ function isEditModeActive(): boolean {
  * here; nothing to leave yet).
  */
 function exitEditMode(): void {
-  // No view has an edit mode yet (phases 16–19)
+  // No view has an edit mode yet (phases 18–19)
 }
 
 /**
  * Closes the top dialog on Escape. Only the settings modal is closed here:
- * the move, site-selection and certificate dialogs close themselves through
- * their own Escape listeners.
+ * the move, AP group, site-selection and certificate dialogs close
+ * themselves through their own Escape listeners.
  */
 function closeTopDialog(): void {
   closeSettings();

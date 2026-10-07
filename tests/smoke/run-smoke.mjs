@@ -177,7 +177,7 @@ const EXPECTED_BRIDGE = [
   'testManagementAccess', 'trustCertificate',
 ];
 // One launch per run*() function in main()
-const EXPECTED_LAUNCHES = 5;
+const EXPECTED_LAUNCHES = 6;
 // Fingerprints of the fake controller's self-signed certificates (launch 3)
 const FINGERPRINT_A = Array.from({ length: 32 }, (_, index) => (index * 7 + 16).toString(16).toUpperCase().padStart(2, '0')).join(':');
 const FINGERPRINT_B = Array.from({ length: 32 }, (_, index) => (255 - index).toString(16).toUpperCase().padStart(2, '0')).join(':');
@@ -894,10 +894,10 @@ function readHeader(page) {
 
 /**
  * Reads the AP groups master list: per item its group id, element and type,
- * name, badges, counts line, the strong empty-group label, aria-current and
- * tabindex.
+ * name, badges (and the Capacity warning badge's details), counts line, the
+ * strong empty-group label, aria-current and tabindex.
  * @param {import('playwright-core').Page} page - The renderer page.
- * @returns {Promise<Array<{ id: string; tag: string; type: string | null; name: string; badges: string[]; meta: string; silence: string | null; current: string | null; tabIndex: number }>>}
+ * @returns {Promise<Array<{ id: string; tag: string; type: string | null; name: string; badges: string[]; capacity: object | null; meta: string; silence: string | null; current: string | null; tabIndex: number }>>}
  */
 function readGroupItems(page) {
   return page.evaluate(() => Array.from(document.querySelectorAll('#groupList .master-item')).map((item) => ({
@@ -906,6 +906,20 @@ function readGroupItems(page) {
     type: item.getAttribute('type'),
     name: item.querySelector('.item-name')?.textContent ?? '',
     badges: Array.from(item.querySelectorAll('.badge')).map((badge) => badge.textContent),
+    // The Capacity warning badge (AP-group management, phase 16b): visible
+    // label, tooltip, full bands, visually hidden text (and that it is
+    // clipped to at most 1 px), or null
+    capacity: (() => {
+      const badge = item.querySelector('.badge-capacity');
+      const hidden = badge?.querySelector('.visually-hidden') ?? null;
+      return badge ? {
+        label: badge.firstChild?.nodeValue ?? '',
+        title: badge.title,
+        bands: badge.dataset.bands ?? '',
+        hidden: hidden?.textContent ?? null,
+        hiddenClipped: hidden !== null && getComputedStyle(hidden).clipPath !== 'none' && hidden.getBoundingClientRect().width <= 1,
+      } : null;
+    })(),
     meta: item.querySelector('.master-item-meta')?.textContent ?? '',
     silence: item.querySelector('.is-silence')?.textContent ?? null,
     current: item.getAttribute('aria-current'),
@@ -1730,7 +1744,7 @@ async function runInventoryChecks(session) {
     );
   }); // End of check "[es] AP groups search..."
 
-  await check('[es] AP group detail (Default): selected (aria-current); its name as heading, "Predeterminado", "4 AP · 2 redes", its APs as links with their status, its Wi-Fi networks as read-only links; no rename, new or delete control', async () => {
+  await check('[es] AP group detail (Default): selected (aria-current); its name as heading, "Predeterminado", "4 AP · 2 redes", its APs as links with their status, its Wi-Fi networks as read-only links; without management access no rename, new or delete control — the only action is "Mover puntos de acceso aquí" (moves never need it)', async () => {
     await page.click(groupItem(GROUP.Default.wlanId));
     const items = await readGroupItems(page);
     const detail = await readDetailPane(page, '#groupDetail');
@@ -1744,7 +1758,7 @@ async function runInventoryChecks(session) {
       isDeepStrictEqual(detail.sections.aps.links.map((link) => [link.kind, link.target, link.tag, link.type]), defaultAps.map((name) => ['ap', AP[name].mac, 'button', 'button'])) &&
       detail.sections.networks?.title === `${es.wifiNetworks} (2)` &&
       isDeepStrictEqual(detail.sections.networks.links.map((link) => [link.kind, link.target, link.text]), [['network', 'Casa', 'Casa'], ['network', 'Invitados', 'Invitados']]) &&
-      controls.length === 0,
+      isDeepStrictEqual(controls, ['groupMoveHereBtn']),
       { items, detail, controls }
     );
   }); // End of check "[es] AP group detail (Default)..."
@@ -4953,6 +4967,9 @@ async function apGroupBridgeVerdict(session) {
   const groupsBefore = before.scenario.wlanGroups;
   const defaultGroup = groupsBefore.find((group) => group.isDefault === true);
   const busyGroup = groupsBefore.find((group) => group.isDefault !== true && before.scenario.accessPoints.some((ap) => ap.wlanGroup === group.wlanName));
+  // The renderer reads the managed list itself since phase 16b: this check's
+  // calls start after the ones it made
+  const listCallsBefore = callsTo(before, 'management:ap-groups').length;
   const outcome = {};
   try {
     outcome.list = await callBridge(page, 'getManagedApGroups', nonce);
@@ -5020,9 +5037,991 @@ async function apGroupBridgeVerdict(session) {
       { op: 'delete', apGroupId: id },
     ]) &&
     isDeepStrictEqual(after.scenario.wlanGroups, groupsBefore) &&
-    callsTo(after, 'management:ap-groups')[0].args[0] === nonce;
+    callsTo(after, 'management:ap-groups')[listCallsBefore].args[0] === nonce;
   return verdict(ok, { outcome, writes: after.apGroupWrites });
 } // End of function apGroupBridgeVerdict()
+
+// ============================================================================
+// Launch 6: AP group management (phase 16b) — New group, Rename, Delete with
+// its reasons and confirmation (hidden for the default group), the per-band
+// capacity and the Capacity warning badge, "Move access points here", the
+// actions hidden while management is off or being re-checked (Spanish, then
+// English)
+// ============================================================================
+
+// A group the internal list carries with an id main would refuse for a
+// write (not 24 hex digits, but a valid internal group id)
+const UNWRITABLE_GROUP = { wlanId: 'legacy_group_01', wlanName: 'Antiguo', ssidList: [] };
+// The groups of the management launch: the fixture's plus that one
+const MGMT_GROUPS = [...data.wlanGroups, UNWRITABLE_GROUP];
+// The groups the renderer keeps (the fixture's malformed id is dropped)
+const MGMT_VALID_GROUP_COUNT = MGMT_GROUPS.filter((group) => WLAN_ID_REGEX.test(group.wlanId)).length;
+// The per-group SSID limits the stub reports by default (apGroupSsidLimits)
+const DEFAULT_SSID_LIMITS = { band2g: 8, band5g: 8, band6g: 8, mlo: 4 };
+
+// AP group management strings the checks read (src/renderer/i18n.ts;
+// twoBands: how the badge's sentence joins 2.4 and 6 GHz, Intl.ListFormat)
+const GROUPS_TEXT = {
+  es: {
+    newGroup: 'Nuevo grupo', rename: 'Cambiar nombre', delete: 'Eliminar', moveHere: 'Mover puntos de acceso aquí', actionsLabel: 'Acciones del grupo',
+    notWritable: 'El identificador de este grupo tiene un formato inesperado: la aplicación no puede cambiarle el nombre ni eliminarlo.',
+    blockedNotEmpty: 'Para eliminarlo, mueve antes sus puntos de acceso a otro grupo.',
+    blockedHasNetworks: 'Para eliminarlo, desvincula antes sus redes Wi-Fi.',
+    capacityTitle: 'Capacidad por banda', capacityHelp: 'Cuántas redes Wi-Fi más puede emitir este grupo en cada banda.',
+    bands: { band2g: '2,4 GHz', band5g: '5 GHz', band6g: '6 GHz', mlo: 'MLO' },
+    freeOf: '{remaining} libres de {limit}', notReportedLimit: 'No informado (límite: {limit})', notReported: 'No informado',
+    capacityBadge: 'Aviso de capacidad', capacityDetail: 'Sin espacio para más redes Wi-Fi en {bands}', twoBands: '2,4 GHz y 6 GHz',
+    createTitle: 'Nuevo grupo de AP',
+    createMessage: 'El grupo se crea vacío, sin puntos de acceso ni redes Wi-Fi. Después puedes mover puntos de acceso a él.',
+    nameLabel: 'Nombre del grupo', nameHint: 'De 1 a 128 caracteres, distinto del nombre de cualquier otro grupo (sin distinguir mayúsculas).',
+    createAction: 'Crear grupo', cancel: 'Cancelar',
+    renameTitle: 'Cambiar el nombre del grupo', renameMessage: 'Nombre actual: "{name}". Sus puntos de acceso y sus redes Wi-Fi no cambian.', renameAction: 'Cambiar nombre',
+    deleteTitle: 'Eliminar el grupo', deleteMessage: '¿Eliminar el grupo de AP "{name}"? No tiene puntos de acceso ni redes Wi-Fi. No se puede deshacer.',
+    deleteAction: 'Eliminar grupo',
+    creating: 'Creando el grupo…', created: 'Se creó el grupo "{name}".', renamed: 'El grupo se llama ahora "{name}".', deleted: 'Se eliminó el grupo "{name}".',
+    errNameRequired: 'Escribe un nombre para el grupo.', errNameTaken: 'Otro grupo de AP ya tiene este nombre (sin distinguir mayúsculas).',
+    errNameUnchanged: 'El grupo ya tiene este nombre.', errLimit: 'Se alcanzó el límite de grupos de AP del controlador.',
+    errNotEmpty: 'El controlador indica que este grupo tiene puntos de acceso: muévelos antes a otro grupo.',
+    errManagementUnavailable: 'El acceso de gestión no está activo en esta conexión, así que no se pueden cambiar los grupos. Revisa Ajustes → Acceso de gestión.',
+  },
+  en: {
+    newGroup: 'New group', rename: 'Rename', delete: 'Delete', moveHere: 'Move access points here',
+    capacityTitle: 'Per-band capacity', bands: { band2g: '2.4 GHz', band5g: '5 GHz', band6g: '6 GHz', mlo: 'MLO' },
+    freeOf: '{remaining} of {limit} free', notReportedLimit: 'Not reported (limit: {limit})',
+    capacityBadge: 'Capacity warning', capacityDetail: 'No room for more Wi-Fi networks on {bands}', twoBands: '2.4 GHz and 6 GHz',
+    createTitle: 'New AP group', nameLabel: 'Group name', createAction: 'Create group', cancel: 'Cancel',
+    deleteTitle: 'Delete the group', deleteMessage: 'Delete the AP group "{name}"? It has no access points and no Wi-Fi networks. This cannot be undone.',
+    deleteAction: 'Delete group',
+    errNameTaken: 'Another AP group already has this name (ignoring case).', errRequestFailed: 'The controller could not complete the request.',
+  },
+};
+
+/**
+ * Reads the AP groups view's management controls: "New group", the detail's
+ * Rename / Delete (text, disabled, description), why Delete is unavailable
+ * (text and block codes), the not-writable note, "Move access points here"
+ * (and its reason), the capacity section (title, notes, one fact per band)
+ * and the focused element.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The controls.
+ */
+function readGroupControls(page) {
+  return page.evaluate(() => {
+    /**
+     * Reads one action button, or null when absent.
+     * @param {string} id - The button id.
+     * @returns {object | null} Text, disabled, aria-describedby and data-group-action.
+     */
+    const button = (id) => {
+      const element = document.getElementById(id);
+      return element ? { text: element.textContent, disabled: element.disabled, describedBy: element.getAttribute('aria-describedby'), action: element.dataset.groupAction ?? null } : null;
+    };
+    const capacity = document.querySelector('#groupDetail .detail-section[data-section="capacity"]');
+    const reason = document.getElementById('groupDeleteReason');
+    return {
+      newGroup: button('newGroupBtn'),
+      rename: button('groupRenameBtn'),
+      delete: button('groupDeleteBtn'),
+      deleteReason: reason?.textContent ?? null,
+      deleteBlocks: reason?.dataset.blocks ?? null,
+      actionsLabel: document.querySelector('#groupDetail .detail-actions')?.getAttribute('aria-label') ?? null,
+      notWritable: document.querySelector('#groupDetail [data-note="notWritable"]')?.textContent ?? null,
+      moveHere: button('groupMoveHereBtn'),
+      moveHereReason: document.getElementById('groupMoveHereReason')?.textContent ?? null,
+      capacity: capacity === null ? null : {
+        title: capacity.querySelector('.detail-section-title')?.textContent ?? '',
+        notes: Array.from(capacity.querySelectorAll('.detail-note')).map((note) => ({ kind: note.dataset.note, text: note.textContent })),
+        bands: Object.fromEntries(Array.from(capacity.querySelectorAll('.detail-fact')).map((fact) => [fact.dataset.fact, {
+          label: fact.querySelector('dt')?.textContent ?? '', value: fact.querySelector('dd')?.textContent ?? '', unreported: fact.classList.contains('is-unreported'),
+        }])),
+      },
+      heading: document.getElementById('groupDetailName')?.textContent ?? null,
+      activeId: document.activeElement?.id || '',
+    };
+  }); // End of the in-page group controls probe
+} // End of function readGroupControls()
+
+/**
+ * Reads the AP group dialog: dialog semantics, title, message, the name
+ * field (shown, label, hint, value, read-only, invalid, selection), the
+ * error and progress lines, the buttons, the focused element and the
+ * background's inertness.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<object>} The dialog's state.
+ */
+function readGroupModal(page) {
+  return page.evaluate(() => {
+    const modal = document.getElementById('groupModal');
+    const input = document.getElementById('groupNameInput');
+    const error = document.getElementById('groupModalError');
+    const confirm = document.getElementById('confirmGroupBtn');
+    const cancel = document.getElementById('cancelGroupBtn');
+    return {
+      open: modal.classList.contains('visible'),
+      role: modal.getAttribute('role'),
+      ariaModal: modal.getAttribute('aria-modal'),
+      describedBy: modal.getAttribute('aria-describedby'),
+      busy: modal.getAttribute('aria-busy'),
+      title: document.getElementById('groupModalHeading')?.textContent ?? '',
+      message: document.getElementById('groupModalMessage')?.textContent ?? '',
+      nameShown: !document.getElementById('groupNameField').hidden,
+      label: document.getElementById('groupNameLabel')?.textContent ?? '',
+      hint: document.getElementById('groupNameHint')?.textContent ?? '',
+      value: input.value,
+      readOnly: input.readOnly,
+      invalid: input.getAttribute('aria-invalid'),
+      selection: [input.selectionStart, input.selectionEnd],
+      errorShown: !error.hidden,
+      error: error.textContent,
+      errorRole: error.getAttribute('role'),
+      status: document.getElementById('groupModalStatus')?.textContent ?? '',
+      confirm: confirm.textContent,
+      confirmDisabled: confirm.disabled,
+      confirmDanger: confirm.classList.contains('btn-danger'),
+      cancel: cancel.textContent,
+      cancelDisabled: cancel.disabled,
+      activeId: document.activeElement?.id || '',
+      inert: document.querySelector('.app-container')?.hasAttribute('inert'),
+    };
+  }); // End of the in-page group dialog probe
+} // End of function readGroupModal()
+
+/**
+ * Waits until the AP group dialog is open.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function waitForGroupModal(page) {
+  await page.waitForSelector('#groupModal.visible', { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the AP group dialog is closed.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function waitForGroupModalClosed(page) {
+  await page.waitForFunction(() => !document.getElementById('groupModal').classList.contains('visible'), null, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the AP group dialog's error line shows the given text.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} text - Expected text.
+ * @returns {Promise<void>}
+ */
+async function waitForGroupError(page, text) {
+  await page.waitForFunction((expected) => {
+    const error = document.getElementById('groupModalError');
+    return Boolean(error) && !error.hidden && error.textContent === expected;
+  }, text, { timeout: WAIT_MS });
+}
+
+/**
+ * Opens a group's detail (a click on its master item) and waits for its
+ * heading.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} id - The group id.
+ * @param {string} name - The group's name (the heading).
+ * @returns {Promise<void>}
+ */
+async function openGroupDetail(page, id, name) {
+  await page.click(`#groupList .master-item[data-group-id="${id}"]`);
+  await page.waitForFunction((expected) => document.getElementById('groupDetailName')?.textContent === expected, name, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until the capacity row of a band shows the given text.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} band - The band (band2g, band5g, band6g, mlo).
+ * @param {string} text - Expected text.
+ * @returns {Promise<void>}
+ */
+async function waitForBand(page, band, text) {
+  await page.waitForFunction(({ key, expected }) => document.querySelector(`#groupDetail .detail-fact[data-fact="${key}"] dd`)?.textContent === expected,
+    { key: band, expected: text }, { timeout: WAIT_MS });
+}
+
+/**
+ * The capacity facts expected for a group with `networks` bound networks
+ * and the default limits (8 per band, MLO limit 4; MLO's remaining value is
+ * never reported).
+ * @param {'es' | 'en'} language - UI language.
+ * @param {number} networks - The group's networks.
+ * @returns {object} The expected facts by band.
+ */
+function expectedCapacity(language, networks) {
+  const text = GROUPS_TEXT[language];
+  const free = fmt(text.freeOf, { remaining: 8 - networks, limit: 8 });
+  return {
+    band2g: { label: text.bands.band2g, value: free, unreported: false },
+    band5g: { label: text.bands.band5g, value: free, unreported: false },
+    band6g: { label: text.bands.band6g, value: free, unreported: false },
+    mlo: { label: text.bands.mlo, value: fmt(text.notReportedLimit, { limit: 4 }), unreported: true },
+  };
+} // End of function expectedCapacity()
+
+// Fresh-view overrides of the Capacity warning checks (apGroupOverrides):
+// Exterior reports only its 5 GHz remaining capacity, 0; zGrupo B reports
+// 2.4 and 6 GHz at 0 (5 GHz: 3 left); zNinguna reports no remaining
+// capacity at all (absent, which must never count as full)
+const FULL_BAND_OVERRIDES = {
+  [GROUP.Exterior.wlanId]: { remainingBinding: { 1: 0 } },
+  [GROUP['zGrupo B'].wlanId]: { remainingBinding: { 0: 0, 1: 3, 2: 0 } },
+  [GROUP.zNinguna.wlanId]: { remainingBinding: null },
+};
+
+/**
+ * The Capacity warning badge of every group with FULL_BAND_OVERRIDES applied
+ * (null: no badge), as readGroupItems() reports it.
+ * @param {'es' | 'en'} language - UI language.
+ * @returns {Record<string, object | null>} The badges by group id.
+ */
+function expectedCapacityBadges(language) {
+  const text = GROUPS_TEXT[language];
+  /**
+   * One expected badge.
+   * @param {string} bands - Its data-bands.
+   * @param {string} names - The full bands as the sentence names them.
+   * @returns {object} The badge.
+   */
+  const badge = (bands, names) => {
+    const detail = fmt(text.capacityDetail, { bands: names });
+    return { label: text.capacityBadge, title: detail, bands, hidden: ` (${detail})`, hiddenClipped: true };
+  };
+  return {
+    [GROUP.Exterior.wlanId]: badge('band5g', '5 GHz'),
+    [GROUP['zGrupo B'].wlanId]: badge('band2g band6g', text.twoBands),
+    [GROUP.zNinguna.wlanId]: null,
+    [GROUP.Default.wlanId]: null,
+    [UNWRITABLE_GROUP.wlanId]: null,
+  };
+} // End of function expectedCapacityBadges()
+
+/**
+ * Applies FULL_BAND_OVERRIDES (or removes every override) and refreshes,
+ * then waits until the master list shows (or no longer shows) the Capacity
+ * warning badge.
+ * @param {object} session - The launch.
+ * @param {boolean} full - True to apply the overrides, false to remove them.
+ * @returns {Promise<void>}
+ */
+async function setFullBands(session, full) {
+  const { page } = session;
+  await configureStub(session, { apGroupOverrides: full ? FULL_BAND_OVERRIDES : {} });
+  await waitForLoadIdle(page);
+  await page.click('#refreshBtn');
+  await page.waitForFunction((expected) => (document.querySelector('#groupList .badge-capacity') !== null) === expected, full, { timeout: WAIT_MS });
+} // End of function setFullBands()
+
+/**
+ * Waits until the stub has received more calls on a channel than before.
+ * @param {object} session - The launch.
+ * @param {string} channel - The IPC channel.
+ * @param {number} before - The count before.
+ * @returns {Promise<void>}
+ */
+async function waitForStubCall(session, channel, before) {
+  const deadline = Date.now() + WAIT_MS;
+  while (callsTo(await stubState(session), channel).length <= before) {
+    if (Date.now() > deadline) {
+      throw new Error(`no new ${channel} call`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+} // End of function waitForStubCall()
+
+/**
+ * AP group management launch (phase 16b): an Omada 6.3 controller with
+ * management access whose every check passes; the AP groups view offers
+ * New group, Rename and Delete (hidden for the default group, otherwise
+ * with the reasons it is unavailable), the per-band capacity with the
+ * master list's Capacity warning badge, and "Move access points here".
+ * Create → rename → the group made non-empty through "Move access points
+ * here" (the phase-13 move flow) → delete blocked → emptied → a delete
+ * refused by fresh data → deleted after the confirmation; a write refused by
+ * the controller shown as text; a group main cannot write; 700×500; a late
+ * managed-groups reply of an old session discarded; the actions gone when a
+ * check fails and while a re-check runs (fail closed), and a dialog open
+ * meanwhile sending nothing; English.
+ * The real main-side rules are unit-tested (ap-group-management.test.ts).
+ * @param {{ binary: string }} electronInfo - Resolved Electron binary.
+ * @returns {Promise<void>}
+ */
+async function runApGroupManagement(electronInfo) {
+  const session = await launch(electronInfo, 'groups', {
+    config: { url: CONTROLLER_URL, username: 'admin', language: 'es', hasPassword: true, clientId: 'owm-client-1', hasClientSecret: true },
+    connect: { success: true },
+    siteName: 'Casa',
+    controllerVersion: data.controllerVersion,
+    accessPoints: data.accessPoints,
+    wlanGroups: MGMT_GROUPS,
+  });
+  const { page } = session;
+  const es = GROUPS_TEXT.es;
+  const en = GROUPS_TEXT.en;
+  const jardin = AP['Jardín'];
+  // The group created by the create check (its id comes from the stub)
+  let newId = null;
+
+  try {
+    await checkTranslations(session, 'es');
+
+    await check('[groups] es: management on — no read-only banner; "Nuevo grupo" above the list; Default: "Cambiar nombre" and NO "Eliminar" (hidden for the default group, no reason note), "Mover puntos de acceso aquí", per-band capacity "6 libres de 8" (MLO "No informado (límite: 4)"); zGrupo B: Delete blocked by its APs and its networks, "3 libres de 8"; Exterior (empty): Delete enabled; every group has room left, so no Capacity warning badge; the managed list was read with the session nonce', async () => {
+      await waitForConnected(page);
+      await waitForApCount(page, expectedApRows(data.accessPoints, 'es', 'apGroup', MGMT_GROUPS).length);
+      await page.click('#navGroups');
+      await page.waitForSelector('#newGroupBtn', { timeout: WAIT_MS });
+      const notices = await readNotices(page);
+      await openGroupDetail(page, GROUP.Default.wlanId, 'Default');
+      await waitForBand(page, 'band2g', fmt(es.freeOf, { remaining: 6, limit: 8 }));
+      const defaults = await readGroupControls(page);
+      const items = await readGroupItems(page);
+      await openGroupDetail(page, GROUP['zGrupo B'].wlanId, 'zGrupo B');
+      await waitForBand(page, 'band2g', fmt(es.freeOf, { remaining: 3, limit: 8 }));
+      const busy = await readGroupControls(page);
+      await openGroupDetail(page, GROUP.Exterior.wlanId, 'Exterior');
+      await page.waitForSelector('#groupDeleteBtn:not([disabled])', { timeout: WAIT_MS });
+      const empty = await readGroupControls(page);
+      const snapshot = await stubState(session);
+      const lists = callsTo(snapshot, 'management:ap-groups');
+      return verdict(
+        !notices.bannerShown &&
+        defaults.newGroup?.text === es.newGroup && !defaults.newGroup.disabled && defaults.newGroup.action === 'create' &&
+        defaults.rename?.text === es.rename && !defaults.rename.disabled && defaults.actionsLabel === es.actionsLabel &&
+        defaults.delete === null && defaults.deleteReason === null && defaults.deleteBlocks === null &&
+        defaults.moveHere?.text === es.moveHere && !defaults.moveHere.disabled &&
+        defaults.capacity?.title === es.capacityTitle && isDeepStrictEqual(defaults.capacity.notes, [{ kind: 'capacityHelp', text: es.capacityHelp }]) &&
+        isDeepStrictEqual(defaults.capacity.bands, expectedCapacity('es', 2)) &&
+        busy.delete.disabled && busy.deleteReason === `${es.blockedNotEmpty} ${es.blockedHasNetworks}` && busy.deleteBlocks === 'groupNotEmpty groupHasNetworks' &&
+        isDeepStrictEqual(busy.capacity.bands, expectedCapacity('es', 5)) &&
+        !empty.delete.disabled && empty.deleteReason === null && empty.delete.describedBy === null && isDeepStrictEqual(empty.capacity.bands, expectedCapacity('es', 0)) &&
+        items.length === MGMT_VALID_GROUP_COUNT && items.every((item) => item.capacity === null) &&
+        lists.length >= 1 && lists.every((call) => isDeepStrictEqual(call.args, [snapshot.sessionNonce])),
+        { notices, defaults, busy, empty, items, lists: lists.map((call) => call.args), nonce: snapshot.sessionNonce }
+      );
+    }); // End of check "[groups] es: management on..."
+
+    await check('[groups] es: values the controller does not report stay absent: with only the 2.4 GHz remaining value and the 2.4 / 5 GHz limits, Exterior shows "7 libres de 8", "No informado (límite: 8)", "No informado" (6 GHz) and "No informado" (MLO), marked as unreported', async () => {
+      await configureStub(session, { apGroupOverrides: { [GROUP.Exterior.wlanId]: { remainingBinding: { 0: 7 } } }, apGroupSsidLimits: { band2g: 8, band5g: 8 } });
+      try {
+        await waitForLoadIdle(page);
+        await page.click('#refreshBtn');
+        await waitForBand(page, 'band2g', fmt(es.freeOf, { remaining: 7, limit: 8 }));
+        const partial = await readGroupControls(page);
+        return verdict(
+          isDeepStrictEqual(partial.capacity?.bands, {
+            band2g: { label: es.bands.band2g, value: fmt(es.freeOf, { remaining: 7, limit: 8 }), unreported: false },
+            band5g: { label: es.bands.band5g, value: fmt(es.notReportedLimit, { limit: 8 }), unreported: true },
+            band6g: { label: es.bands.band6g, value: es.notReported, unreported: true },
+            mlo: { label: es.bands.mlo, value: es.notReported, unreported: true },
+          }) && partial.heading === 'Exterior' && !partial.delete.disabled,
+          partial
+        );
+      } finally {
+        await configureStub(session, { apGroupOverrides: {}, apGroupSsidLimits: DEFAULT_SSID_LIMITS });
+        await waitForLoadIdle(page);
+        await page.click('#refreshBtn');
+        await waitForBand(page, 'band2g', fmt(es.freeOf, { remaining: 8, limit: 8 }));
+      }
+    }); // End of check "[groups] es: values the controller does not report..."
+
+    await check('[groups] es: the master list\'s "Aviso de capacidad" badge marks a group the controller reports full (0 remaining) on a band, naming the band(s) in its tooltip and in visually hidden text — Exterior (only 5 GHz reported, at 0): "Sin espacio para más redes Wi-Fi en 5 GHz"; zGrupo B (2.4 and 6 GHz at 0): "… en 2,4 GHz y 6 GHz"; zNinguna (no remaining value reported) and the groups with room left get none; Exterior\'s detail agrees ("0 libres de 8" for 5 GHz, the other bands "No informado")', async () => {
+      try {
+        await setFullBands(session, true);
+        const items = await readGroupItems(page);
+        await openGroupDetail(page, GROUP.Exterior.wlanId, 'Exterior');
+        await waitForBand(page, 'band5g', fmt(es.freeOf, { remaining: 0, limit: 8 }));
+        const exterior = await readGroupControls(page);
+        const badges = Object.fromEntries(items.map((item) => [item.id, item.capacity]));
+        const defaultItem = items.find((item) => item.id === GROUP.Default.wlanId);
+        return verdict(
+          isDeepStrictEqual(badges, expectedCapacityBadges('es')) && isDeepStrictEqual(defaultItem?.badges, ['Predeterminado']) &&
+          isDeepStrictEqual(exterior.capacity?.bands, {
+            band2g: { label: es.bands.band2g, value: fmt(es.notReportedLimit, { limit: 8 }), unreported: true },
+            band5g: { label: es.bands.band5g, value: fmt(es.freeOf, { remaining: 0, limit: 8 }), unreported: false },
+            band6g: { label: es.bands.band6g, value: fmt(es.notReportedLimit, { limit: 8 }), unreported: true },
+            mlo: { label: es.bands.mlo, value: fmt(es.notReportedLimit, { limit: 4 }), unreported: true },
+          }),
+          { badges, defaultBadges: defaultItem?.badges, exterior: exterior.capacity }
+        );
+      } finally {
+        await setFullBands(session, false);
+      }
+    }); // End of check "[groups] es: the master list's Aviso de capacidad badge..."
+
+    await check('[groups] es: "Nuevo grupo" opens the dialog (role dialog, aria-modal, background inert) on the name field; Enter on a blank name says "Escribe un nombre para el grupo."; a name another group has ("default") is refused as typed; neither asks main; Escape cancels and focus returns to "Nuevo grupo"', async () => {
+      const creates = callsTo(await stubState(session), 'management:ap-group-create').length;
+      await page.click('#newGroupBtn');
+      await waitForGroupModal(page);
+      const opened = await readGroupModal(page);
+      await page.keyboard.press('Enter');
+      await waitForGroupError(page, es.errNameRequired);
+      const blank = await readGroupModal(page);
+      await page.fill('#groupNameInput', 'default');
+      await waitForGroupError(page, es.errNameTaken);
+      const taken = await readGroupModal(page);
+      await page.keyboard.press('Escape');
+      await waitForGroupModalClosed(page);
+      const after = await readGroupModal(page);
+      const focus = await readFocus(page);
+      const createsAfter = callsTo(await stubState(session), 'management:ap-group-create').length;
+      return verdict(
+        opened.open && opened.role === 'dialog' && opened.ariaModal === 'true' && opened.describedBy === 'groupModalMessage' && opened.inert &&
+        opened.title === es.createTitle && opened.message === es.createMessage && opened.nameShown && opened.label === es.nameLabel &&
+        opened.hint === es.nameHint && opened.value === '' && opened.confirm === es.createAction && !opened.confirmDanger && opened.cancel === es.cancel &&
+        opened.activeId === 'groupNameInput' && !opened.errorShown &&
+        blank.error === es.errNameRequired && blank.errorRole === 'alert' && blank.activeId === 'groupNameInput' && blank.invalid === 'true' &&
+        taken.error === es.errNameTaken && taken.activeId === 'groupNameInput' &&
+        !after.open && !after.inert && focus.id === 'newGroupBtn' && focus.visible && createsAfter === creates,
+        { opened, blank, taken, after, focus, creates, createsAfter }
+      );
+    }); // End of check "[groups] es: Nuevo grupo opens the dialog..."
+
+    await check('[groups] es: create "  Grupo nuevo  " with Enter: one createApGroup call with the trimmed name and the session nonce; while it runs the dialog shows "Creando el grupo…" with its buttons disabled; after the reload it closes, the toast says "Se creó el grupo "Grupo nuevo".", the group is listed, selected and focused, counted in the sidebar, offered under Silence in the destination pane, with Delete enabled and "8 libres de 8"', async () => {
+      await configureStub(session, { delays: { 'management:ap-group-create': 700 } });
+      try {
+        await page.click('#newGroupBtn');
+        await waitForGroupModal(page);
+        await page.fill('#groupNameInput', '  Grupo nuevo  ');
+        await page.keyboard.press('Enter');
+        await page.waitForFunction((text) => document.getElementById('groupModalStatus')?.textContent === text, es.creating, { timeout: WAIT_MS });
+        const busy = await readGroupModal(page);
+        await page.keyboard.press('Escape');
+        await waitForGroupModalClosed(page);
+        await waitForToast(page, 'success', fmt(es.created, { name: 'Grupo nuevo' }));
+        const snapshot = await stubState(session);
+        const creates = callsTo(snapshot, 'management:ap-group-create');
+        newId = snapshot.apGroupWrites[snapshot.apGroupWrites.length - 1]?.apGroupId ?? null;
+        await waitForBand(page, 'band2g', fmt(es.freeOf, { remaining: 8, limit: 8 }));
+        const items = await readGroupItems(page);
+        const focus = await readFocus(page);
+        const controls = await readGroupControls(page);
+        const nav = await readNav(page);
+        const radio = await page.evaluate((id) => {
+          const element = document.querySelector(`#destinationList .destination-radio[value="${id}"]`);
+          return element ? { silence: element.closest('.destination-silence') !== null, disabled: element.disabled } : null;
+        }, newId);
+        return verdict(
+          busy.status === es.creating && busy.confirmDisabled && busy.cancelDisabled && busy.busy === 'true' && busy.readOnly && busy.activeId === 'groupModalStatus' &&
+          creates.length === 1 && isDeepStrictEqual(creates[0].args, [{ sessionNonce: snapshot.sessionNonce, name: 'Grupo nuevo' }]) &&
+          isDeepStrictEqual(snapshot.apGroupWrites, [{ op: 'create', apGroupId: newId, name: 'Grupo nuevo' }]) &&
+          items.some((item) => item.id === newId && item.name === 'Grupo nuevo' && item.current === 'true') &&
+          focus.groupId === newId && focus.visible && focus.panel === 'groupMasterPanel' &&
+          controls.heading === 'Grupo nuevo' && !controls.delete.disabled && !controls.rename.disabled &&
+          nav.groups.count === String(MGMT_VALID_GROUP_COUNT + 1) && radio?.silence === true && radio.disabled === false,
+          { busy, creates: creates.map((call) => call.args), writes: snapshot.apGroupWrites, items, focus, controls, nav: nav.groups, radio }
+        );
+      } finally {
+        await configureStub(session, { delays: {} });
+      }
+    }); // End of check "[groups] es: create..."
+
+    await check('[groups] es: a create the controller refuses shows main\'s code as text with its diagnostic — "Se alcanzó el límite de grupos de AP del controlador. (apiError, errorCode -33201)" — and the dialog stays open on the name field; Cancel returns focus to "Nuevo grupo"; nothing is created', async () => {
+      await configureStub(session, { apGroupResults: { 'management:ap-group-create': { success: false, error: 'groupLimitReached', diagnostic: 'apiError, errorCode -33201' } } });
+      try {
+        const writes = (await stubState(session)).apGroupWrites.length;
+        await page.click('#newGroupBtn');
+        await waitForGroupModal(page);
+        await page.fill('#groupNameInput', 'Otro grupo');
+        await page.click('#confirmGroupBtn');
+        const expected = `${es.errLimit} (apiError, errorCode -33201)`;
+        await waitForGroupError(page, expected);
+        const refused = await readGroupModal(page);
+        await page.click('#cancelGroupBtn');
+        await waitForGroupModalClosed(page);
+        const focus = await readFocus(page);
+        const after = await stubState(session);
+        return verdict(
+          refused.open && refused.error === expected && refused.activeId === 'groupNameInput' && !refused.confirmDisabled && !refused.cancelDisabled &&
+          refused.status === '' && refused.value === 'Otro grupo' && focus.id === 'newGroupBtn' && after.apGroupWrites.length === writes,
+          { refused, focus, writes: after.apGroupWrites }
+        );
+      } finally {
+        await configureStub(session, { apGroupResults: {} });
+      }
+    }); // End of check "[groups] es: a create the controller refuses..."
+
+    await check('[groups] es: rename "Grupo nuevo": the dialog opens with the current name selected; the same name says "El grupo ya tiene este nombre." without asking main; "Grupo renombrado" is sent with the group id and the nonce; the detail shows the new name with focus back on "Cambiar nombre"; the toast says so', async () => {
+      const renames = callsTo(await stubState(session), 'management:ap-group-rename').length;
+      await page.click('#groupRenameBtn');
+      await waitForGroupModal(page);
+      const opened = await readGroupModal(page);
+      await page.keyboard.press('Enter');
+      await waitForGroupError(page, es.errNameUnchanged);
+      const unchanged = await readGroupModal(page);
+      const renamesUnchanged = callsTo(await stubState(session), 'management:ap-group-rename').length;
+      await page.fill('#groupNameInput', 'Grupo renombrado');
+      await page.keyboard.press('Enter');
+      await waitForGroupModalClosed(page);
+      await waitForToast(page, 'success', fmt(es.renamed, { name: 'Grupo renombrado' }));
+      const controls = await readGroupControls(page);
+      const items = await readGroupItems(page);
+      const snapshot = await stubState(session);
+      const calls = callsTo(snapshot, 'management:ap-group-rename');
+      return verdict(
+        opened.title === es.renameTitle && opened.message === fmt(es.renameMessage, { name: 'Grupo nuevo' }) && opened.confirm === es.renameAction &&
+        opened.value === 'Grupo nuevo' && isDeepStrictEqual(opened.selection, [0, 'Grupo nuevo'.length]) && opened.activeId === 'groupNameInput' &&
+        unchanged.error === es.errNameUnchanged && renamesUnchanged === renames &&
+        calls.length === renames + 1 && isDeepStrictEqual(calls[calls.length - 1].args, [{ sessionNonce: snapshot.sessionNonce, apGroupId: newId, name: 'Grupo renombrado' }]) &&
+        controls.heading === 'Grupo renombrado' && controls.activeId === 'groupRenameBtn' &&
+        items.some((item) => item.id === newId && item.name === 'Grupo renombrado') && !items.some((item) => item.name === 'Grupo nuevo'),
+        { opened, unchanged, controls, calls: calls.map((call) => call.args) }
+      );
+    }); // End of check "[groups] es: rename..."
+
+    await check('[groups] es: "Mover puntos de acceso aquí" opens Access points with the group as the checked destination ("Destino: Grupo renombrado") and focus in the AP list; ticking Jardín and the move button reaches the review dialog ("Hacia: Grupo renombrado"); confirming moves it over the internal path only (omada:set-wlan, no AP-group write); back in AP groups, Delete is blocked: "Para eliminarlo, mueve antes sus puntos de acceso a otro grupo."', async () => {
+      const before = await stubState(session);
+      await page.click('#groupMoveHereBtn');
+      await page.waitForFunction(() => !document.getElementById('viewAccessPoints').hidden, null, { timeout: WAIT_MS });
+      const landed = await page.evaluate(() => ({
+        checked: document.querySelector('#destinationList .destination-radio:checked')?.value ?? null,
+        destination: document.querySelector('#movePreview .move-destination')?.textContent ?? null,
+        status: document.getElementById('moveStatus')?.textContent ?? '',
+        details: !document.getElementById('apDetailsPanel').hidden,
+      }));
+      const landedFocus = await readFocus(page);
+      await page.check(`#apList .ap-checkbox[data-mac="${jardin.mac}"]`);
+      await openReview(page);
+      const review = await readMoveModal(page);
+      await page.click('#confirmMoveBtn');
+      await waitForResults(page);
+      await closeResults(page);
+      await page.click('#navGroups');
+      await page.waitForFunction(() => document.getElementById('groupDeleteReason')?.dataset.blocks === 'groupNotEmpty', null, { timeout: WAIT_MS });
+      const controls = await readGroupControls(page);
+      const after = await stubState(session);
+      const sets = callsTo(after, 'omada:set-wlan').slice(callsTo(before, 'omada:set-wlan').length);
+      return verdict(
+        landed.checked === newId && landed.destination === fmt(TEXT.es.moveDestination, { group: 'Grupo renombrado' }) &&
+        landed.status === TEXT.es.moveNoSelection && !landed.details && landedFocus.panel === 'apPanel' && landedFocus.visible &&
+        review.open && review.rows.to?.value === 'Grupo renombrado' && review.rows.aps?.value === 'Jardín' && review.activeId === 'cancelMoveBtn' &&
+        isDeepStrictEqual(sets.map((call) => call.args), [[jardin.mac, newId]]) && after.apGroupWrites.length === before.apGroupWrites.length &&
+        controls.heading === 'Grupo renombrado' && controls.delete.disabled && controls.deleteReason === es.blockedNotEmpty,
+        { landed, landedFocus, review: { rows: review.rows, activeId: review.activeId }, sets: sets.map((call) => call.args), controls }
+      );
+    }); // End of check "[groups] es: Mover puntos de acceso aquí..."
+
+    await check('[groups] es: once emptied again (Jardín moved back to zNinguna the same way) Delete is enabled; when the controller\'s fresh list reports APs the renderer has not seen, the confirmation (opening on Cancel) answers "El controlador indica que este grupo tiene puntos de acceso: …"; the detail follows the fresh data (Delete disabled) and Cancel puts focus on the group\'s heading; nothing is deleted', async () => {
+      await openGroupDetail(page, GROUP.zNinguna.wlanId, 'zNinguna');
+      await page.click('#groupMoveHereBtn');
+      await page.waitForFunction(() => !document.getElementById('viewAccessPoints').hidden, null, { timeout: WAIT_MS });
+      await page.check(`#apList .ap-checkbox[data-mac="${jardin.mac}"]`);
+      await openReview(page);
+      await page.click('#confirmMoveBtn');
+      await waitForResults(page);
+      await closeResults(page);
+      await page.click('#navGroups');
+      await openGroupDetail(page, newId, 'Grupo renombrado');
+      await page.waitForSelector('#groupDeleteBtn:not([disabled])', { timeout: WAIT_MS });
+      const emptied = await readGroupControls(page);
+      const writes = (await stubState(session)).apGroupWrites.length;
+      await configureStub(session, { apGroupOverrides: { [newId]: { apNum: 2 } } });
+      try {
+        await page.click('#groupDeleteBtn');
+        await waitForGroupModal(page);
+        const opened = await readGroupModal(page);
+        await page.click('#confirmGroupBtn');
+        await waitForGroupError(page, es.errNotEmpty);
+        const refused = await readGroupModal(page);
+        await page.waitForSelector('#groupDeleteBtn[disabled]', { state: 'attached', timeout: WAIT_MS });
+        await page.click('#cancelGroupBtn');
+        await waitForGroupModalClosed(page);
+        const after = await readGroupControls(page);
+        const snapshot = await stubState(session);
+        return verdict(
+          !emptied.delete.disabled && emptied.deleteReason === null &&
+          opened.title === es.deleteTitle && opened.message === fmt(es.deleteMessage, { name: 'Grupo renombrado' }) && !opened.nameShown &&
+          opened.confirm === es.deleteAction && opened.confirmDanger && opened.activeId === 'cancelGroupBtn' &&
+          refused.error === es.errNotEmpty && refused.activeId === 'cancelGroupBtn' && !refused.confirmDisabled &&
+          after.activeId === 'groupDetailName' && after.delete.disabled && after.deleteBlocks === 'groupNotEmpty' &&
+          snapshot.apGroupWrites.length === writes && callsTo(snapshot, 'management:ap-group-delete').length >= 1,
+          { emptied, opened, refused, after }
+        );
+      } finally {
+        await configureStub(session, { apGroupOverrides: {} });
+        await waitForLoadIdle(page);
+        await page.click('#refreshBtn');
+        await page.waitForSelector('#groupDeleteBtn:not([disabled])', { timeout: WAIT_MS });
+      }
+    }); // End of check "[groups] es: once emptied again..."
+
+    await check('[groups] es: delete the empty group after the confirmation (Tab from Cancel to "Eliminar grupo", Enter): deleteApGroup with its id and the nonce; it leaves the list, the destination pane and the sidebar count; the toast says "Se eliminó el grupo "Grupo renombrado"."; focus lands on the list; the writes were create, rename, delete', async () => {
+      await page.click('#groupDeleteBtn');
+      await waitForGroupModal(page);
+      await page.keyboard.press('Tab');
+      const tabbed = await page.evaluate(() => document.activeElement?.id || '');
+      await page.keyboard.press('Enter');
+      await waitForGroupModalClosed(page);
+      await waitForToast(page, 'success', fmt(es.deleted, { name: 'Grupo renombrado' }));
+      const snapshot = await stubState(session);
+      const deletes = callsTo(snapshot, 'management:ap-group-delete');
+      const items = await readGroupItems(page);
+      const focus = await readFocus(page);
+      const nav = await readNav(page);
+      const radio = await page.evaluate((id) => document.querySelector(`#destinationList .destination-radio[value="${id}"]`) !== null, newId);
+      const detail = await readDetailPane(page, '#groupDetail');
+      return verdict(
+        tabbed === 'confirmGroupBtn' && isDeepStrictEqual(deletes[deletes.length - 1].args, [{ sessionNonce: snapshot.sessionNonce, apGroupId: newId }]) &&
+        isDeepStrictEqual(snapshot.apGroupWrites, [
+          { op: 'create', apGroupId: newId, name: 'Grupo nuevo' },
+          { op: 'rename', apGroupId: newId, name: 'Grupo renombrado' },
+          { op: 'delete', apGroupId: newId },
+        ]) &&
+        !items.some((item) => item.id === newId) && !radio && nav.groups.count === String(MGMT_VALID_GROUP_COUNT) &&
+        focus.visible && focus.panel === 'groupMasterPanel' && focus.groupId !== null && detail?.empty === TEXT.es.groupDetailPrompt,
+        { tabbed, deletes: deletes.map((call) => call.args), writes: snapshot.apGroupWrites, focus, nav: nav.groups, radio, detail }
+      );
+    }); // End of check "[groups] es: delete the empty group..."
+
+    await check('[groups] es: a group whose id main would refuse ("Antiguo", not 24 hex digits) gets no Rename or Delete, with the reason, but keeps "Mover puntos de acceso aquí" and its capacity', async () => {
+      await openGroupDetail(page, UNWRITABLE_GROUP.wlanId, 'Antiguo');
+      await waitForBand(page, 'band2g', fmt(es.freeOf, { remaining: 8, limit: 8 }));
+      const controls = await readGroupControls(page);
+      return verdict(
+        controls.rename === null && controls.delete === null && controls.notWritable === es.notWritable &&
+        controls.moveHere?.text === es.moveHere && !controls.moveHere.disabled && controls.newGroup !== null,
+        controls
+      );
+    });
+
+    await check('[groups] es: 700×500 (single pane): "Nuevo grupo" and the group detail with its actions and capacity fit without horizontal overflow; the Rename dialog fits the window, Escape returns focus to "Cambiar nombre"; Back returns to the list on the group', async () => {
+      await resizeAndSettle(session, 700, 500);
+      try {
+        await page.click('#navGroups');
+        if (await page.isVisible('#groupDetailBackBtn')) {
+          await page.click('#groupDetailBackBtn');
+        }
+        const list = await readLayout(page);
+        const newGroupVisible = await page.isVisible('#newGroupBtn');
+        await page.click(`#groupList .master-item[data-group-id="${GROUP.Default.wlanId}"]`);
+        await page.waitForFunction(() => document.activeElement?.id === 'groupDetailName', null, { timeout: WAIT_MS });
+        const detail = await readLayout(page);
+        await page.click('#groupRenameBtn');
+        await waitForGroupModal(page);
+        const boxes = await page.evaluate(() => ['groupNameInput', 'cancelGroupBtn', 'confirmGroupBtn'].map((id) => {
+          const rect = document.getElementById(id).getBoundingClientRect();
+          return { id, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+        }));
+        await page.keyboard.press('Escape');
+        await waitForGroupModalClosed(page);
+        const back = await readFocus(page);
+        await page.click('#groupDetailBackBtn');
+        const listAgain = await readFocus(page);
+        return verdict(
+          [list, detail].every((step) => step.docScrollWidth <= step.docClientWidth && step.overflowing.length === 0) &&
+          list.panes.groupMasterPanel !== null && list.panes.groupDetailPanel === null && newGroupVisible &&
+          detail.panes.groupDetailPanel !== null && detail.panes.groupMasterPanel === null &&
+          boxes.every((box) => box.left >= 0 && box.right <= 700 && box.top >= 0 && box.bottom <= 500) &&
+          back.id === 'groupRenameBtn' && back.visible && listAgain.groupId === GROUP.Default.wlanId && listAgain.visible,
+          { list: list.overflowing, detail: detail.overflowing, boxes, back, listAgain }
+        );
+      } finally {
+        if (await page.isVisible('#groupModal.visible')) {
+          await page.keyboard.press('Escape');
+        }
+        await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 650));
+      }
+    }); // End of check "[groups] es: 700×500..."
+
+    await check('[groups] es: a managed-groups reply that arrives after a reconnect (old session nonce, answered "superseded") is discarded: the new session\'s capacity stays on screen, no failure is shown', async () => {
+      await resizeAndSettle(session, 900, 650);
+      await openGroupDetail(page, GROUP.Default.wlanId, 'Default');
+      await waitForBand(page, 'band2g', fmt(es.freeOf, { remaining: 6, limit: 8 }));
+      const before = await stubState(session);
+      const oldNonce = before.sessionNonce;
+      await configureStub(session, { delays: { 'management:ap-groups': 3000 } });
+      try {
+        await waitForLoadIdle(page);
+        await page.click('#refreshBtn');
+        await waitForStubCall(session, 'management:ap-groups', callsTo(before, 'management:ap-groups').length);
+      } finally {
+        await configureStub(session, { delays: {} });
+      }
+      await waitForLoadIdle(page);
+      await page.click('#connectBtn');
+      await waitForStatus(page, TEXT.es.disconnected);
+      await page.click('#connectBtn');
+      await waitForConnected(page);
+      await page.waitForSelector('#newGroupBtn', { timeout: WAIT_MS });
+      await openGroupDetail(page, GROUP.Default.wlanId, 'Default');
+      await waitForBand(page, 'band2g', fmt(es.freeOf, { remaining: 6, limit: 8 }));
+      // Let the old reply land
+      await page.waitForTimeout(3300);
+      const controls = await readGroupControls(page);
+      const snapshot = await stubState(session);
+      const stale = callsTo(snapshot, 'management:ap-groups').filter((call) => call.args[0] === oldNonce);
+      return verdict(
+        snapshot.sessionNonce !== oldNonce && stale.length >= 1 &&
+        isDeepStrictEqual(controls.capacity?.bands, expectedCapacity('es', 2)) && controls.capacity.notes.every((note) => note.kind === 'capacityHelp'),
+        { controls: controls.capacity, stale: stale.length, oldNonce, nonce: snapshot.sessionNonce }
+      );
+    }); // End of check "[groups] es: a managed-groups reply that arrives after a reconnect..."
+
+    await check('[groups] es: when a management check fails ("siteNotFound" via "Probar el acceso de gestión"), the banner states the reason and no New group, Rename, Delete or capacity is shown — "Mover puntos de acceso aquí" stays; when it passes again they return', async () => {
+      await configureStub(session, { managementReason: 'siteNotFound', managementDiagnostic: 'sites 2' });
+      let off;
+      let notices;
+      try {
+        await openSettingsWhenIdle(page);
+        await page.click('#testManagementBtn');
+        await waitForTestResult(page, `${CAPS_TEXT.es.result.siteNotFound} (sites 2)`);
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+        await page.waitForFunction(() => document.getElementById('newGroupBtn') === null, null, { timeout: WAIT_MS });
+        notices = await readNotices(page);
+        off = await readGroupControls(page);
+      } finally {
+        await configureStub(session, { managementReason: null, managementDiagnostic: null });
+        await openSettingsWhenIdle(page);
+        await page.click('#testManagementBtn');
+        await waitForTestResult(page, CAPS_TEXT.es.result.ok);
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+      }
+      await page.waitForSelector('#newGroupBtn', { timeout: WAIT_MS });
+      await waitForBand(page, 'band2g', fmt(es.freeOf, { remaining: 6, limit: 8 }));
+      const on = await readGroupControls(page);
+      return verdict(
+        notices.bannerShown && notices.bannerReason === 'siteNotFound' && notices.bannerText === CAPS_TEXT.es.banner.siteNotFound &&
+        off.newGroup === null && off.rename === null && off.delete === null && off.capacity === null && off.heading === 'Default' &&
+        off.moveHere?.text === es.moveHere && !off.moveHere.disabled &&
+        on.newGroup !== null && on.rename !== null && on.delete === null && on.capacity !== null,
+        { notices, off, on }
+      );
+    }); // End of check "[groups] es: when a management check fails..."
+
+    await check('[groups] es: "Probar el acceso de gestión" fails closed: the moment main re-checks (its Open API client is dropped), the banner says "Comprobando el acceso de gestión — …" and New group, Rename, Delete, the capacity and the Capacity warning badges are gone — "Mover puntos de acceso aquí" stays; a failing re-check (invalid credentials) keeps them hidden and the banner states the reason; a passing one brings them back', async () => {
+      /**
+       * Reads the AP groups view behind Settings: its controls, the banner and the master items.
+       * @returns {Promise<object>} The view.
+       */
+      const readView = async () => ({ controls: await readGroupControls(page), notices: await readNotices(page), items: await readGroupItems(page) });
+      /**
+       * Tells whether the view shows no management at all: no write action, no capacity, no badge.
+       * @param {object} view - What readView() read.
+       * @returns {boolean} True when nothing of AP-group management shows.
+       */
+      const nothingManaged = (view) =>
+        view.controls.newGroup === null && view.controls.rename === null && view.controls.delete === null && view.controls.capacity === null &&
+        view.controls.heading === 'Exterior' && view.controls.moveHere?.text === es.moveHere && view.items.every((item) => item.capacity === null);
+      const invalid = { managementReason: 'invalidCredentials', managementDiagnostic: 'invalidCredentials, errorCode -44106' };
+      try {
+        await setFullBands(session, true);
+        await openGroupDetail(page, GROUP.Exterior.wlanId, 'Exterior');
+        await waitForBand(page, 'band5g', fmt(es.freeOf, { remaining: 0, limit: 8 }));
+        const before = await readView();
+        await configureStub(session, { ...invalid, delays: { 'management:test': 1500 } });
+        await openSettingsWhenIdle(page);
+        await page.click('#testManagementBtn');
+        await page.waitForFunction(() => document.getElementById('managementTestResult')?.dataset.result === 'testing', null, { timeout: WAIT_MS });
+        const during = await readView();
+        await waitForTestResult(page, `${CAPS_TEXT.es.result.invalidCredentials} (${invalid.managementDiagnostic})`);
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+        const after = await readView();
+        await configureStub(session, { managementReason: null, managementDiagnostic: null, delays: {} });
+        await openSettingsWhenIdle(page);
+        await page.click('#testManagementBtn');
+        await waitForTestResult(page, CAPS_TEXT.es.result.ok);
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+        await page.waitForSelector('#newGroupBtn', { timeout: WAIT_MS });
+        await waitForBand(page, 'band5g', fmt(es.freeOf, { remaining: 0, limit: 8 }));
+        await page.waitForSelector(`#groupList .master-item[data-group-id="${GROUP.Exterior.wlanId}"] .badge-capacity`, { timeout: WAIT_MS });
+        const on = await readView();
+        /**
+         * Tells whether the view shows management on: the actions, the capacity and Exterior's badge.
+         * @param {object} view - What readView() read.
+         * @returns {boolean} True when AP-group management shows.
+         */
+        const managed = (view) =>
+          !view.notices.bannerShown && view.controls.newGroup !== null && !view.controls.newGroup.disabled && view.controls.rename !== null &&
+          view.controls.delete !== null && view.controls.capacity !== null &&
+          isDeepStrictEqual(view.items.find((item) => item.id === GROUP.Exterior.wlanId)?.capacity, expectedCapacityBadges('es')[GROUP.Exterior.wlanId]);
+        return verdict(
+          managed(before) && managed(on) &&
+          during.notices.bannerShown && during.notices.bannerReason === 'managementChecking' && during.notices.bannerText === CAPS_TEXT.es.banner.managementChecking &&
+          nothingManaged(during) &&
+          after.notices.bannerShown && after.notices.bannerReason === 'invalidCredentials' && after.notices.bannerText === CAPS_TEXT.es.banner.invalidCredentials &&
+          nothingManaged(after),
+          { before, during, after, on }
+        );
+      } finally {
+        await configureStub(session, { managementReason: null, managementDiagnostic: null, delays: {} });
+        if (await page.isVisible('#settingsModal.visible')) {
+          await page.click('#cancelSettingsBtn');
+          await waitForSettingsClosed(page);
+        }
+        if (!(await page.isVisible('#newGroupBtn'))) {
+          await openSettingsWhenIdle(page);
+          await page.click('#testManagementBtn');
+          await waitForTestResult(page, CAPS_TEXT.es.result.ok);
+          await page.click('#cancelSettingsBtn');
+          await waitForSettingsClosed(page);
+          await page.waitForSelector('#newGroupBtn', { timeout: WAIT_MS });
+        }
+        await setFullBands(session, false);
+      }
+    }); // End of check "[groups] es: Probar el acceso de gestión fails closed..."
+
+    await check('[groups] es: a write dialog that is open when management goes off sends nothing: with "Nuevo grupo" open and a name typed, a failing re-check (invalid credentials) runs — Settings opened over the dialog by script, no UI path allows it — then Enter shows "El acceso de gestión no está activo en esta conexión, …" and no createApGroup call is made; Cancel closes it with focus in the list', async () => {
+      const invalid = { managementReason: 'invalidCredentials', managementDiagnostic: 'invalidCredentials, errorCode -44106' };
+      const creates = callsTo(await stubState(session), 'management:ap-group-create').length;
+      try {
+        await page.click('#newGroupBtn');
+        await waitForGroupModal(page);
+        await page.fill('#groupNameInput', 'Grupo tardío');
+        await configureStub(session, invalid);
+        // The background is inert: script clicks reach the handlers anyway
+        await page.evaluate(() => document.getElementById('settingsBtn').click());
+        await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
+        await page.evaluate(() => document.getElementById('testManagementBtn').click());
+        await waitForTestResult(page, `${CAPS_TEXT.es.result.invalidCredentials} (${invalid.managementDiagnostic})`);
+        await page.evaluate(() => document.getElementById('cancelSettingsBtn').click());
+        await waitForSettingsClosed(page);
+        const between = await readGroupModal(page);
+        const notices = await readNotices(page);
+        await page.focus('#groupNameInput');
+        await page.keyboard.press('Enter');
+        await waitForGroupError(page, es.errManagementUnavailable);
+        const refused = await readGroupModal(page);
+        const createsAfter = callsTo(await stubState(session), 'management:ap-group-create').length;
+        await page.click('#cancelGroupBtn');
+        await waitForGroupModalClosed(page);
+        const focus = await readFocus(page);
+        const controls = await readGroupControls(page);
+        return verdict(
+          between.open && between.value === 'Grupo tardío' && notices.bannerReason === 'invalidCredentials' &&
+          refused.open && refused.error === es.errManagementUnavailable && refused.errorRole === 'alert' && refused.activeId === 'groupNameInput' &&
+          !refused.confirmDisabled && createsAfter === creates &&
+          focus.visible && focus.panel === 'groupMasterPanel' && focus.groupId !== null && controls.newGroup === null,
+          { between, notices, refused, creates, createsAfter, focus, controls }
+        );
+      } finally {
+        await configureStub(session, { managementReason: null, managementDiagnostic: null });
+        if (await page.isVisible('#settingsModal.visible')) {
+          await page.evaluate(() => document.getElementById('cancelSettingsBtn').click());
+          await waitForSettingsClosed(page);
+        }
+        if (await page.isVisible('#groupModal.visible')) {
+          await page.click('#cancelGroupBtn');
+          await waitForGroupModalClosed(page);
+        }
+        await openSettingsWhenIdle(page);
+        await page.click('#testManagementBtn');
+        await waitForTestResult(page, CAPS_TEXT.es.result.ok);
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+        await page.waitForSelector('#newGroupBtn', { timeout: WAIT_MS });
+      }
+    }); // End of check "[groups] es: a write dialog that is open when management goes off..."
+
+    await check('[groups] en: after switching to English: "New group", "Rename" and no Delete for the default group, "Move access points here", "Per-band capacity" with "6 of 8 free" and "Not reported (limit: 4)"; "Delete" for Exterior; the New group dialog ("New AP group", "Group name", "Create group") refuses "EXTERIOR" with "Another AP group already has this name (ignoring case)."; a refused write reads "The controller could not complete the request. (httpError, HTTP 500)"; the delete confirmation for Exterior is in English and Escape returns focus to "Delete"', async () => {
+      await openSettingsWhenIdle(page);
+      await page.selectOption('#languageSelect', 'en');
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      await waitForConnected(page);
+      await page.click('#navGroups');
+      await page.waitForSelector('#newGroupBtn', { timeout: WAIT_MS });
+      await openGroupDetail(page, GROUP.Default.wlanId, 'Default');
+      await waitForBand(page, 'band2g', fmt(en.freeOf, { remaining: 6, limit: 8 }));
+      const controls = await readGroupControls(page);
+      await configureStub(session, { apGroupResults: { 'management:ap-group-create': { success: false, error: 'requestFailed', diagnostic: 'httpError, HTTP 500' } } });
+      try {
+        await page.click('#newGroupBtn');
+        await waitForGroupModal(page);
+        const opened = await readGroupModal(page);
+        await page.fill('#groupNameInput', 'EXTERIOR');
+        await waitForGroupError(page, en.errNameTaken);
+        const taken = await readGroupModal(page);
+        await page.fill('#groupNameInput', 'Annex');
+        await page.keyboard.press('Enter');
+        const failedText = `${en.errRequestFailed} (httpError, HTTP 500)`;
+        await waitForGroupError(page, failedText);
+        const failed = await readGroupModal(page);
+        await page.keyboard.press('Escape');
+        await waitForGroupModalClosed(page);
+        const createFocus = await readFocus(page);
+        await openGroupDetail(page, GROUP.Exterior.wlanId, 'Exterior');
+        await page.waitForSelector('#groupDeleteBtn:not([disabled])', { timeout: WAIT_MS });
+        const exterior = await readGroupControls(page);
+        await page.click('#groupDeleteBtn');
+        await waitForGroupModal(page);
+        const remove = await readGroupModal(page);
+        await page.keyboard.press('Escape');
+        await waitForGroupModalClosed(page);
+        const deleteFocus = await readFocus(page);
+        const snapshot = await stubState(session);
+        return verdict(
+          controls.newGroup?.text === en.newGroup && controls.rename?.text === en.rename && controls.delete === null &&
+          controls.deleteReason === null && exterior.delete?.text === en.delete && !exterior.delete.disabled &&
+          controls.moveHere?.text === en.moveHere && controls.capacity?.title === en.capacityTitle &&
+          isDeepStrictEqual(controls.capacity.bands, expectedCapacity('en', 2)) &&
+          opened.title === en.createTitle && opened.label === en.nameLabel && opened.confirm === en.createAction && opened.cancel === en.cancel &&
+          taken.error === en.errNameTaken && failed.error === failedText && failed.activeId === 'groupNameInput' &&
+          createFocus.id === 'newGroupBtn' &&
+          remove.title === en.deleteTitle && remove.message === fmt(en.deleteMessage, { name: 'Exterior' }) && remove.confirm === en.deleteAction &&
+          remove.activeId === 'cancelGroupBtn' && deleteFocus.id === 'groupDeleteBtn' &&
+          snapshot.apGroupWrites.length === 3,
+          { controls, exterior, opened, taken, failed, createFocus, remove, deleteFocus }
+        );
+      } finally {
+        await configureStub(session, { apGroupResults: {} });
+      }
+    }); // End of check "[groups] en: after switching to English..."
+
+    await check('[groups] en: the Capacity warning badge in English — Exterior: "No room for more Wi-Fi networks on 5 GHz"; zGrupo B: "… on 2.4 GHz and 6 GHz"; none for zNinguna (no remaining value reported) or the groups with room left', async () => {
+      try {
+        await setFullBands(session, true);
+        const items = await readGroupItems(page);
+        const badges = Object.fromEntries(items.map((item) => [item.id, item.capacity]));
+        return verdict(isDeepStrictEqual(badges, expectedCapacityBadges('en')), badges);
+      } finally {
+        await setFullBands(session, false);
+      }
+    }); // End of check "[groups] en: the Capacity warning badge in English..."
+
+    await check('[groups] en: renaming one of two same-named groups resolves the phase-13b leftover: before, its "Move access points here" and its destination radio are disabled with "Another group has the same name — …"; after renaming it to "Exterior 2" both are enabled and focus is back on "Rename"', async () => {
+      const twin = { wlanId: '6512a0e1f3b2c41d2e3f4a70', wlanName: 'Exterior', ssidList: [] };
+      /**
+       * Tells whether the twin's destination radio is disabled (null when absent).
+       * @returns {Promise<boolean | null>} The radio's disabled state.
+       */
+      const twinRadioDisabled = () => page.evaluate((id) => document.querySelector(`#destinationList .destination-radio[value="${id}"]`)?.disabled ?? null, twin.wlanId);
+      await configureStub(session, { wlanGroups: [...MGMT_GROUPS, twin] });
+      try {
+        await waitForLoadIdle(page);
+        await page.click('#refreshBtn');
+        await page.waitForSelector(`#groupList .master-item[data-group-id="${twin.wlanId}"]`, { timeout: WAIT_MS });
+        await openGroupDetail(page, twin.wlanId, 'Exterior');
+        const before = await readGroupControls(page);
+        const radioBefore = await twinRadioDisabled();
+        await page.click('#groupRenameBtn');
+        await waitForGroupModal(page);
+        await page.fill('#groupNameInput', 'Exterior 2');
+        await page.keyboard.press('Enter');
+        await waitForGroupModalClosed(page);
+        await page.waitForFunction(() => document.getElementById('groupDetailName')?.textContent === 'Exterior 2', null, { timeout: WAIT_MS });
+        const after = await readGroupControls(page);
+        const radioAfter = await twinRadioDisabled();
+        const writes = (await stubState(session)).apGroupWrites;
+        return verdict(
+          before.moveHere?.disabled === true && before.moveHere.describedBy === 'groupMoveHereReason' && before.moveHereReason === TEXT.en.ambiguous &&
+          radioBefore === true && after.moveHere?.disabled === false && after.moveHereReason === null && radioAfter === false &&
+          after.activeId === 'groupRenameBtn' && isDeepStrictEqual(writes[writes.length - 1], { op: 'rename', apGroupId: twin.wlanId, name: 'Exterior 2' }),
+          { before, radioBefore, after, radioAfter }
+        );
+      } finally {
+        await configureStub(session, { wlanGroups: MGMT_GROUPS });
+      }
+    }); // End of check "[groups] en: renaming one of two same-named groups..."
+  } finally {
+    session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
+    await session.app.close().catch(() => {});
+  }
+} // End of function runApGroupManagement()
 
 // ============================================================================
 // Whole-run checks
@@ -5112,6 +6111,7 @@ async function main() {
       ['tofu', runCertificatePinning],
       ['mgmt', runManagementAccess],
       ['caps', runManagementCapabilities],
+      ['groups', runApGroupManagement],
     ]) {
       try {
         await runLaunch(electronInfo);

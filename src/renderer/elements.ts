@@ -43,12 +43,14 @@ export const backBar = document.getElementById('backBar') as HTMLElement;
 export const backBtn = document.getElementById('backBtn') as HTMLButtonElement;
 export const backBtnLabel = document.getElementById('backBtnLabel') as HTMLElement;
 
-// AP groups view: master list (title, search, list, aria-live results
-// summary) and the selected group's detail (with its single-pane Back)
+// AP groups view: master list (title, the "New group" slot, search, list,
+// aria-live results summary) and the selected group's detail (with its
+// single-pane Back)
 export const groupMasterPanel = document.getElementById('groupMasterPanel') as HTMLElement;
 export const groupDetailPanel = document.getElementById('groupDetailPanel') as HTMLElement;
 export const groupDetailBackBtn = document.getElementById('groupDetailBackBtn') as HTMLButtonElement;
 export const groupsPanelTitle = document.getElementById('groupsPanelTitle') as HTMLElement;
+export const groupListActions = document.getElementById('groupListActions') as HTMLElement;
 export const groupSearchInput = document.getElementById('groupSearch') as HTMLInputElement;
 export const groupList = document.getElementById('groupList') as HTMLElement;
 export const groupListSummary = document.getElementById('groupListSummary') as HTMLElement;
@@ -159,6 +161,19 @@ export const cancelMoveBtn = document.getElementById('cancelMoveBtn') as HTMLBut
 export const confirmMoveBtn = document.getElementById('confirmMoveBtn') as HTMLButtonElement;
 export const retryFailedBtn = document.getElementById('retryFailedBtn') as HTMLButtonElement;
 export const closeMoveBtn = document.getElementById('closeMoveBtn') as HTMLButtonElement;
+
+// AP group dialog (New group, Rename, Delete confirmation)
+export const groupModal = document.getElementById('groupModal') as HTMLElement;
+export const groupModalTitle = document.getElementById('groupModalHeading') as HTMLElement;
+export const groupModalMessage = document.getElementById('groupModalMessage') as HTMLElement;
+export const groupNameField = document.getElementById('groupNameField') as HTMLElement;
+export const groupNameLabel = document.getElementById('groupNameLabel') as HTMLElement;
+export const groupNameInput = document.getElementById('groupNameInput') as HTMLInputElement;
+export const groupNameHint = document.getElementById('groupNameHint') as HTMLElement;
+export const groupModalError = document.getElementById('groupModalError') as HTMLElement;
+export const groupModalStatus = document.getElementById('groupModalStatus') as HTMLElement;
+export const cancelGroupBtn = document.getElementById('cancelGroupBtn') as HTMLButtonElement;
+export const confirmGroupBtn = document.getElementById('confirmGroupBtn') as HTMLButtonElement;
 
 // Site Selection Modal (multi-site controllers)
 export const siteModal = document.getElementById('siteModal') as HTMLElement;

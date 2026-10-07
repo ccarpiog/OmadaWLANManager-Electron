@@ -4,11 +4,14 @@
 // (applyManagementAccessSave()) so the renderer can explain a refusal before
 // sending anything; main enforces the same rules on its own. Also decides
 // what "Test management access" reports (managementTestOutcome()) and when
-// it must not run on unsaved changes (hasUnsavedManagementChanges()).
+// it must not run on unsaved changes (hasUnsavedManagementChanges()), and
+// how the session's capabilities follow a check run, failing closed
+// (startCapabilityCheck() / settleCapabilityCheck(): unknown while a run
+// that may change the verdict is in flight, late replies discarded).
 // Unit-tested in tests/unit/renderer-management-form.test.ts.
 // ============================================================================
 
-import type { ConfigSavePayload, ManagementReason } from '../shared/types';
+import type { ConfigSavePayload, ManagementCapabilities, ManagementReason } from '../shared/types';
 import type { ParsedManagementResult } from './validation';
 
 // Format of a trimmed Client ID — keep in sync with CLIENT_ID_REGEX in
@@ -165,4 +168,63 @@ export function managementTestOutcome(result: ParsedManagementResult): Managemen
     return result.error === 'invalid' ? 'failed' : result.error;
   }
   return result.capabilities.reason ?? 'ok';
+}
+
+// ============================================================================
+// Capability check runs (fail closed)
+// ============================================================================
+
+/**
+ * The renderer's record of the management capabilities of the session on
+ * screen: what main last reported (null: unknown — a check is running, the
+ * read-only banner says 'managementChecking' and no AP-group write action is
+ * shown or enabled) and the number of the latest check run the renderer
+ * started or asked about (a reply about an older one is late: discarded).
+ */
+export interface CapabilityCheckState {
+  capabilities: ManagementCapabilities | null;
+  check: number;
+}
+
+// What management access is when main's reply carries no capabilities (an
+// unreadable reply, an IPC error, or notConnected / superseded for the
+// session still on screen): off, failing closed with 'probeFailed'
+export const CAPABILITIES_UNAVAILABLE: Readonly<ManagementCapabilities> = Object.freeze({
+  manageApGroups: false,
+  manageWifiNetworks: false,
+  reason: 'probeFailed',
+});
+
+/**
+ * Starts a check run: a new run number, and the capabilities while it runs.
+ * A run that may change the verdict ("Test management access", a
+ * connection's checks — main drops the session's Open API client the moment
+ * it starts) clears them: management is unknown, so nothing that needs it
+ * is offered until the run's result says it is on. `keepCurrent` keeps a
+ * known verdict while main is only asked for it again (the re-read after an
+ * AP-group write: main answers with its latest result); unknown stays unknown.
+ * @param {CapabilityCheckState} current - The record now.
+ * @param {boolean} keepCurrent - True to keep known capabilities while asking.
+ * @returns {CapabilityCheckState} The record while the run is in flight.
+ */
+export function startCapabilityCheck(current: CapabilityCheckState, keepCurrent: boolean): CapabilityCheckState {
+  return { capabilities: keepCurrent ? current.capabilities : null, check: current.check + 1 };
+}
+
+/**
+ * Settles a check run with main's validated reply: null when it is late (a
+ * newer run started since — the reply is discarded, whatever it says);
+ * otherwise the record with the capabilities main reported, or
+ * CAPABILITIES_UNAVAILABLE when the reply carries none (never the verdict
+ * from before the run). The caller also discards replies for another session.
+ * @param {CapabilityCheckState} current - The record now.
+ * @param {number} check - The run the reply belongs to (startCapabilityCheck()).
+ * @param {ParsedManagementResult} result - The reply after parseManagementResult().
+ * @returns {CapabilityCheckState | null} The settled record, or null when late.
+ */
+export function settleCapabilityCheck(current: CapabilityCheckState, check: number, result: ParsedManagementResult): CapabilityCheckState | null {
+  if (check !== current.check) {
+    return null;
+  }
+  return { capabilities: result.ok ? { ...result.capabilities } : { ...CAPABILITIES_UNAVAILABLE }, check };
 }

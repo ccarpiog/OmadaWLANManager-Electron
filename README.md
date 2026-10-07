@@ -11,8 +11,11 @@ A modern desktop application for moving TP-Link Omada Controller access points b
   details (status, MAC, group, clients and the Wi-Fi networks its group broadcasts)
 - Browse the **AP groups** (with their access points and Wi-Fi networks, including groups
   without any network — see [Controller versions](#controller-versions)) and the
-  **Wi-Fi networks** (with the groups and access points that broadcast each one), read-only;
+  **Wi-Fi networks** (with the groups and access points that broadcast each one);
   names link between the views, with **Back to …** to return
+- With management access (Omada 6.3 and later): create, rename and delete AP groups, and
+  see how many more Wi-Fi networks each band of a group can take (the Wi-Fi networks view
+  stays read-only)
 - Move one or more access points into another group, including an empty one to silence them,
   after reviewing which Wi-Fi networks they gain and lose; access points are moved one at a time,
   with a per-access-point result and **Retry failed**
@@ -60,11 +63,11 @@ npm run dev
    - **Password**: Your Omada Controller password
    - **Management access (optional)**: the **Client ID** and **Client Secret** of an
      Open API application created in the controller's settings (client credentials
-     mode). They will unlock AP-group and Wi-Fi network management. While
-     connected, the app checks whether they grant it (Omada 6.3 or later, an
-     access token, and the connected site and its AP groups must match what the
-     controller reports), and **Test management access** shows the precise
-     result; the management actions themselves are not available yet
+     mode). They unlock AP-group management (Wi-Fi network management is not
+     available yet). While connected, the app checks whether they grant it
+     (Omada 6.3 or later, an access token, and the connected site and its AP
+     groups must match what the controller reports), and **Test management
+     access** shows the precise result
 3. Click **Connect** to connect to the controller. The first time, the app
    shows the controller certificate's SHA-256 fingerprint: compare it with the
    certificate of your controller and choose **Trust and connect** (no password
@@ -95,18 +98,29 @@ npm run dev
    checkbox, to open its details in place of the move pane; **Close details**
    brings the move pane back. The details list the Wi-Fi networks of its group;
    per-access-point network overrides set in Omada are not shown
-8. The **AP groups** and **Wi-Fi networks** views (sidebar) are read-only, each with
-   its own search. A group shows its access points and networks; a network shows
+8. The **AP groups** and **Wi-Fi networks** views (sidebar) each have their own
+   search. A group shows its access points and networks, and **Move access points
+   here**, which opens **Access points** with that group already picked as the
+   destination (tick the access points and move them as in step 6); a network shows
    the groups and access points that broadcast it ("N groups · M APs", or "at least
    M APs" when some access points' groups cannot be identified). Clicking a
    group, network or access point name opens it in its view; **Back to …** returns
    to where you were. Security, bands and whether a network is enabled are not
-   shown: they need management access, which these views do not use yet. A
-   banner on both views says why they are read-only: the controller is older
-   than 6.3, Open API credentials are not configured, the management check is
-   still running, or which check failed (credentials rejected, no access token,
-   the site or the AP groups do not match, no answer); it disappears once every
-   check passes
+   shown: they need management access, which the Wi-Fi networks view does not use
+   yet. With management access, the AP groups view adds **New group** (an empty
+   group, name only), **Rename** and **Delete**, and each group's remaining
+   capacity per band ("Not reported" when the controller does not say); a group
+   the controller reports full on a band (no room for another Wi-Fi network)
+   carries a **Capacity warning** badge in the list, whose tooltip names the
+   band. The default group has no **Delete**; another group can be deleted only
+   when it has no access points and no networks — otherwise the disabled
+   **Delete** says why — and a deletion asks for confirmation. Without
+   management access, a banner on both views says why they are read-only: the
+   controller is older than 6.3, Open API credentials are not configured, the
+   management check is still running (also while **Test management access**
+   checks again: the management actions are hidden until it passes), or which
+   check failed (credentials rejected, no access token, the site or the AP
+   groups do not match, no answer); it disappears once every check passes
 9. **Cmd+F** (macOS) / **Ctrl+F** focuses the current view's search; **Escape**
    clears the search, and otherwise closes the open dialog. If the connection or
    its first data load fails, each view shows the error with **Retry** and

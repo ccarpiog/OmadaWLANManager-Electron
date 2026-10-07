@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T03:41:44Z",
+ "updated": "2026-10-07T04:40:41Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -182,9 +182,11 @@
   {
    "id": "16b",
    "title": "AP group management UI",
-   "status": "queued",
+   "status": "done",
    "risk": "high",
-   "summary": "Adds create, rename and delete actions, per-band capacity and Move access points here to the AP groups view."
+   "summary": "Adds New group, Rename and Delete with reasons, per-band capacity, a capacity warning badge and Move access points here to the AP groups view.",
+   "review": "docs/reviews/phase16b.md",
+   "narrative": "docs/progress-archive/phase-16b.md"
   },
   {
    "id": "17",

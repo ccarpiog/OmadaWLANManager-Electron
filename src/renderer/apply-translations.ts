@@ -10,6 +10,7 @@ import {
   cancelCertBtn,
   cancelCertResetBtn,
   cancelMoveBtn,
+  cancelGroupBtn,
   cancelSettingsBtn,
   cancelManagementRemoveBtn,
   cancelSiteBtn,
@@ -18,11 +19,15 @@ import {
   closeSettingsBtn,
   confirmCertBtn,
   confirmCertResetBtn,
+  confirmGroupBtn,
   confirmManagementRemoveBtn,
   confirmMoveBtn,
   connectBtn,
   destinationPanelTitle,
   destinationSearchInput,
+  groupModalTitle,
+  groupNameHint,
+  groupNameLabel,
   labelCertPin,
   labelClientId,
   labelClientSecret,
@@ -139,6 +144,14 @@ export function applyTranslations() {
   confirmMoveBtn.textContent = moveActionLabel(1);
   retryFailedBtn.textContent = t('retryFailed');
   closeMoveBtn.textContent = t('close');
+
+  // AP group dialog: the New group defaults (group-dialog.ts rewrites every
+  // text for the write it opens for)
+  groupModalTitle.textContent = t('createGroupTitle');
+  groupNameLabel.textContent = t('groupNameLabel');
+  groupNameHint.textContent = t('groupNameHint');
+  cancelGroupBtn.textContent = t('cancel');
+  confirmGroupBtn.textContent = t('createGroupAction');
 
   // Site selection modal (its option buttons are built per-open from the
   // controller's site names, see showSiteSelection())

@@ -295,6 +295,70 @@ export interface Translations {
   retryDestinationAmbiguous: string;
   retryNothingLeft: string;
   moveError: string;
+  // AP group management (groups-view.ts, group-dialog.ts, group-flow.ts;
+  // todo.md 4.9): the actions, why Delete is unavailable, the per-band
+  // capacity and the master list's Capacity warning badge (with which bands
+  // are full), "Move access points here" (§4.1), the dialogs with their
+  // progress and results, and one message per ApGroupOperationError (plus
+  // 'failed', the renderer's own outcome for an unreadable reply)
+  newGroup: string;
+  renameGroup: string;
+  deleteGroup: string;
+  moveApsHere: string;
+  groupActionsLabel: string;
+  groupNotWritable: string;
+  deleteBlockedNotEmpty: string;
+  deleteBlockedHasNetworks: string;
+  deleteBlockedUnknown: string;
+  deleteBlockedChecking: string;
+  capacityTitle: string;
+  capacityHelp: string;
+  band2g: string;
+  band5g: string;
+  band6g: string;
+  bandMlo: string;
+  capacityFreeOf: string;
+  capacityFree: string;
+  capacityNotReportedLimit: string;
+  capacityNotReported: string;
+  capacityLoading: string;
+  capacityFailed: string;
+  capacityWarningBadge: string;
+  capacityWarningDetail: string;
+  createGroupTitle: string;
+  createGroupMessage: string;
+  groupNameLabel: string;
+  groupNameHint: string;
+  createGroupAction: string;
+  renameGroupTitle: string;
+  renameGroupMessage: string;
+  renameGroupAction: string;
+  deleteGroupTitle: string;
+  deleteGroupMessage: string;
+  deleteGroupAction: string;
+  groupCreating: string;
+  groupRenaming: string;
+  groupDeleting: string;
+  groupCreated: string;
+  groupRenamed: string;
+  groupDeleted: string;
+  apGroupErrorNotConnected: string;
+  apGroupErrorSuperseded: string;
+  apGroupErrorManagementUnavailable: string;
+  apGroupErrorNameRequired: string;
+  apGroupErrorNameTooLong: string;
+  apGroupErrorNameInvalid: string;
+  apGroupErrorNameTaken: string;
+  apGroupErrorNameUnchanged: string;
+  apGroupErrorGroupNotFound: string;
+  apGroupErrorGroupIsDefault: string;
+  apGroupErrorGroupNotEmpty: string;
+  apGroupErrorGroupHasNetworks: string;
+  apGroupErrorGroupStateUnknown: string;
+  apGroupErrorGroupLimitReached: string;
+  apGroupErrorGroupListIncomplete: string;
+  apGroupErrorRequestFailed: string;
+  apGroupErrorFailed: string;
   // AP status categories (see AP_STATUS in ap-list.ts). Shown as text next to
   // the coloured dot of each AP row and as the status filter's options, so
   // the state is not conveyed by colour alone.
@@ -556,6 +620,64 @@ const translations: Record<Language, Translations> = {
     retryDestinationAmbiguous: 'No se puede reintentar: ahora otro grupo tiene el mismo nombre que "{group}".',
     retryNothingLeft: 'No se puede reintentar: no queda ningún AP fallido que reintentar.',
     moveError: 'Error al mover los puntos de acceso',
+    newGroup: 'Nuevo grupo',
+    renameGroup: 'Cambiar nombre',
+    deleteGroup: 'Eliminar',
+    moveApsHere: 'Mover puntos de acceso aquí',
+    groupActionsLabel: 'Acciones del grupo',
+    groupNotWritable: 'El identificador de este grupo tiene un formato inesperado: la aplicación no puede cambiarle el nombre ni eliminarlo.',
+    deleteBlockedNotEmpty: 'Para eliminarlo, mueve antes sus puntos de acceso a otro grupo.',
+    deleteBlockedHasNetworks: 'Para eliminarlo, desvincula antes sus redes Wi-Fi.',
+    deleteBlockedUnknown: 'No se puede eliminar: el controlador no informa con claridad de sus puntos de acceso o de sus redes.',
+    deleteBlockedChecking: 'Comprobando si se puede eliminar…',
+    capacityTitle: 'Capacidad por banda',
+    capacityHelp: 'Cuántas redes Wi-Fi más puede emitir este grupo en cada banda.',
+    band2g: '2,4 GHz',
+    band5g: '5 GHz',
+    band6g: '6 GHz',
+    bandMlo: 'MLO',
+    capacityFreeOf: '{remaining} libres de {limit}',
+    capacityFree: '{remaining} libres',
+    capacityNotReportedLimit: 'No informado (límite: {limit})',
+    capacityNotReported: 'No informado',
+    capacityLoading: 'Leyendo la capacidad…',
+    capacityFailed: 'No se pudo leer la capacidad. {reason}',
+    capacityWarningBadge: 'Aviso de capacidad',
+    capacityWarningDetail: 'Sin espacio para más redes Wi-Fi en {bands}',
+    createGroupTitle: 'Nuevo grupo de AP',
+    createGroupMessage: 'El grupo se crea vacío, sin puntos de acceso ni redes Wi-Fi. Después puedes mover puntos de acceso a él.',
+    groupNameLabel: 'Nombre del grupo',
+    groupNameHint: 'De 1 a 128 caracteres, distinto del nombre de cualquier otro grupo (sin distinguir mayúsculas).',
+    createGroupAction: 'Crear grupo',
+    renameGroupTitle: 'Cambiar el nombre del grupo',
+    renameGroupMessage: 'Nombre actual: "{name}". Sus puntos de acceso y sus redes Wi-Fi no cambian.',
+    renameGroupAction: 'Cambiar nombre',
+    deleteGroupTitle: 'Eliminar el grupo',
+    deleteGroupMessage: '¿Eliminar el grupo de AP "{name}"? No tiene puntos de acceso ni redes Wi-Fi. No se puede deshacer.',
+    deleteGroupAction: 'Eliminar grupo',
+    groupCreating: 'Creando el grupo…',
+    groupRenaming: 'Cambiando el nombre del grupo…',
+    groupDeleting: 'Eliminando el grupo…',
+    groupCreated: 'Se creó el grupo "{name}".',
+    groupRenamed: 'El grupo se llama ahora "{name}".',
+    groupDeleted: 'Se eliminó el grupo "{name}".',
+    apGroupErrorNotConnected: 'No hay conexión con el controlador. Conecta y vuelve a intentarlo.',
+    apGroupErrorSuperseded: 'La conexión cambió antes de que respondiera el controlador. Actualiza los datos para ver si se aplicó el cambio.',
+    apGroupErrorManagementUnavailable: 'El acceso de gestión no está activo en esta conexión, así que no se pueden cambiar los grupos. Revisa Ajustes → Acceso de gestión.',
+    apGroupErrorNameRequired: 'Escribe un nombre para el grupo.',
+    apGroupErrorNameTooLong: 'El nombre puede tener como máximo 128 caracteres.',
+    apGroupErrorNameInvalid: 'El nombre contiene caracteres no permitidos (caracteres de control o de dirección del texto).',
+    apGroupErrorNameTaken: 'Otro grupo de AP ya tiene este nombre (sin distinguir mayúsculas).',
+    apGroupErrorNameUnchanged: 'El grupo ya tiene este nombre.',
+    apGroupErrorGroupNotFound: 'El grupo ya no está en el controlador. Actualiza los datos.',
+    apGroupErrorGroupIsDefault: 'El grupo predeterminado no se puede eliminar.',
+    apGroupErrorGroupNotEmpty: 'El controlador indica que este grupo tiene puntos de acceso: muévelos antes a otro grupo.',
+    apGroupErrorGroupHasNetworks: 'El controlador indica que este grupo tiene redes Wi-Fi vinculadas: desvincúlalas antes.',
+    apGroupErrorGroupStateUnknown: 'El controlador no informa con claridad de los puntos de acceso o las redes de este grupo, así que no se elimina.',
+    apGroupErrorGroupLimitReached: 'Se alcanzó el límite de grupos de AP del controlador.',
+    apGroupErrorGroupListIncomplete: 'No se pudo leer completa la lista de grupos de AP del controlador, así que no se hizo ningún cambio.',
+    apGroupErrorRequestFailed: 'El controlador no pudo completar la solicitud.',
+    apGroupErrorFailed: 'No se pudo completar la solicitud.',
     statusApConnected: 'Conectado',
     statusApPending: 'Adoptando',
     statusApHeartbeatMissed: 'Sin respuesta',
@@ -812,6 +934,64 @@ const translations: Record<Language, Translations> = {
     retryDestinationAmbiguous: 'Retry is not available: another group now has the same name as "{group}".',
     retryNothingLeft: 'Retry is not available: no failed AP is left to retry.',
     moveError: 'Error moving the access points',
+    newGroup: 'New group',
+    renameGroup: 'Rename',
+    deleteGroup: 'Delete',
+    moveApsHere: 'Move access points here',
+    groupActionsLabel: 'Group actions',
+    groupNotWritable: 'This group\'s id has an unexpected format, so the app cannot rename or delete it.',
+    deleteBlockedNotEmpty: 'To delete it, first move its access points to another group.',
+    deleteBlockedHasNetworks: 'To delete it, first unlink its Wi-Fi networks.',
+    deleteBlockedUnknown: 'It cannot be deleted: the controller does not clearly report its access points or networks.',
+    deleteBlockedChecking: 'Checking whether it can be deleted…',
+    capacityTitle: 'Per-band capacity',
+    capacityHelp: 'How many more Wi-Fi networks this group can broadcast on each band.',
+    band2g: '2.4 GHz',
+    band5g: '5 GHz',
+    band6g: '6 GHz',
+    bandMlo: 'MLO',
+    capacityFreeOf: '{remaining} of {limit} free',
+    capacityFree: '{remaining} free',
+    capacityNotReportedLimit: 'Not reported (limit: {limit})',
+    capacityNotReported: 'Not reported',
+    capacityLoading: 'Reading the capacity…',
+    capacityFailed: 'Could not read the capacity. {reason}',
+    capacityWarningBadge: 'Capacity warning',
+    capacityWarningDetail: 'No room for more Wi-Fi networks on {bands}',
+    createGroupTitle: 'New AP group',
+    createGroupMessage: 'The group is created empty, with no access points or Wi-Fi networks. You can then move access points into it.',
+    groupNameLabel: 'Group name',
+    groupNameHint: '1 to 128 characters, different from every other group\'s name (ignoring case).',
+    createGroupAction: 'Create group',
+    renameGroupTitle: 'Rename the group',
+    renameGroupMessage: 'Current name: "{name}". Its access points and Wi-Fi networks stay as they are.',
+    renameGroupAction: 'Rename',
+    deleteGroupTitle: 'Delete the group',
+    deleteGroupMessage: 'Delete the AP group "{name}"? It has no access points and no Wi-Fi networks. This cannot be undone.',
+    deleteGroupAction: 'Delete group',
+    groupCreating: 'Creating the group…',
+    groupRenaming: 'Renaming the group…',
+    groupDeleting: 'Deleting the group…',
+    groupCreated: 'Group "{name}" created.',
+    groupRenamed: 'The group is now called "{name}".',
+    groupDeleted: 'Group "{name}" deleted.',
+    apGroupErrorNotConnected: 'Not connected to the controller. Connect and try again.',
+    apGroupErrorSuperseded: 'The connection changed before the controller answered. Refresh the data to see whether the change was made.',
+    apGroupErrorManagementUnavailable: 'Management access is not active for this connection, so groups cannot be changed. Check Settings → Management access.',
+    apGroupErrorNameRequired: 'Enter a name for the group.',
+    apGroupErrorNameTooLong: 'The name can have at most 128 characters.',
+    apGroupErrorNameInvalid: 'The name contains characters that are not allowed (control or text-direction characters).',
+    apGroupErrorNameTaken: 'Another AP group already has this name (ignoring case).',
+    apGroupErrorNameUnchanged: 'The group already has this name.',
+    apGroupErrorGroupNotFound: 'The group is no longer on the controller. Refresh the data.',
+    apGroupErrorGroupIsDefault: 'The default group cannot be deleted.',
+    apGroupErrorGroupNotEmpty: 'The controller reports access points in this group: move them to another group first.',
+    apGroupErrorGroupHasNetworks: 'The controller reports Wi-Fi networks bound to this group: unlink them first.',
+    apGroupErrorGroupStateUnknown: 'The controller does not clearly report this group\'s access points or networks, so it is not deleted.',
+    apGroupErrorGroupLimitReached: 'The controller\'s AP group limit has been reached.',
+    apGroupErrorGroupListIncomplete: 'The controller\'s AP group list could not be read completely, so nothing was changed.',
+    apGroupErrorRequestFailed: 'The controller could not complete the request.',
+    apGroupErrorFailed: 'The request could not be completed.',
     statusApConnected: 'Connected',
     statusApPending: 'Adopting',
     statusApHeartbeatMissed: 'Heartbeat missed',

@@ -34,7 +34,17 @@
 //                         views and the AP details (rows, scopes, links)
 //   inventory-ui.ts       shared DOM blocks of those views (cross-links,
 //                         badges, notes, master-list keyboard)
-//   groups-view.ts        AP groups view (read-only master list + detail)
+//   groups-view.ts        AP groups view (master list + detail; New group,
+//                         Rename, Delete and the per-band capacity while
+//                         AP-group management is on; Move access points here)
+//   group-management.ts   pure AP-group rules mirror (writable ids, name
+//                         check), delete reasons, capacity rows, reply
+//                         validation and error-code messages
+//   managed-groups.ts     the fresh Open API view of the AP groups (read
+//                         with the session nonce, late replies discarded)
+//   group-dialog.ts       New group / Rename / Delete dialog
+//   group-flow.ts         the AP-group write flows (dialog, write, reload,
+//                         focus) and "Move access points here"
 //   networks-view.ts      Wi-Fi networks view (read-only master list + detail)
 //   nav-history.ts        pure Back-history helpers
 //   navigation.ts         cross-links, "Back to …", re-rendering the views
@@ -122,8 +132,10 @@ import {
   urlInput,
   usernameInput,
   viewArea,
+  viewGroups,
   viewNav,
 } from './elements';
+import { handleGroupActionClick } from './group-flow';
 import {
   closeGroupDetailPane,
   handleGroupListClick,
@@ -231,6 +243,12 @@ networkSearchInput.addEventListener('keydown', handleNetworkSearchKeydown);
 networkList.addEventListener('click', handleNetworkListClick);
 networkList.addEventListener('keydown', handleNetworkListKeydown);
 
+// AP groups view actions (delegated, data-group-action): New group, Rename
+// and Delete (AP-group management on only; each opens the AP group dialog)
+// and "Move access points here" (the Access points view with the group as
+// the move destination)
+viewGroups.addEventListener('click', handleGroupActionClick);
+
 // Access points list: filters, checkbox selection (delegated click and
 // keyboard handlers), "Select all N filtered APs" and "Clear selection"
 apFilterInput.addEventListener('input', () => {
@@ -300,8 +318,8 @@ settingsModal.addEventListener('click', (e) => {
 
 // App-wide keys (keyboard.ts): Cmd/Ctrl+F focuses the current view's
 // search; Escape clears the search, else exits edit mode, else closes the
-// top dialog (the settings modal here; the move, site-selection and
-// certificate modals install their own Escape listeners that route through
+// top dialog (the settings modal here; the move, AP group, site-selection
+// and certificate modals install their own Escape listeners that route through
 // their cancel paths, so their pending promises always resolve)
 document.addEventListener('keydown', handleGlobalKeydown);
 

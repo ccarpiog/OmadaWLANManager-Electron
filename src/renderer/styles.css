@@ -783,7 +783,7 @@ body.platform-darwin .title-bar {
   color: var(--text-secondary);
 }
 
-/* Badges (Default) */
+/* Badges (Default, Capacity warning) */
 .badge {
   flex: none;
   display: inline-block;
@@ -798,6 +798,29 @@ body.platform-darwin .title-bar {
 .badge-default {
   color: var(--accent-color);
   background: var(--accent-soft);
+}
+
+/* Capacity warning (AP groups master list): a band of the group is full.
+   Amber outline like the other warnings; the text keeps the theme's primary
+   color so it stays readable in light and dark mode. Positioned, so its
+   visually hidden text stays inside it (and scrolls with the list) */
+.badge-capacity {
+  position: relative;
+  color: var(--text-primary);
+  background: rgba(255, 149, 0, 0.16);
+  box-shadow: inset 0 0 0 1px var(--warning-color);
+}
+
+/* Text for assistive technology only (e.g. which bands a Capacity warning
+   badge is about): visually hidden, still part of the accessible name */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* "Showing N of M" under a searched master list (aria-live, collapsed
@@ -978,6 +1001,50 @@ body.platform-darwin .title-bar {
   color: var(--text-primary);
   border-left: 3px solid var(--warning-color);
   padding-left: 6px;
+}
+
+/* AP group management (groups-view.ts): "New group" in the list header,
+   the detail's Rename / Delete (with why Delete is unavailable), "Move
+   access points here" and the per-band capacity */
+.group-list-actions {
+  display: flex;
+  margin-right: 8px;
+}
+
+.group-list-actions .btn,
+.detail-actions .btn,
+.detail-section-action {
+  min-height: 32px;
+}
+
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Delete in the detail: a secondary button in the destructive colour (the
+   dialog asks before anything is deleted) */
+.btn-danger-outline {
+  background: var(--bg-tertiary);
+  color: var(--error-color);
+}
+
+.btn-danger-outline:hover:not(:disabled) {
+  background: var(--border-color);
+}
+
+.detail-section-action {
+  max-width: 100%;
+  margin: 2px 0 6px;
+  white-space: normal;
+  text-align: left;
+}
+
+/* A band whose remaining capacity the controller did not report */
+.capacity-list .detail-fact.is-unreported dd {
+  color: var(--text-muted);
 }
 
 /* Selection summary under the list, e.g. "3 selected (1 hidden by filters)"
@@ -1590,6 +1657,55 @@ body.platform-darwin .title-bar {
 
 .management-test-result[data-tone="busy"] {
   border-left-color: var(--accent-color);
+}
+
+/* AP group dialog (group-dialog.ts): the message, the name field with its
+   hint, the error line (the client-side check or main's answer) and the
+   progress line (focus is parked on it while the write runs) */
+.group-modal-message {
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 14px;
+  overflow-wrap: anywhere;
+}
+
+.group-name-field {
+  margin-bottom: 0;
+}
+
+.group-name-hint {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+
+.form-group input[aria-invalid="true"] {
+  border-color: var(--error-color);
+}
+
+.group-modal-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border-left: 3px solid var(--error-color);
+  border-radius: var(--radius-sm);
+  user-select: text;
+}
+
+.group-modal-status {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.group-modal-status:empty {
+  margin-top: 0;
+}
+
+.group-modal-status:focus {
+  outline: none;
 }
 
 /* Certificate modal (first use / certificate changed): wide enough for a

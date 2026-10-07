@@ -154,6 +154,17 @@ export function parseSessionNonce(raw: unknown): string | null {
 }
 
 /**
+ * Validates a codes-only diagnostic main attached to a reply (error codes,
+ * HTTP status, errorCode, counts): kept only in that form, else dropped
+ * before it reaches the DOM.
+ * @param {unknown} raw - The `diagnostic` field received over IPC.
+ * @returns {string | null} The diagnostic, or null.
+ */
+export function parseDiagnostic(raw: unknown): string | null {
+  return typeof raw === 'string' && DIAGNOSTIC_REGEX.test(raw) ? raw : null;
+}
+
+/**
  * Tells whether a value is a known management reason code.
  * @param {unknown} value - The candidate.
  * @returns {value is ManagementReason} True for a ManagementReason.
@@ -190,8 +201,9 @@ export function parseManagementCapabilities(raw: unknown): ManagementCapabilitie
     reason === null
       ? { manageApGroups: true, manageWifiNetworks: true, reason: null }
       : { manageApGroups: false, manageWifiNetworks: false, reason };
-  if (typeof candidate.diagnostic === 'string' && DIAGNOSTIC_REGEX.test(candidate.diagnostic)) {
-    capabilities.diagnostic = candidate.diagnostic;
+  const diagnostic = parseDiagnostic(candidate.diagnostic);
+  if (diagnostic !== null) {
+    capabilities.diagnostic = diagnostic;
   }
   return capabilities;
 } // End of function parseManagementCapabilities()

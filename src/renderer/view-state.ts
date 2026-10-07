@@ -128,7 +128,7 @@ export interface EscapeContext {
   dialogOpen: boolean;
   // The top context's search has text
   searchActive: boolean;
-  // The top context is in edit mode (no view has one yet: phases 16–19)
+  // The top context is in edit mode (no view has one yet: AP groups use dialogs; phases 18–19)
   editMode: boolean;
 }
 

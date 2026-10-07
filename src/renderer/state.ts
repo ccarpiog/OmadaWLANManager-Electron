@@ -3,9 +3,10 @@
 // modules read and write `state.<field>` instead of reassigning their own
 // `let`s. Nothing else in src/renderer declares module-level mutable state.
 
-import type { AccessPoint, GroupModel, Language, ManagementCapabilities, WlanGroup } from '../shared/types';
+import type { AccessPoint, ApGroupSsidLimits, GroupModel, Language, ManagedApGroup, ManagementCapabilities, WlanGroup } from '../shared/types';
 import { GROUP_FILTER_ALL, STATUS_FILTER_ALL } from './ap-selection';
 import { apDetailsContent, apList, destinationList, groupDetail, groupList, networkDetail, networkList, refreshBtn } from './elements';
+import type { GroupFailure, ManagedGroupsStatus } from './group-management';
 import type { AppView, NavLocation } from './nav-history';
 
 // The three views of the app shell (docs/management-design.md §4.2), defined
@@ -91,8 +92,26 @@ export interface RendererState {
   sessionNonce: string | null;
   // The management capabilities main reported for that session (flags plus
   // a reason code), or null while they are being checked or not connected;
-  // they feed readOnlyReason() (view-state.ts)
+  // they feed readOnlyReason() (view-state.ts). A check run that may change
+  // the verdict clears them as it starts (fail closed); `managementCheck`
+  // numbers the runs the renderer started or asked about, so a reply about
+  // an older run is discarded (management.ts, management-form.ts)
   managementCapabilities: ManagementCapabilities | null;
+  managementCheck: number;
+  // The fresh Open API view of the site's AP groups (managed-groups.ts),
+  // read with the session nonce while AP-group management is on: per group
+  // the default flag, AP count, bound networks and per-band remaining
+  // capacity as main reported them (absent = not reported), plus the
+  // per-group SSID limits. `managedApGroups` is null until read (or after a
+  // failed read, whose code is `managedGroupsFailure`); a re-read keeps the
+  // previous view on screen until the new one arrives.
+  // `managedGroupsRequest` numbers the reads: a reply that is not the latest
+  // read's (or arrives for another session or nonce) is discarded
+  managedApGroups: ManagedApGroup[] | null;
+  managedSsidLimits: ApGroupSsidLimits | null;
+  managedGroupsStatus: ManagedGroupsStatus;
+  managedGroupsFailure: { error: GroupFailure; diagnostic: string | null } | null;
+  managedGroupsRequest: number;
   // True while loadData() is fetching (drives the Refresh button/spinners)
   isLoadingData: boolean;
   // True when a controller URL is stored; before first configuration the
@@ -124,6 +143,10 @@ export interface RendererState {
   isDisconnecting: boolean;
   isSavingSettings: boolean;
   isApplyingChange: boolean;
+  // isManagingApGroup covers a whole AP-group create / rename / delete flow
+  // (group-flow.ts): from opening its dialog, through the write and the
+  // reload after it, until the dialog closes
+  isManagingApGroup: boolean;
   // True while a trusted-certificate reset (Settings) is in flight
   isResettingCertificate: boolean;
   // True while "Test management access" (Settings) waits for main. Not an
@@ -187,6 +210,12 @@ export const state: RendererState = {
   siteName: null,
   sessionNonce: null,
   managementCapabilities: null,
+  managementCheck: 0,
+  managedApGroups: null,
+  managedSsidLimits: null,
+  managedGroupsStatus: 'idle',
+  managedGroupsFailure: null,
+  managedGroupsRequest: 0,
   isLoadingData: false,
   hasStoredConfig: false,
   loadError: null,
@@ -196,6 +225,7 @@ export const state: RendererState = {
   isDisconnecting: false,
   isSavingSettings: false,
   isApplyingChange: false,
+  isManagingApGroup: false,
   isResettingCertificate: false,
   isTestingManagement: false,
   settingsStoredUrl: '',
@@ -211,9 +241,9 @@ export const state: RendererState = {
 
 /**
  * Reports whether any exclusive operation (connect, disconnect, settings
- * save, AP move, data load, or certificate reset) is currently in flight. Used
- * to serialize the operations: while one is pending, starting another is a
- * no-op.
+ * save, AP move, AP-group create / rename / delete, data load, or
+ * certificate reset) is currently in flight. Used to serialize the
+ * operations: while one is pending, starting another is a no-op.
  * @returns {boolean} True when an operation is in progress.
  */
 export function isOperationInProgress(): boolean {
@@ -222,6 +252,7 @@ export function isOperationInProgress(): boolean {
     state.isDisconnecting ||
     state.isSavingSettings ||
     state.isApplyingChange ||
+    state.isManagingApGroup ||
     state.isLoadingData ||
     state.isResettingCertificate
   );

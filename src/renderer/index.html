@@ -203,14 +203,20 @@
           </main>
         </section>
 
-        <!-- AP groups view (read-only, groups-view.ts): the group list with
-             its own search, and the selected group's detail (its APs and
-             Wi-Fi networks as cross-links). Below 800 px picking a group
-             drills into its detail, which has its own Back (layout.ts) -->
+        <!-- AP groups view (groups-view.ts): the group list with its own
+             search, and the selected group's detail (its APs and Wi-Fi
+             networks as cross-links, "Move access points here"). While AP-
+             group management is on, "New group" (in #groupListActions), the
+             detail's Rename / Delete and the per-band capacity are added
+             (group-flow.ts runs them). Below 800 px picking a group drills
+             into its detail, which has its own Back (layout.ts) -->
         <section class="view" id="viewGroups" aria-labelledby="groupsPanelTitle" hidden>
           <div class="main-content inventory-content">
             <section class="panel master-panel" id="groupMasterPanel" aria-labelledby="groupsPanelTitle">
-              <h2 class="panel-title" id="groupsPanelTitle"></h2>
+              <div class="panel-header">
+                <h2 class="panel-title" id="groupsPanelTitle"></h2>
+                <div class="panel-header-action group-list-actions" id="groupListActions"></div>
+              </div>
               <div class="panel-filter">
                 <input type="text" id="groupSearch" class="filter-input">
               </div>
@@ -370,6 +376,33 @@
         <button type="button" class="btn btn-primary" id="confirmMoveBtn"></button>
         <button type="button" class="btn btn-secondary" id="retryFailedBtn" hidden></button>
         <button type="button" class="btn btn-primary" id="closeMoveBtn" hidden></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AP group dialog, one per create / rename / delete flow (group-dialog.ts
+       fills it per open): the name field (create; rename, prefilled) or the
+       delete confirmation (opens on Cancel, never on Delete: spec §4.7), the
+       error line (the client-side name check or main's answer) and the
+       progress of the write and the reload after it -->
+  <div class="modal-overlay" id="groupModal" role="dialog" aria-modal="true" aria-labelledby="groupModalHeading" aria-describedby="groupModalMessage">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="groupModalHeading"></h2>
+      </div>
+      <div class="modal-body">
+        <p class="group-modal-message" id="groupModalMessage"></p>
+        <div class="form-group group-name-field" id="groupNameField">
+          <label for="groupNameInput" id="groupNameLabel"></label>
+          <input type="text" id="groupNameInput" autocomplete="off" spellcheck="false" aria-describedby="groupNameHint groupModalError">
+          <p class="form-help group-name-hint" id="groupNameHint"></p>
+        </div>
+        <p class="group-modal-error" id="groupModalError" role="alert" hidden></p>
+        <p class="group-modal-status" id="groupModalStatus" role="status" tabindex="-1"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="cancelGroupBtn"></button>
+        <button type="button" class="btn btn-primary" id="confirmGroupBtn"></button>
       </div>
     </div>
   </div>
