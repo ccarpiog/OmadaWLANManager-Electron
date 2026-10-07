@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T06:29:58Z",
+ "updated": "2026-10-07T06:30:17Z",
  "plan": "todo.md",
  "goal": "Add Omada 6.3 AP-group and Wi-Fi network management to the Omada WLAN Manager Electron app, groundwork first.",
  "phases": [
@@ -213,7 +213,8 @@
    "risk": "routine",
    "summary": "Shows the Open API network list with All access points, N groups and unknown scopes when management is on, discarding stale replies.",
    "review": "docs/reviews/phase17b.md",
-   "narrative": "docs/progress-archive/phase-17b.md"
+   "narrative": "docs/progress-archive/phase-17b.md",
+   "commit": "9f52776"
   },
   {
    "id": "18",
