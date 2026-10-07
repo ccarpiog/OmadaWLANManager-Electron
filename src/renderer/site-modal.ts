@@ -4,6 +4,7 @@
 
 import type { SiteInfo } from '../shared/types';
 import { cancelSiteBtn, siteListContainer, siteModal } from './elements';
+import { handleListArrowKeydown, shownListItems } from './dom-helpers';
 import { createFocusTrap, updateBackgroundInert } from './modal-focus';
 
 /**
@@ -50,6 +51,7 @@ export function showSiteSelection(sites: SiteInfo[]): Promise<string | null> {
       finished = true;
       siteModal.classList.remove('visible');
       siteListContainer.removeEventListener('click', handleSiteClick);
+      siteListContainer.removeEventListener('keydown', handleSiteListKeydown);
       cancelSiteBtn.removeEventListener('click', handleCancel);
       document.removeEventListener('keydown', handleEscape);
       document.removeEventListener('keydown', focusTrap);
@@ -78,6 +80,14 @@ export function showSiteSelection(sites: SiteInfo[]): Promise<string | null> {
     const handleCancel = (): void => finish(null);
 
     /**
+     * Arrows move through the site options (spec §4.7).
+     * @param {KeyboardEvent} e - The keydown event.
+     */
+    const handleSiteListKeydown = (e: KeyboardEvent): void => {
+      handleListArrowKeydown(e, shownListItems(siteListContainer, '.site-option'));
+    };
+
+    /**
      * Escape key handler: routes through the cancel path.
      * @param {KeyboardEvent} e - The keydown event.
      */
@@ -86,6 +96,7 @@ export function showSiteSelection(sites: SiteInfo[]): Promise<string | null> {
     };
 
     siteListContainer.addEventListener('click', handleSiteClick);
+    siteListContainer.addEventListener('keydown', handleSiteListKeydown);
     cancelSiteBtn.addEventListener('click', handleCancel);
     document.addEventListener('keydown', handleEscape);
     document.addEventListener('keydown', focusTrap);

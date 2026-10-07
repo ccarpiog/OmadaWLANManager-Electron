@@ -1,7 +1,8 @@
 // Pure shape guards for the session-owned IPC channels (docs/management-design.md
 // §3): the management-access channels of phase 15b, the AP-group channels of
 // phase 16a, the Wi-Fi network read of phase 17a (requireSessionNonce()), the
-// Wi-Fi network writes of phase 18a and the binding write of phase 19a.
+// Wi-Fi network writes of phase 18a and the binding write of phase 19a — plus
+// the arity guard of the other channels (requireNoExtraArguments()).
 // index.ts calls them right after assertTrustedIpcSender(); the
 // unit tests (tests/unit/ipc-guards.test.ts) and the smoke stub
 // (tests/smoke/stub-main.cjs, which requires the compiled module) use the very
@@ -54,6 +55,19 @@ export const MAX_NETWORK_AP_GROUP_IDS = 256;
  */
 function reject(what: string): never {
   throw new Error(`IPC call rejected: ${what}`);
+}
+
+/**
+ * Arity guard of the channels with a fixed argument list (the connection,
+ * data, config and certificate channels of index.ts): no further argument may
+ * follow the ones the channel takes.
+ * @param {unknown[]} extra - The arguments after the expected ones.
+ * @throws {Error} When there is any.
+ */
+export function requireNoExtraArguments(extra: unknown[]): void {
+  if (extra.length > 0) {
+    reject('unexpected arguments');
+  }
 }
 
 /**

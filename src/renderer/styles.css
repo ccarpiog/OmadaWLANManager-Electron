@@ -1670,6 +1670,14 @@ body.platform-darwin .title-bar {
   border-left-color: var(--accent-color);
 }
 
+/* Settings: the dialog's description (its aria-describedby, §4.7) */
+.settings-modal-message {
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 14px;
+  color: var(--text-secondary);
+}
+
 /* AP group dialog (group-dialog.ts): the message, the name field with its
    hint, the error line (the client-side check or main's answer) and the
    progress line (focus is parked on it while the write runs) */

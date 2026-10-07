@@ -40,6 +40,15 @@ export class CookieJar {
   }
 
   /**
+   * Lists the cookies held now, in insertion order (OmadaController scrubs
+   * their values from its failures).
+   * @returns {Array<[string, string]>} The [name, value] pairs.
+   */
+  entries(): Array<[string, string]> {
+    return Array.from(this.cookies);
+  }
+
+  /**
    * Removes every cookie (logout / failed re-login).
    */
   clear(): void {

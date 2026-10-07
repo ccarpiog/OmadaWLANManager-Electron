@@ -147,7 +147,9 @@ npm run dev
    check failed (credentials rejected, no access token, the site or the AP
    groups do not match, no answer); it disappears once every check passes
 9. **Cmd+F** (macOS) / **Ctrl+F** focuses the current view's search; **Escape**
-   clears the search, and otherwise closes the open dialog. If the connection or
+   clears the search, and otherwise closes the open dialog (in Settings it first
+   cancels an open confirmation such as **Reset trusted certificate**). Arrow
+   keys move through the lists, also the lists inside dialogs. If the connection or
    its first data load fails, each view shows the error with **Retry** and
    **Settings**; if a refresh fails, the data stays on screen with a notice
    giving the time it is from, and **Retry**
@@ -264,6 +266,8 @@ npm run tls-probe # build, then the opt-in certificate-pinning probe (local HTTP
   downloads no browsers) with `tests/smoke/stub-main.cjs` as the main process:
   the real preload and renderer, with fixture-driven fake IPC handlers. It
   prints PASS/FAIL per check and exits non-zero on any failure.
+  `OMADA_SMOKE_ONLY=a11y,bind` runs only the named launches (a partial run for
+  iterating on one launch).
 - **Electron binary:** `ELECTRON_PATH` (an executable or an `.app` bundle) wins;
   otherwise the `electron` npm package's binary is used if it was already
   downloaded and runs. Since Electron 42, `npm install` no longer downloads the
@@ -309,7 +313,7 @@ omada-electron/
 │   │   ├── openapi-client.ts  # Open API client (token, paths, pagination, AP-group calls, Wi-Fi network reads and writes)
 │   │   ├── omada-validators.ts, cookie-jar.ts, url.ts, # Pure, unit-tested helpers
 │   │   │   cert-pinning.ts, config-model.ts, controller-version.ts, redact.ts,
-│   │   │   ap-group-policy.ts, ipc-guards.ts, wifi-network-model.ts
+│   │   │   ap-group-policy.ts, ipc-guards.ts, ipc-trust.ts, wifi-network-model.ts
 │   │   └── preload.ts  # Preload script for secure IPC
 │   ├── renderer/       # Renderer process (Browser), bundled by esbuild
 │   │   ├── index.html  # Main HTML
@@ -333,7 +337,11 @@ omada-electron/
   Chromium's normal verification. The first request is already gated, so the
   password is never sent to an unconfirmed or changed certificate
 - The application uses Electron's `contextIsolation` and disables `nodeIntegration` for security
-- IPC communication is limited to specific, validated channels
+- IPC communication is limited to specific, validated channels: every channel
+  accepts calls only from the app's own window, checks the shape of its
+  arguments, and answers failures with redacted messages; passwords, the Client
+  Secret, tokens and Wi-Fi passphrases never reach a reply or a log line. The
+  audit is in `docs/security-audit.md`
 
 ## License
 

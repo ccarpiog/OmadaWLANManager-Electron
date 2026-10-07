@@ -18,7 +18,9 @@
 // extracted elsewhere. Every launch must run the installed `electron`
 // package's version (checked against the running process.versions.electron).
 //
-// Usage: [ELECTRON_PATH=/path/to/Electron] node tests/smoke/run-smoke.mjs
+// Usage: [ELECTRON_PATH=/path/to/Electron] [OMADA_SMOKE_ONLY=a11y,bind] node tests/smoke/run-smoke.mjs
+// (OMADA_SMOKE_ONLY runs only the named launches — a partial run, for
+// iterating on one launch; the launch-count checks then expect that many)
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -180,7 +182,9 @@ const EXPECTED_BRIDGE = [
 // The keys of a ManagedNetwork DTO (src/shared/types.ts), sorted: nothing else may cross
 const NETWORK_DTO_KEYS = ['apGroupIds', 'bands', 'enabled', 'hasPassphrase', 'id', 'name', 'scope', 'security'];
 // One launch per run*() function in main()
-const EXPECTED_LAUNCHES = 9;
+const EXPECTED_LAUNCHES = 10;
+// The launches of this run (fewer only with OMADA_SMOKE_ONLY; set by main())
+let expectedLaunches = EXPECTED_LAUNCHES;
 // Fingerprints of the fake controller's self-signed certificates (launch 3)
 const FINGERPRINT_A = Array.from({ length: 32 }, (_, index) => (index * 7 + 16).toString(16).toUpperCase().padStart(2, '0')).join(':');
 const FINGERPRINT_B = Array.from({ length: 32 }, (_, index) => (255 - index).toString(16).toUpperCase().padStart(2, '0')).join(':');
@@ -6280,38 +6284,41 @@ async function runApGroupManagement(electronInfo) {
       }
     }); // End of check "[groups] es: Probar el acceso de gestión fails closed..."
 
-    await check('[groups] es: a write dialog that is open when management goes off sends nothing: with "Nuevo grupo" open and a name typed, a failing re-check (invalid credentials) runs — Settings opened over the dialog by script, no UI path allows it — then Enter shows "El acceso de gestión no está activo en esta conexión, …" and no createApGroup call is made; Cancel closes it with focus in the list', async () => {
+    await check('[groups] es: management access cannot change under an open write dialog, and main has the last word — with "Nuevo grupo" open and a name typed, Settings does not open over it, not even by script (dialogs never stack, phase 20a), so no re-check can run from there; when the controller turns management off meanwhile (invalid credentials), Enter sends ONE createApGroup that main refuses with "El acceso de gestión no está activo en esta conexión, …" and nothing is created; Cancel closes it with focus back on "Nuevo grupo"', async () => {
       const invalid = { managementReason: 'invalidCredentials', managementDiagnostic: 'invalidCredentials, errorCode -44106' };
-      const creates = callsTo(await stubState(session), 'management:ap-group-create').length;
+      const before = await stubState(session);
+      const creates = callsTo(before, 'management:ap-group-create').length;
+      const groupsBefore = before.scenario.wlanGroups.map((group) => group.wlanName);
       try {
         await page.click('#newGroupBtn');
         await waitForGroupModal(page);
         await page.fill('#groupNameInput', 'Grupo tardío');
         await configureStub(session, invalid);
-        // The background is inert: script clicks reach the handlers anyway
+        // The background is inert: a script click reaches the handler anyway
         await page.evaluate(() => document.getElementById('settingsBtn').click());
-        await page.waitForSelector('#settingsModal.visible', { timeout: WAIT_MS });
-        await page.evaluate(() => document.getElementById('testManagementBtn').click());
-        await waitForTestResult(page, `${CAPS_TEXT.es.result.invalidCredentials} (${invalid.managementDiagnostic})`);
-        await page.evaluate(() => document.getElementById('cancelSettingsBtn').click());
-        await waitForSettingsClosed(page);
+        await page.waitForTimeout(400);
+        const stacked = await page.evaluate(() => document.getElementById('settingsModal').classList.contains('visible'));
         const between = await readGroupModal(page);
-        const notices = await readNotices(page);
         await page.focus('#groupNameInput');
         await page.keyboard.press('Enter');
         await waitForGroupError(page, es.errManagementUnavailable);
         const refused = await readGroupModal(page);
-        const createsAfter = callsTo(await stubState(session), 'management:ap-group-create').length;
+        const after = await stubState(session);
+        const createsAfter = callsTo(after, 'management:ap-group-create').length;
+        const groupsAfter = after.scenario.wlanGroups.map((group) => group.wlanName);
         await page.click('#cancelGroupBtn');
         await waitForGroupModalClosed(page);
         const focus = await readFocus(page);
-        const controls = await readGroupControls(page);
         return verdict(
-          between.open && between.value === 'Grupo tardío' && notices.bannerReason === 'invalidCredentials' &&
-          refused.open && refused.error === es.errManagementUnavailable && refused.errorRole === 'alert' && refused.activeId === 'groupNameInput' &&
-          !refused.confirmDisabled && createsAfter === creates &&
-          focus.visible && focus.panel === 'groupMasterPanel' && focus.groupId !== null && controls.newGroup === null,
-          { between, notices, refused, creates, createsAfter, focus, controls }
+          !stacked && between.open && between.value === 'Grupo tardío' && between.activeId === 'groupNameInput' &&
+          refused.open && refused.error === es.errManagementUnavailable && refused.errorRole === 'alert' && !refused.confirmDisabled &&
+          createsAfter === creates + 1 && isDeepStrictEqual(groupsAfter, groupsBefore) &&
+          focus.visible && focus.id === 'newGroupBtn',
+          {
+            stacked, creates, createsAfter, groupsBefore, groupsAfter, betweenActive: between.activeId,
+            refused: { open: refused.open, error: refused.error, role: refused.errorRole, confirmDisabled: refused.confirmDisabled },
+            focus: { visible: focus.visible, panel: focus.panel, groupId: focus.groupId, id: focus.id },
+          }
         );
       } finally {
         await configureStub(session, { managementReason: null, managementDiagnostic: null });
@@ -6330,7 +6337,7 @@ async function runApGroupManagement(electronInfo) {
         await waitForSettingsClosed(page);
         await page.waitForSelector('#newGroupBtn', { timeout: WAIT_MS });
       }
-    }); // End of check "[groups] es: a write dialog that is open when management goes off..."
+    }); // End of check "[groups] es: management access cannot change under an open write dialog..."
 
     await check('[groups] en: after switching to English: "New group", "Rename" and no Delete for the default group, "Move access points here", "Per-band capacity" with "6 of 8 free" and "Not reported (limit: 4)"; "Delete" for Exterior; the New group dialog ("New AP group", "Group name", "Create group") refuses "EXTERIOR" with "Another AP group already has this name (ignoring case)."; a refused write reads "The controller could not complete the request. (httpError, HTTP 500)"; the delete confirmation for Exterior is in English and Escape returns focus to "Delete"', async () => {
       await openSettingsWhenIdle(page);
@@ -7312,8 +7319,8 @@ async function runManagedNetworks(electronInfo) {
 // its field; no sentinel passphrase anywhere in the DOM after any dialog
 // closes; a double-click or a held Enter never steps through the edit's
 // review; no write on data known to be stale (a failed refresh, a stale
-// managed list) and Enable / Disable / Delete confirmations built from a
-// fresh read only (Spanish, then English)
+// managed list) and Enable / Disable / Delete confirmations and the Change
+// password review built from a fresh read only (Spanish, then English)
 // ============================================================================
 
 // The [netedit] network ids (24 characters, like the derived ones)
@@ -7419,6 +7426,8 @@ const NETEDIT_TEXT = {
     passwordTitle: 'Cambiar la contraseña',
     passwordMessage: 'Escribe la nueva contraseña de "{name}". Los dispositivos tendrán que usarla para conectarse de nuevo. La contraseña actual nunca se muestra.',
     passwordAction: 'Cambiar contraseña',
+    passwordReviewTitle: 'Confirmar el cambio de contraseña',
+    passwordReviewMessage: '¿Cambiar la contraseña de "{name}"? Los dispositivos tendrán que usar la nueva para conectarse de nuevo, en todo su alcance:',
     enableTitle: 'Activar la red',
     enableMessage: '¿Activar "{name}"? Empezará a emitirse en su alcance:',
     enableAction: 'Activar red',
@@ -7494,6 +7503,8 @@ const NETEDIT_TEXT = {
     passwordTitle: 'Change the password',
     passwordMessage: 'Type the new password of "{name}". Devices will need it to join again. The current password is never shown.',
     passwordAction: 'Change password',
+    passwordReviewTitle: 'Confirm the password change',
+    passwordReviewMessage: 'Change the password of "{name}"? Devices will need the new one to join again, on its whole scope:',
     enableTitle: 'Enable the network',
     enableMessage: 'Enable "{name}"? It will start broadcasting on its scope:',
     enableAction: 'Enable network',
@@ -7770,7 +7781,8 @@ function neteditProps(enabled, security, bands) {
  * client-side refusals and Escape, created without and with "Enable after
  * creating" (also an answer without an id), and refused by the controller;
  * the staged edit (review, Back, Save) and an edit cancelled; a double-click
- * and a held Enter on the edit's form (never a save); Change password;
+ * and a held Enter on the edit's form (never a save); Change password (its
+ * review built from a fresh read: an external binding change refuses it);
  * Disable / Enable; a conflict main reports; no write on stale data (a
  * stale managed list, a failed refresh); the confirmations built from a
  * fresh read (fresh impact, a failed read, a changed network); Delete with
@@ -8205,7 +8217,7 @@ async function runNetworkEditingChecks(session, language) {
     );
   }); // End of check "entering the review always needs its own deliberate interaction..."
 
-  await check(`${L}: "${ed.password}" — its own dialog ("${ed.passwordTitle}", the network named) with only the two empty password fields (type password, autocomplete new-password), focus on the first; a confirmation that differs is refused client-side; Enter sends ONE changeNetworkPassword {sessionNonce, networkId, passphrase}; the toast "${fmt(ed.passwordChanged, { name: 'Casa Nueva' })}"; focus on ${ed.password}; the passphrase never echoed or kept in the DOM`, async () => {
+  await check(`${L}: "${ed.password}" — its own dialog ("${ed.passwordTitle}", the network named) with only the two empty password fields (type password, autocomplete new-password), focus on the first; a confirmation that differs is refused client-side; Enter opens the confirmation (phase 20a, spec §3: a passphrase change is confirmed) — "${ed.passwordReviewTitle}" naming the network, its scope, its groups and the passphrase row, focus on ${cancel}, nothing sent; Back keeps the typed fields; "${ed.passwordAction}" sends ONE changeNetworkPassword {sessionNonce, networkId, passphrase}; the toast "${fmt(ed.passwordChanged, { name: 'Casa Nueva' })}"; focus on ${ed.password}; the passphrase never echoed or kept in the DOM`, async () => {
     const before = await networkWriteState(session);
     await page.click('#networkPasswordBtn');
     await waitForNetworkModal(page);
@@ -8217,6 +8229,15 @@ async function runNetworkEditingChecks(session, language) {
     const afterMismatch = writeCounts(await networkWriteState(session));
     await page.fill('#networkPassphraseConfirmInput', typed.password);
     await page.press('#networkPassphraseConfirmInput', 'Enter');
+    await waitForNetworkStep(page, 'review');
+    const review = await readNetworkModal(page);
+    const afterReview = writeCounts(await networkWriteState(session));
+    await page.click('#backNetworkBtn');
+    await waitForNetworkStep(page, 'form');
+    const backed = await readNetworkModal(page);
+    await page.click('#confirmNetworkBtn');
+    await waitForNetworkStep(page, 'review');
+    await page.click('#confirmNetworkBtn');
     await waitForNetworkModalClosed(page);
     await waitForToast(page, 'success', fmt(ed.passwordChanged, { name: 'Casa Nueva' }));
     const after = await networkWriteState(session);
@@ -8230,12 +8251,77 @@ async function runNetworkEditingChecks(session, language) {
       opened.passphrase?.type === 'password' && opened.passphrase.autocomplete === 'new-password' && opened.passphrase.value === '' &&
       opened.confirmation?.type === 'password' && opened.confirmation.value === '' && opened.activeId === 'networkPassphraseInput' && opened.confirm === ed.passwordAction &&
       isDeepStrictEqual(afterMismatch, writeCounts(before)) &&
+      review.open && review.step === 'review' && review.title === ed.passwordReviewTitle && review.message === fmt(ed.passwordReviewMessage, { name: 'Casa Nueva' }) &&
+      !review.formShown && review.summaryShown && isDeepStrictEqual(review.rows.map((row) => row.row), ['scope', 'groups', 'passphrase']) &&
+      review.rows[2].value === ed.reviewPassphraseValue && review.activeId === 'cancelNetworkBtn' && review.back === ed.backAction &&
+      review.confirm === ed.passwordAction && !review.danger && isDeepStrictEqual(afterReview, writeCounts(before)) && !JSON.stringify([review.rows, review.notes, review.message]).includes(typed.password) &&
+      backed.step === 'form' && backed.passphrase?.value === typed.password && backed.confirmation?.value === typed.password &&
       calls.length === 1 && isDeepStrictEqual(calls[0].args, [{ sessionNonce: after.snapshot.sessionNonce, networkId: NETEDIT_IDS.casa, passphrase: typed.password }]) &&
       writes.length === 1 && writes[0].op === 'password' && writes[0].body.pskSetting?.securityKey === typed.password &&
       focus.activeId === 'networkPasswordBtn' && leaks.length === 0,
-      { opened, calls: calls.map((call) => call.args), writes, focus: focus.activeId, leaks }
+      { opened, review: { ...review, passphrase: null, confirmation: null }, afterReview, backed: backed.step, calls: calls.map((call) => call.args.map((arg) => ({ ...arg, passphrase: '(hidden)' }))), writes: writes.length, focus: focus.activeId, leaks }
     );
   }); // End of check "Change password..."
+
+  await check(`${L}: "${ed.password}" states the scope of a fresh read only (20a review) — Casa Nueva bound to Default + zGrupo B on the controller after the dialog opened: the step to the review reads the APs, the groups and the managed list again and opens nothing ("${ed.networkChanged}" toast, nothing sent, focus back on ${ed.password}), the detail shows "${groups(2)} · ${fmt(text.apMany, { count: 5 })}"; ${ed.password} again reviews that fresh scope (${ed.impactGroups} "Default, zGrupo B"); ${cancel} sends nothing; no typed passphrase left in the DOM`, async () => {
+    const before = writeCounts(await networkWriteState(session));
+    const original = (await stubState(session)).scenario.networks;
+    const rebound = original.map((item) => (item.entry.id === NETEDIT_IDS.casa
+      ? { ...item, detail: { ...item.detail, apGroupIds: [NETEDIT_DEFAULT, NETEDIT_ZGRUPO] }, bindings: { apGroups: [{ id: NETEDIT_DEFAULT }, { id: NETEDIT_ZGRUPO }] } }
+      : item));
+    const fresh = `${groups(2)} · ${fmt(text.apMany, { count: 5 })}`;
+    let shown;
+    let reads;
+    let changed;
+    let changedDetail;
+    let focus;
+    let review;
+    try {
+      shown = (await readDetailPane(page, '#networkDetail')).summary;
+      await page.click('#networkPasswordBtn');
+      await waitForNetworkModal(page);
+      await page.fill('#networkPassphraseInput', typed.refused);
+      await page.fill('#networkPassphraseConfirmInput', typed.refused);
+      // Casa Nueva re-bound on the controller while the dialog is open
+      await configureStub(session, { networks: rebound });
+      const calls = await stubState(session);
+      await page.click('#confirmNetworkBtn');
+      await waitForToast(page, 'error', ed.networkChanged);
+      await waitForNetworkModalClosed(page);
+      const callsAfter = await stubState(session);
+      reads = ['omada:get-aps', 'omada:get-wlans', 'management:networks'].map((channel) => callsTo(callsAfter, channel).length - callsTo(calls, channel).length);
+      changed = await readNetworkModal(page);
+      changedDetail = (await readDetailPane(page, '#networkDetail')).summary;
+      focus = (await readNetworkControls(page)).activeId;
+      await page.click('#networkPasswordBtn');
+      await waitForNetworkModal(page);
+      await page.fill('#networkPassphraseInput', typed.refused);
+      await page.fill('#networkPassphraseConfirmInput', typed.refused);
+      await page.click('#confirmNetworkBtn');
+      await waitForNetworkStep(page, 'review');
+      review = await readNetworkModal(page);
+      await page.click('#cancelNetworkBtn');
+      await waitForNetworkModalClosed(page);
+    } finally {
+      await configureStub(session, { networks: original });
+      if (await page.isVisible('#networkModal.visible')) {
+        await page.click('#cancelNetworkBtn');
+        await waitForNetworkModalClosed(page);
+      }
+      await refreshNetworksFully(session);
+    }
+    const after = writeCounts(await networkWriteState(session));
+    const leaks = await findNeteditSecrets(page);
+    return verdict(
+      shown === `${groups(1)} · ${fmt(text.apMany, { count: 4 })}` && isDeepStrictEqual(reads, [1, 1, 1]) &&
+      !changed.open && changedDetail === fresh && focus === 'networkPasswordBtn' &&
+      review.step === 'review' && review.title === ed.passwordReviewTitle && review.activeId === 'cancelNetworkBtn' &&
+      isDeepStrictEqual(review.rows.map((row) => row.row), ['scope', 'groups', 'passphrase']) &&
+      review.rows[0].value === fresh && review.rows[1].value === 'Default, zGrupo B' && review.rows[2].value === ed.reviewPassphraseValue &&
+      isDeepStrictEqual(after, before) && leaks.length === 0,
+      { shown, reads, changed: changed?.open, changedDetail, focus, review: review && { step: review.step, rows: review.rows, activeId: review.activeId }, before, after, leaks }
+    );
+  }); // End of check "Change password states the scope of a fresh read only..."
 
   await check(`${L}: "${ed.disable}" asks first — the confirmation opens on ${cancel} with the impact (${ed.impactScope} "${groups(1)} · ${fmt(text.apMany, { count: 4 })}", ${ed.impactGroups} "Default"), the destructive button "${ed.disableAction}"; confirmed: ONE setNetworkEnabled(false), the detail says ${nets.disabled} and focus is on its "${ed.enable}"; Invitados' "${ed.enable}" shows "${nets.all}" with the note that later APs are included, and enables it`, async () => {
     const before = await networkWriteState(session);
@@ -9357,6 +9443,713 @@ async function runBindingEditing(electronInfo) {
 } // End of function runBindingEditing()
 
 // ============================================================================
+// Launch 10 [a11y]: accessibility and keyboard at the three window widths
+// (phase 20a, docs/management-design.md §4.7)
+// ============================================================================
+
+// The [a11y] AP groups: the [bind] ones plus an empty group without networks
+// (so its Delete confirmation can be opened)
+const A11Y_EMPTY_GROUP = { wlanId: '6512a0e1f3b2c41d2e3f4aff', wlanName: 'Vacío', ssidList: [] };
+const A11Y_GROUPS = [...BIND_GROUPS, A11Y_EMPTY_GROUP];
+// The [a11y] config: management on, a pinned certificate (so Settings offers
+// "Reset trusted certificate"); the fake controller presents none (as if
+// CA-trusted) unless a check sets presentedFingerprint
+const A11Y_CONFIG = {
+  url: CONTROLLER_URL, username: 'admin', language: 'es', hasPassword: true, clientId: 'owm-client-1', hasClientSecret: true, pinnedFingerprint: FINGERPRINT_A,
+};
+// The typed passphrase of the Change password review check (never sent)
+const A11Y_PASSPHRASE = 'clave-a11y-2026';
+// The widths of §4.7 with the layout each must use: [width, height, sidebar mode, panes]
+const A11Y_WIDTHS = [
+  [1200, 700, 'full', 'split'],
+  [900, 650, 'icon', 'split'],
+  [750, 650, 'top', 'single'],
+  [700, 500, 'top', 'single'],
+];
+// The search Cmd/Ctrl+F focuses in each view
+const A11Y_SEARCHES = { accessPoints: 'apFilter', groups: 'groupSearch', networks: 'networkSearch' };
+
+/**
+ * Classifies the navigation of a readLayout() probe: 'top' (the view switcher
+ * above the view area), 'full' (a sidebar with visible labels) or 'icon' (a
+ * compact sidebar, labels visually hidden).
+ * @param {object} layout - A readLayout() result.
+ * @returns {string} The mode ('unknown' when none fits).
+ */
+function navMode(layout) {
+  if (layout.sidebar.bottom <= layout.viewArea.top + 1) return 'top';
+  if (layout.sidebar.right > layout.viewArea.left + 1) return 'unknown';
+  if (layout.sidebar.width >= 150 && layout.label.width > 40) return 'full';
+  if (layout.sidebar.width < 100 && layout.label.width <= 1) return 'icon';
+  return 'unknown';
+}
+
+/**
+ * Classifies the panes of one view in a readLayout() probe: 'split' (list and
+ * detail / destination side by side) or 'single' (the list alone, the other
+ * pane off stage).
+ * @param {object} layout - A readLayout() result.
+ * @param {string} view - 'accessPoints', 'groups' or 'networks'.
+ * @returns {string} The mode ('unknown' when none fits).
+ */
+function paneMode(layout, view) {
+  const [list, other] = {
+    accessPoints: ['apPanel', 'destinationPanel'],
+    groups: ['groupMasterPanel', 'groupDetailPanel'],
+    networks: ['networkMasterPanel', 'networkDetailPanel'],
+  }[view];
+  const listBox = layout.panes[list];
+  const otherBox = layout.panes[other];
+  if (listBox && otherBox && listBox.right <= otherBox.left + 1) return 'split';
+  if (listBox && !otherBox) return 'single';
+  return 'unknown';
+} // End of function paneMode()
+
+/**
+ * Shows a view's list (in the single-pane layout a drill-in detail or the
+ * destination picker may cover it: its Back is used first).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} view - 'accessPoints', 'groups' or 'networks'.
+ * @returns {Promise<void>}
+ */
+async function showViewList(page, view) {
+  const nav = { accessPoints: '#navAccessPoints', groups: '#navGroups', networks: '#navNetworks' }[view];
+  await page.click(nav);
+  for (const back of ['#destinationBackBtn', '#apDetailsBackBtn', '#groupDetailBackBtn', '#networkDetailBackBtn']) {
+    if (await page.isVisible(back)) {
+      await page.click(back);
+    }
+  }
+}
+
+/**
+ * Reads the accessibility state of a dialog: whether it is open, its role,
+ * label and description, its footer buttons (each shown one entirely inside
+ * the window?), the inert background, every keyboard-reachable element
+ * outside it (none may be: not inert, not hidden, rendered, tabIndex ≥ 0 —
+ * the toast area excepted), and where focus is.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} modalId - The dialog's id.
+ * @returns {Promise<object>} The probe.
+ */
+function readDialogA11y(page, modalId) {
+  return page.evaluate((id) => {
+    const modal = document.getElementById(id);
+    /**
+     * Tells whether an element is rendered and visible.
+     * @param {Element} element - The element.
+     * @returns {boolean} True when visible.
+     */
+    const shown = (element) => element.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true }) && element.getClientRects().length > 0;
+    /**
+     * Tells whether an element is shown entirely inside the window.
+     * @param {Element} element - The element.
+     * @returns {boolean} True when inside.
+     */
+    const inside = (element) => {
+      const rect = element.getBoundingClientRect();
+      return shown(element) && rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight;
+    };
+    const footer = Array.from(modal.querySelectorAll('.modal-footer button')).filter((button) => button.closest('[hidden]') === null);
+    const behind = Array.from(document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]'))
+      .filter((element) => !modal.contains(element) && !element.closest('#toastContainer') && !element.disabled && element.tabIndex >= 0 &&
+        element.closest('[inert], [hidden]') === null && shown(element))
+      .map((element) => element.id || element.className || element.tagName);
+    const labelledBy = modal.getAttribute('aria-labelledby');
+    const describedBy = modal.getAttribute('aria-describedby');
+    return {
+      open: modal.classList.contains('visible'),
+      role: modal.getAttribute('role'),
+      ariaModal: modal.getAttribute('aria-modal'),
+      label: labelledBy ? (document.getElementById(labelledBy)?.textContent ?? '').trim() : '',
+      describedBy,
+      described: Boolean(describedBy && document.getElementById(describedBy)),
+      footer: footer.map((button) => ({ id: button.id, inside: inside(button) })),
+      backgroundInert: Boolean(document.querySelector('.app-container')?.hasAttribute('inert')),
+      behind,
+      openDialogs: Array.from(document.querySelectorAll('.modal-overlay.visible')).map((overlay) => overlay.id),
+      activeId: document.activeElement?.id || '',
+      activeInside: modal.contains(document.activeElement),
+      focusables: Array.from(modal.querySelectorAll('button, input, select, textarea, [tabindex]'))
+        .filter((element) => !element.disabled && element.tabIndex >= 0 && element.closest('[hidden]') === null).length,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+  }, modalId); // End of the in-page dialog probe
+} // End of function readDialogA11y()
+
+/**
+ * Presses Tab, then Shift+Tab, enough times to wrap around a dialog in both
+ * directions, and lists every press after which focus was outside it.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} modalId - The dialog's id.
+ * @param {number} focusables - How many focusable elements it has.
+ * @returns {Promise<string[]>} The escapes ("Tab:<id>"), empty when trapped.
+ */
+async function tabCycle(page, modalId, focusables) {
+  const escapes = [];
+  const presses = Math.max(focusables, 1) + 2;
+  for (const key of [...Array(presses).fill('Tab'), ...Array(presses).fill('Shift+Tab')]) {
+    await page.keyboard.press(key);
+    const where = await page.evaluate((id) => ({
+      inside: document.getElementById(id).contains(document.activeElement),
+      id: document.activeElement?.id || document.activeElement?.tagName || '',
+    }), modalId);
+    if (!where.inside) {
+      escapes.push(`${key}:${where.id}`);
+    }
+  } // End of the loop that tabs through the dialog
+  return escapes;
+} // End of function tabCycle()
+
+/**
+ * Focuses a control and presses Enter (a keyboard user opening a dialog).
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} selector - The control.
+ * @returns {Promise<void>}
+ */
+async function pressOn(page, selector) {
+  await page.focus(selector);
+  await page.keyboard.press('Enter');
+}
+
+/**
+ * Waits until a dialog is open or closed.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} modalId - The dialog's id.
+ * @param {boolean} open - The expected state.
+ * @returns {Promise<void>}
+ */
+async function waitForDialog(page, modalId, open) {
+  await page.waitForFunction(({ id, expected }) => document.getElementById(id).classList.contains('visible') === expected, { id: modalId, expected: open }, { timeout: WAIT_MS });
+}
+
+/**
+ * Waits until keyboard focus is on the element with this id.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} id - The id.
+ * @returns {Promise<void>}
+ */
+async function waitForFocusOn(page, id) {
+  await page.waitForFunction((expected) => document.activeElement?.id === expected, id, { timeout: WAIT_MS });
+}
+
+/**
+ * Verdict of a dialog at the window size in force: open as a labelled modal
+ * dialog with a description, the background inert and nothing reachable
+ * behind it, every footer button inside the window, focus on `focusId`,
+ * Tab / Shift+Tab never leaving it.
+ * @param {object} probe - readDialogA11y() when it opened.
+ * @param {string[]} escapes - tabCycle()'s escapes.
+ * @param {string} focusId - Where focus must start.
+ * @returns {boolean} True when all hold.
+ */
+function dialogOk(probe, escapes, focusId) {
+  return probe.open && probe.role === 'dialog' && probe.ariaModal === 'true' && probe.label !== '' && probe.described &&
+    probe.backgroundInert && probe.behind.length === 0 && probe.openDialogs.length === 1 &&
+    probe.footer.length > 0 && probe.footer.every((button) => button.inside) &&
+    probe.activeId === focusId && probe.activeInside && escapes.length === 0;
+}
+
+/**
+ * Opens a dialog with the keyboard from `opener`, checks it (dialogOk()),
+ * closes it with Escape and reads where focus went.
+ * @param {object} session - The launch.
+ * @param {object} spec - { opener, modalId, focusId, beforeClose? (async page => void) }.
+ * @returns {Promise<{ ok: boolean; detail: object }>} The verdict parts.
+ */
+async function dialogRoundTrip(session, spec) {
+  const { page } = session;
+  await pressOn(page, spec.opener);
+  await waitForDialog(page, spec.modalId, true);
+  await waitForFocusOn(page, spec.focusId);
+  const probe = await readDialogA11y(page, spec.modalId);
+  const escapes = await tabCycle(page, spec.modalId, probe.focusables);
+  const extra = spec.beforeClose ? await spec.beforeClose(page) : { ok: true };
+  await page.keyboard.press('Escape');
+  await waitForDialog(page, spec.modalId, false);
+  await page.waitForFunction((id) => document.activeElement?.id === id || document.activeElement === document.body, spec.opener.slice(1), { timeout: WAIT_MS });
+  const restored = await readFocus(page);
+  return {
+    ok: dialogOk(probe, escapes, spec.focusId) && extra.ok && restored.id === spec.opener.slice(1) && restored.visible,
+    detail: { probe, escapes, extra, restored: { id: restored.id, visible: restored.visible } },
+  };
+} // End of function dialogRoundTrip()
+
+/**
+ * Disconnects with the keyboard when connected (the Connect button reads
+ * "Disconnect" then) and waits until it can connect again.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function ensureDisconnected(page) {
+  await waitForLoadIdle(page);
+  if (await page.evaluate(() => document.getElementById('statusIndicator')?.classList.contains('connected'))) {
+    await pressOn(page, '#connectBtn');
+    await page.waitForFunction(() => !document.getElementById('statusIndicator')?.classList.contains('connected') && !document.getElementById('connectBtn').disabled, null, { timeout: WAIT_MS });
+  }
+}
+
+/**
+ * Connects with the keyboard when not connected and waits for the data.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @returns {Promise<void>}
+ */
+async function ensureConnected(page) {
+  await page.waitForFunction(() => !document.getElementById('connectBtn').disabled, null, { timeout: WAIT_MS });
+  if (!(await page.evaluate(() => document.getElementById('statusIndicator')?.classList.contains('connected')))) {
+    await pressOn(page, '#connectBtn');
+  }
+  await waitForConnected(page);
+  await waitForLoadIdle(page);
+}
+
+/**
+ * Presses keys on a list and records which item each lands on.
+ * @param {import('playwright-core').Page} page - The renderer page.
+ * @param {string} selector - The list's items.
+ * @param {string[]} keys - The keys to press, from the first item.
+ * @returns {Promise<number[]>} The focused item's index after each key (-1 off the list).
+ */
+async function arrowWalk(page, selector, keys) {
+  await page.focus(`${selector} >> nth=0`);
+  const positions = [];
+  for (const key of keys) {
+    await page.keyboard.press(key);
+    positions.push(await page.evaluate((sel) => Array.from(document.querySelectorAll(sel)).indexOf(document.activeElement), selector));
+  }
+  return positions;
+}
+
+/**
+ * The accessibility / keyboard checks of the [a11y] launch in Spanish (the
+ * structure; few texts): the layout per width with Cmd/Ctrl+F per view, the
+ * live regions and list arrows, the Escape order (Settings' inline
+ * confirmations first), Settings never stacking on a dialog, every dialog
+ * kind at 700×500 (buttons inside the window, focus trapped and restored,
+ * destructive confirmations on Cancel), the site and certificate dialogs
+ * opened from Connect, and "Test management access" during a session
+ * teardown.
+ * @param {object} session - The launch.
+ * @returns {Promise<void>}
+ */
+async function runA11yChecks(session) {
+  const { page } = session;
+  const L = '[a11y] es';
+
+  await check(`${L}: per width — ≥1000 px a full sidebar + split panes, 800–999 px the icon sidebar + split panes, 700–799 px (and 700×500) the top view switcher + one pane at a time with "Choose destination"; in each of the three views at each width Cmd/Ctrl+F focuses that view's search (visible); no horizontal overflow`, async () => {
+    const seen = [];
+    let ok = true;
+    for (const [width, height, nav, panes] of A11Y_WIDTHS) {
+      await resizeAndSettle(session, width, height);
+      for (const view of ['accessPoints', 'groups', 'networks']) {
+        await showViewList(page, view);
+        const layout = await readLayout(page);
+        await page.keyboard.press(FIND_KEY);
+        await waitForFocusOn(page, A11Y_SEARCHES[view]).catch(() => {});
+        const focus = await readFocus(page);
+        const row = {
+          width, view, nav: navMode(layout), panes: paneMode(layout, view), find: focus.id, findVisible: focus.visible,
+          overflow: layout.docScrollWidth > layout.docClientWidth || layout.overflowing.length > 0,
+          openDestination: layout.openDestination,
+          singlePane: await page.evaluate(() => window.matchMedia('(max-width: 799px)').matches),
+        };
+        seen.push(row);
+        ok = ok && row.nav === nav && row.panes === panes && row.find === A11Y_SEARCHES[view] && row.findVisible && !row.overflow &&
+          row.singlePane === (panes === 'single') && (view !== 'accessPoints' || row.openDestination === (panes === 'single'));
+        await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+      } // End of the loop over the three views
+    } // End of the loop over the widths
+    await resizeAndSettle(session, 1200, 700);
+    return verdict(ok, seen);
+  }); // End of check "per width..."
+
+  await check(`${L}: aria-live regions exist for the selection count (#apSelectionSummary), the move preview, the list search counts, operation results (toasts, dialog status lines, the Settings test result), the dialog errors (role alert) and the connection status (#statusText, role status); ticking an AP updates the selection count`, async () => {
+    await showViewList(page, 'accessPoints');
+    const regions = await page.evaluate(() => Object.fromEntries([
+      'apSelectionSummary', 'moveStatus', 'groupListSummary', 'networkListSummary', 'toastContainer', 'moveModalSummary', 'statusText',
+      'groupModalStatus', 'networkModalStatus', 'bindingModalStatus', 'managementTestResult', 'groupModalError', 'networkModalError', 'bindingModalError',
+    ].map((id) => {
+      const element = document.getElementById(id);
+      return [id, element ? { live: element.getAttribute('aria-live'), role: element.getAttribute('role') } : null];
+    })));
+    const before = await page.textContent('#apSelectionSummary');
+    await page.click(`#apList .ap-checkbox[data-mac="${AP['Salón'].mac}"]`);
+    await page.waitForFunction((text) => document.getElementById('apSelectionSummary').textContent !== text, before, { timeout: WAIT_MS });
+    const after = await page.textContent('#apSelectionSummary');
+    await page.click(`#apList .ap-checkbox[data-mac="${AP['Salón'].mac}"]`);
+    const polite = (id) => regions[id]?.live === 'polite' || regions[id]?.role === 'status';
+    return verdict(
+      ['apSelectionSummary', 'moveStatus', 'groupListSummary', 'networkListSummary', 'toastContainer', 'moveModalSummary', 'statusText',
+        'groupModalStatus', 'networkModalStatus', 'bindingModalStatus', 'managementTestResult'].every(polite) &&
+      ['groupModalError', 'networkModalError', 'bindingModalError'].every((id) => regions[id]?.role === 'alert') &&
+      regions.statusText.role === 'status' && /1/.test(after ?? ''),
+      { regions, before, after }
+    );
+  }); // End of check "aria-live regions..."
+
+  await check(`${L}: arrows move through the lists — the AP checkboxes, the AP-group and Wi-Fi network lists (Down / End / Home / Up) and the destination radios (Down moves and checks the next)`, async () => {
+    await showViewList(page, 'accessPoints');
+    const aps = await arrowWalk(page, '#apList .ap-checkbox', ['ArrowDown', 'ArrowDown', 'ArrowUp']);
+    await showViewList(page, 'groups');
+    const groupCount = await page.locator('#groupList .master-item').count();
+    const groupWalk = await arrowWalk(page, '#groupList .master-item', ['ArrowDown', 'End', 'Home']);
+    await showViewList(page, 'networks');
+    await waitForNetworksMode(page, 'managedReady');
+    const networkCount = await page.locator('#networkList .master-item').count();
+    const networkWalk = await arrowWalk(page, '#networkList .master-item', ['ArrowDown', 'ArrowDown', 'End', 'Home', 'ArrowUp']);
+    await showViewList(page, 'accessPoints');
+    await page.focus('#destinationList .destination-radio >> nth=0');
+    await page.keyboard.press('Space');
+    await page.keyboard.press('ArrowDown');
+    const radio = await page.evaluate(() => {
+      const radios = Array.from(document.querySelectorAll('#destinationList .destination-radio'));
+      return { focused: radios.indexOf(document.activeElement), checked: radios.findIndex((input) => input.checked) };
+    });
+    return verdict(
+      isDeepStrictEqual(aps, [1, 2, 1]) && isDeepStrictEqual(groupWalk, [1, groupCount - 1, 0]) &&
+      isDeepStrictEqual(networkWalk, [1, 2, networkCount - 1, 0, 0]) && radio.focused === 1 && radio.checked === 1,
+      { aps, groupWalk, groupCount, networkWalk, networkCount, radio }
+    );
+  }); // End of check "arrows move through the lists"
+
+  await check(`${L}: Escape order — in a view it clears the search first (focus stays there); with Settings open over a search, Escape closes Settings (focus back on the Settings button) and the search is kept; inside Settings an open inline confirmation ("Reset trusted certificate", "Remove management access" — each opening on its Cancel) is cancelled first, focus back on the button that asked, Settings staying open; the next Escape closes Settings; nothing is saved or reset`, async () => {
+    const callsBefore = await stubState(session);
+    await showViewList(page, 'networks');
+    await page.fill('#networkSearch', 'zz');
+    await page.press('#networkSearch', 'Escape');
+    const cleared = await page.evaluate(() => ({ value: document.getElementById('networkSearch').value, active: document.activeElement?.id }));
+    await page.fill('#networkSearch', 'Ca');
+    await pressOn(page, '#settingsBtn');
+    await waitForDialog(page, 'settingsModal', true);
+    await page.keyboard.press('Escape');
+    await waitForDialog(page, 'settingsModal', false);
+    const afterDialog = await page.evaluate(() => ({ value: document.getElementById('networkSearch').value, active: document.activeElement?.id }));
+    await page.press('#networkSearch', 'Escape');
+
+    await pressOn(page, '#settingsBtn');
+    await waitForDialog(page, 'settingsModal', true);
+    await waitForFocusOn(page, 'urlInput');
+    await pressOn(page, '#resetCertBtn');
+    await waitForFocusOn(page, 'cancelCertResetBtn');
+    await page.keyboard.press('Escape');
+    const certCancelled = await page.evaluate(() => ({
+      confirmShown: !document.getElementById('certResetConfirm').hidden, settingsOpen: document.getElementById('settingsModal').classList.contains('visible'), active: document.activeElement?.id,
+    }));
+    await pressOn(page, '#removeManagementBtn');
+    await waitForFocusOn(page, 'cancelManagementRemoveBtn');
+    await page.keyboard.press('Escape');
+    const removeCancelled = await page.evaluate(() => ({
+      confirmShown: !document.getElementById('managementRemoveConfirm').hidden, settingsOpen: document.getElementById('settingsModal').classList.contains('visible'), active: document.activeElement?.id,
+    }));
+    await page.keyboard.press('Escape');
+    await waitForDialog(page, 'settingsModal', false);
+    const closed = await readFocus(page);
+    const callsAfter = await stubState(session);
+    const sent = (channel) => callsTo(callsAfter, channel).length - callsTo(callsBefore, channel).length;
+    return verdict(
+      cleared.value === '' && cleared.active === 'networkSearch' && afterDialog.value === 'Ca' && afterDialog.active === 'settingsBtn' &&
+      !certCancelled.confirmShown && certCancelled.settingsOpen && certCancelled.active === 'resetCertBtn' &&
+      !removeCancelled.confirmShown && removeCancelled.settingsOpen && removeCancelled.active === 'removeManagementBtn' &&
+      closed.id === 'settingsBtn' && sent('config:save') === 0 && sent('cert:reset') === 0,
+      { cleared, afterDialog, certCancelled, removeCancelled, closed: closed.id, saves: sent('config:save'), resets: sent('cert:reset') }
+    );
+  }); // End of check "Escape order..."
+
+  await check(`${L}: Settings never stacks on another dialog — clicked while a Wi-Fi network "Disable" re-reads the data (no dialog yet), it does not open, and the confirmation opens alone; when a dialog opens while Settings is still loading its config, Settings stays closed`, async () => {
+    let duringReread;
+    let confirmation;
+    let settled;
+    let groupProbe;
+    try {
+      await showViewList(page, 'networks');
+      await waitForNetworksMode(page, 'managedReady');
+      await openNetworkDetail(page, 'Casa');
+      await configureStub(session, { delays: { 'management:networks': 1500 } });
+      await pressOn(page, '#networkToggleBtn');
+      await page.waitForTimeout(150);
+      const settingsEnabled = await page.evaluate(() => !document.getElementById('settingsBtn').disabled && !document.querySelector('.app-container').hasAttribute('inert'));
+      await page.evaluate(() => document.getElementById('settingsBtn').click());
+      await page.waitForTimeout(400);
+      duringReread = { settingsEnabled, ...(await readShell(page)) };
+      await waitForDialog(page, 'networkModal', true);
+      await page.waitForTimeout(200);
+      confirmation = await readDialogA11y(page, 'networkModal');
+      await page.keyboard.press('Escape');
+      await waitForDialog(page, 'networkModal', false);
+      await configureStub(session, { delays: { 'config:load': 1200 } });
+      await showViewList(page, 'groups');
+      await page.evaluate(() => document.getElementById('settingsBtn').click());
+      await pressOn(page, '#newGroupBtn');
+      await waitForDialog(page, 'groupModal', true);
+      await page.waitForTimeout(1600);
+      groupProbe = await readDialogA11y(page, 'groupModal');
+      await page.keyboard.press('Escape');
+      await waitForDialog(page, 'groupModal', false);
+      settled = await readShell(page);
+    } finally {
+      await configureStub(session, { delays: {} });
+      if (await page.isVisible('#settingsModal.visible')) {
+        await page.click('#cancelSettingsBtn');
+      }
+    }
+    return verdict(
+      duringReread.settingsEnabled && !duringReread.settingsOpen && isDeepStrictEqual(confirmation.openDialogs, ['networkModal']) && confirmation.activeId === 'cancelNetworkBtn' &&
+      isDeepStrictEqual(groupProbe.openDialogs, ['groupModal']) && groupProbe.activeInside && !settled.settingsOpen,
+      { duringReread, confirmation: confirmation.openDialogs, groupDialogs: groupProbe.openDialogs, groupActive: groupProbe.activeId, settled: settled.settingsOpen }
+    );
+  }); // End of check "Settings never stacks..."
+
+  await resizeAndSettle(session, 700, 500);
+  try {
+    await check(`${L}: 700×500 — the action bars stay inside the window: "Choose destination" under the AP list, and the move button in the destination picker`, async () => {
+      await showViewList(page, 'accessPoints');
+      await page.click(`#apList .ap-checkbox[data-mac="${AP['Salón'].mac}"]`);
+      const inside = (selector) => page.evaluate((sel) => {
+        const element = document.querySelector(sel);
+        const rect = element?.getBoundingClientRect();
+        return Boolean(rect && element.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true }) && rect.width > 0 &&
+          rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight);
+      }, selector);
+      const choose = await inside('#openDestinationBtn');
+      await page.click('#openDestinationBtn');
+      await pickDestination(page, BIND_ZGRUPO);
+      const move = await inside('#moveBtn');
+      return verdict(choose && move, { choose, move });
+    }); // End of check "700×500 — the action bars stay inside the window"
+
+    await check(`${L}: 700×500 — the move review: a labelled, described modal dialog, every button inside the window, the background inert and nothing focusable behind it, focus on Cancel (the safe default), Tab / Shift+Tab trapped; Escape cancels and focus returns to the move button`, async () => {
+      const trip = await dialogRoundTrip(session, { opener: '#moveBtn', modalId: 'moveModal', focusId: 'cancelMoveBtn' });
+      await page.click('#destinationBackBtn');
+      await page.click(`#apList .ap-checkbox[data-mac="${AP['Salón'].mac}"]`);
+      return verdict(trip.ok, trip.detail);
+    });
+
+    await check(`${L}: 700×500 — Settings: every button inside the window, focus in the URL field, trapped; Escape closes it and focus returns to the Settings button`, async () => {
+      const trip = await dialogRoundTrip(session, { opener: '#settingsBtn', modalId: 'settingsModal', focusId: 'urlInput' });
+      return verdict(trip.ok, trip.detail);
+    });
+
+    await check(`${L}: 700×500 — AP groups: "New group" (focus in the name field) and the Delete confirmation of an empty group (focus on Cancel, never the destructive button): buttons inside the window, trapped, focus back on the opener after Escape`, async () => {
+      await showViewList(page, 'groups');
+      await page.waitForSelector('#newGroupBtn', { timeout: WAIT_MS });
+      const create = await dialogRoundTrip(session, { opener: '#newGroupBtn', modalId: 'groupModal', focusId: 'groupNameInput' });
+      await openGroupDetail(page, A11Y_EMPTY_GROUP.wlanId, A11Y_EMPTY_GROUP.wlanName);
+      await page.waitForSelector('#groupDeleteBtn:not([disabled])', { timeout: WAIT_MS });
+      const remove = await dialogRoundTrip(session, { opener: '#groupDeleteBtn', modalId: 'groupModal', focusId: 'cancelGroupBtn' });
+      const writes = callsTo(await stubState(session), 'management:ap-group-delete').length;
+      return verdict(create.ok && remove.ok && writes === 0, { create: create.detail, remove: remove.detail, writes });
+    }); // End of check "700×500 — AP groups"
+
+    await check(`${L}: 700×500 — Wi-Fi network dialogs of Casa: Edit (focus in the name field), Disable and Delete (focus on Cancel), and Change password's new confirmation (focus on Cancel, Back shown): buttons inside the window, trapped, focus back on the action after Escape, nothing sent`, async () => {
+      await showViewList(page, 'networks');
+      await waitForNetworksMode(page, 'managedReady');
+      await openNetworkDetail(page, 'Casa');
+      const before = await stubState(session);
+      const edit = await dialogRoundTrip(session, { opener: '#networkEditBtn', modalId: 'networkModal', focusId: 'networkNameInput' });
+      const disable = await dialogRoundTrip(session, { opener: '#networkToggleBtn', modalId: 'networkModal', focusId: 'cancelNetworkBtn' });
+      const remove = await dialogRoundTrip(session, { opener: '#networkDeleteBtn', modalId: 'networkModal', focusId: 'cancelNetworkBtn' });
+      await pressOn(page, '#networkPasswordBtn');
+      await waitForDialog(page, 'networkModal', true);
+      await page.fill('#networkPassphraseInput', A11Y_PASSPHRASE);
+      await page.fill('#networkPassphraseConfirmInput', A11Y_PASSPHRASE);
+      await page.press('#networkPassphraseConfirmInput', 'Enter');
+      await waitForNetworkStep(page, 'review');
+      const review = await readDialogA11y(page, 'networkModal');
+      const reviewEscapes = await tabCycle(page, 'networkModal', review.focusables);
+      await page.keyboard.press('Escape');
+      await waitForDialog(page, 'networkModal', false);
+      await waitForFocusOn(page, 'networkPasswordBtn');
+      const after = await stubState(session);
+      const writes = ['management:network-update', 'management:network-password', 'management:network-enable', 'management:network-delete']
+        .map((channel) => callsTo(after, channel).length - callsTo(before, channel).length);
+      return verdict(
+        edit.ok && disable.ok && remove.ok && dialogOk(review, reviewEscapes, 'cancelNetworkBtn') && review.footer.some((button) => button.id === 'backNetworkBtn') &&
+        writes.every((count) => count === 0),
+        { edit: edit.detail, disable: disable.detail, remove: remove.detail, review, reviewEscapes, writes }
+      );
+    }); // End of check "Wi-Fi network dialogs of Casa..."
+
+    await check(`${L}: 700×500 — "Broadcast on" of Casa: focus in its search, buttons inside the window, trapped; arrows move through the group checkboxes; Escape clears its search first (the dialog stays), the next closes it with focus back on its button`, async () => {
+      const trip = await dialogRoundTrip(session, {
+        opener: '#networkBindingsBtn', modalId: 'bindingModal', focusId: 'bindingSearchInput',
+        beforeClose: async (p) => {
+          const walk = await arrowWalk(p, '#bindingGroupList input[type="checkbox"]', ['ArrowDown', 'End', 'Home', 'ArrowUp']);
+          const count = await p.locator('#bindingGroupList input[type="checkbox"]').count();
+          await p.fill('#bindingSearchInput', 'zz');
+          await p.press('#bindingSearchInput', 'Escape');
+          const search = await p.evaluate(() => ({ value: document.getElementById('bindingSearchInput').value, open: document.getElementById('bindingModal').classList.contains('visible') }));
+          return { ok: isDeepStrictEqual(walk, [1, count - 1, 0, 0]) && search.value === '' && search.open, walk, count, search };
+        },
+      });
+      return verdict(trip.ok, trip.detail);
+    }); // End of check "700×500 — Broadcast on of Casa"
+
+    await check(`${L}: 700×500 — "New network": buttons inside the window, focus in the name field, trapped; arrows move through its AP-group checkboxes; Escape closes it with focus back on "New network"`, async () => {
+      await showViewList(page, 'networks');
+      const trip = await dialogRoundTrip(session, {
+        opener: '#newNetworkBtn', modalId: 'networkModal', focusId: 'networkNameInput',
+        beforeClose: async (p) => {
+          const walk = await arrowWalk(p, '#networkGroupsField input[type="checkbox"]', ['ArrowDown', 'End', 'Home']);
+          const count = await p.locator('#networkGroupsField input[type="checkbox"]').count();
+          return { ok: count > 2 && isDeepStrictEqual(walk, [1, count - 1, 0]), walk, count };
+        },
+      });
+      return verdict(trip.ok, trip.detail);
+    }); // End of check "700×500 — New network"
+
+    await check(`${L}: 700×500 — the site list (a multi-site connect started from Connect with the keyboard): a described dialog, buttons inside the window, focus on the first site, arrows move through the sites, trapped; Escape cancels and focus returns to Connect`, async () => {
+      let detail;
+      try {
+        await ensureDisconnected(page);
+        await configureStub(session, { connect: { needsSiteSelection: true }, sites: [{ id: 'site-a', name: 'Casa' }, { id: 'site-b', name: 'Oficina' }, { id: 'site-c', name: 'Taller' }] });
+        await pressOn(page, '#connectBtn');
+        await waitForDialog(page, 'siteModal', true);
+        await page.waitForFunction(() => document.activeElement?.classList.contains('site-option'), null, { timeout: WAIT_MS });
+        const probe = await readDialogA11y(page, 'siteModal');
+        const walk = [];
+        for (const key of ['ArrowDown', 'ArrowDown', 'Home', 'End']) {
+          await page.keyboard.press(key);
+          walk.push(await page.evaluate(() => Array.from(document.querySelectorAll('#siteList .site-option')).indexOf(document.activeElement)));
+        }
+        const escapes = await tabCycle(page, 'siteModal', probe.focusables);
+        await page.keyboard.press('Escape');
+        await waitForDialog(page, 'siteModal', false);
+        await page.waitForFunction(() => !document.getElementById('connectBtn').disabled, null, { timeout: WAIT_MS });
+        await page.waitForTimeout(100);
+        const restored = await readFocus(page);
+        detail = { probe, walk, escapes, restored: restored.id };
+        return verdict(
+          probe.open && probe.described && probe.describedBy === 'siteModalMessage' && probe.backgroundInert && probe.behind.length === 0 &&
+          probe.footer.every((button) => button.inside) && probe.activeInside && isDeepStrictEqual(walk, [1, 2, 0, 2]) && escapes.length === 0 &&
+          restored.id === 'connectBtn' && restored.visible,
+          detail
+        );
+      } finally {
+        await configureStub(session, { connect: { success: true }, sites: [] });
+        await ensureConnected(page);
+      }
+    }); // End of check "the site list..."
+
+    await check(`${L}: 700×500 — the "certificate changed" notice (a connect started from Connect with the keyboard): a described dialog, its button inside the window and focused, trapped; Escape closes it and focus returns to Connect`, async () => {
+      try {
+        await ensureDisconnected(page);
+        await configureStub(session, { presentedFingerprint: FINGERPRINT_B });
+        await pressOn(page, '#connectBtn');
+        await waitForDialog(page, 'certModal', true);
+        await waitForFocusOn(page, 'cancelCertBtn');
+        const probe = await readDialogA11y(page, 'certModal');
+        const escapes = await tabCycle(page, 'certModal', probe.focusables);
+        await page.keyboard.press('Escape');
+        await waitForDialog(page, 'certModal', false);
+        await page.waitForFunction(() => !document.getElementById('connectBtn').disabled, null, { timeout: WAIT_MS });
+        await page.waitForTimeout(100);
+        const restored = await readFocus(page);
+        return verdict(dialogOk(probe, escapes, 'cancelCertBtn') && restored.id === 'connectBtn' && restored.visible, { probe, escapes, restored: restored.id });
+      } finally {
+        await configureStub(session, { presentedFingerprint: null });
+        await ensureConnected(page);
+      }
+    }); // End of check "the certificate changed notice..."
+  } finally {
+    await resizeAndSettle(session, 1200, 700);
+  }
+} // End of function runA11yChecks()
+
+/**
+ * "Test management access" pressed while a certificate reset closes the
+ * session (the disconnect delayed): it says "connect first" at once and no
+ * nonce-bound call carries the old session's nonce after the teardown began
+ * (phase 20a). Asserts the localized result line, so it runs in both
+ * languages; the stub's pin is restored and the app reconnected afterwards.
+ * @param {object} session - The launch.
+ * @param {string} language - 'es' or 'en'.
+ * @returns {Promise<void>}
+ */
+async function runA11yTeardownCheck(session, language) {
+  const { page } = session;
+  const notConnected = CAPS_TEXT[language].result.notConnected;
+  await check(`[a11y] ${language}: "Test management access" pressed while a certificate reset closes the session says "${notConnected}" and sends nothing for the old session (the session nonce goes with the old generation at once)`, async () => {
+    let detail;
+    try {
+      await openSettingsWhenIdle(page);
+      await configureStub(session, { delays: { 'omada:disconnect': 1200 } });
+      const before = callsTo(await stubState(session), 'management:test').length;
+      await page.click('#resetCertBtn');
+      await waitForFocusOn(page, 'cancelCertResetBtn');
+      await page.click('#confirmCertResetBtn');
+      await page.waitForTimeout(150);
+      await page.click('#testManagementBtn');
+      await waitForTestResult(page, notConnected);
+      await page.waitForFunction(() => !document.getElementById('statusIndicator')?.classList.contains('connected'), null, { timeout: WAIT_MS });
+      await page.waitForTimeout(1300);
+      const after = await stubState(session);
+      const tests = callsTo(after, 'management:test').length - before;
+      const reset = callsTo(after, 'cert:reset').length;
+      detail = { tests, reset };
+      return verdict(tests === 0 && reset >= 1, detail);
+    } finally {
+      await configureStub(session, { delays: {}, config: { ...A11Y_CONFIG, language } });
+      if (await page.isVisible('#settingsModal.visible')) {
+        await page.click('#cancelSettingsBtn');
+        await waitForSettingsClosed(page);
+      }
+      await ensureConnected(page);
+    }
+  }); // End of check "Test management access pressed while a certificate reset..."
+} // End of function runA11yTeardownCheck()
+
+/**
+ * Launch 10 [a11y]: management on over the [bind] data (plus an empty AP
+ * group), a pinned certificate; the keyboard / accessibility checks of
+ * runA11yChecks() in Spanish and the teardown check, then — switched to
+ * English (saved, reconnected) — the teardown check again (it asserts text).
+ * @param {{ binary: string }} electronInfo - Resolved Electron binary.
+ * @returns {Promise<void>}
+ */
+async function runAccessibility(electronInfo) {
+  const session = await launch(electronInfo, 'a11y', {
+    config: A11Y_CONFIG,
+    connect: { success: true },
+    siteName: 'Casa',
+    controllerVersion: data.controllerVersion,
+    accessPoints: NETS_APS,
+    wlanGroups: A11Y_GROUPS,
+    networks: BIND_NETWORKS,
+  });
+  const { page } = session;
+  try {
+    await check('[a11y] es: connected with management on — the three views have data (APs, AP groups with "Vacío", managed Wi-Fi networks)', async () => {
+      await waitForConnected(page);
+      await waitForApCount(page, NETS_APS.filter((ap) => MAC_REGEX.test(ap.mac)).length);
+      await page.click('#navNetworks');
+      await waitForNetworksMode(page, 'managedReady');
+      const networks = await readManagedList(page);
+      await page.click('#navGroups');
+      const groups = await page.evaluate(() => Array.from(document.querySelectorAll('#groupList .master-item')).map((item) => item.dataset.groupId));
+      await page.click('#navAccessPoints');
+      return verdict(networks.items.length === BIND_NETWORKS.length && groups.includes(A11Y_EMPTY_GROUP.wlanId), { networks: networks.items.length, groups });
+    }); // End of check "[a11y] es: connected with management on"
+    await runA11yChecks(session);
+    await runA11yTeardownCheck(session, 'es');
+
+    await check('[a11y] en: after switching to English (saved, reconnected), connected again', async () => {
+      await openSettingsWhenIdle(page);
+      await page.selectOption('#languageSelect', 'en');
+      await page.click('#saveSettingsBtn');
+      await waitForSettingsClosed(page);
+      await waitForConnected(page);
+      await page.waitForFunction(() => document.documentElement.lang === 'en', null, { timeout: WAIT_MS });
+      return true;
+    });
+    await runA11yTeardownCheck(session, 'en');
+  } finally {
+    session.finalState = await stubState(session).catch((error) => ({ error: String(error) }));
+    await session.app.close().catch(() => {});
+  }
+} // End of function runAccessibility()
+
+// ============================================================================
 // Whole-run checks
 // ============================================================================
 
@@ -9377,7 +10170,7 @@ async function runGlobalChecks() {
   await check(`every launch ran the installed Electron ${installedElectron} (process.versions.electron)`, () => {
     const running = launches.map((session) => ({ label: session.label, versions: session.runningVersions }));
     return verdict(
-      running.length === EXPECTED_LAUNCHES && running.every(({ versions }) => versions && versions.electron === installedElectron),
+      running.length === expectedLaunches && running.every(({ versions }) => versions && versions.electron === installedElectron),
       running
     );
   });
@@ -9412,7 +10205,7 @@ async function runGlobalChecks() {
   await check('HOME and Electron userData were fresh temp dirs on every launch', () => {
     const detail = states.map(({ session, state }) => ({ home: session.home, seen: state.environment }));
     return verdict(
-      states.length === EXPECTED_LAUNCHES && states.every(({ session, state }) =>
+      states.length === expectedLaunches && states.every(({ session, state }) =>
         state.environment && path.resolve(state.environment.home) === path.resolve(session.home) &&
         path.resolve(state.environment.userData).startsWith(path.resolve(session.home) + path.sep) &&
         path.resolve(session.home).startsWith(path.resolve(os.tmpdir()))),
@@ -9437,18 +10230,27 @@ async function main() {
   const electronInfo = resolveElectron();
   console.log(`Electron ${electronInfo.version} (${electronInfo.source}): ${electronInfo.binary}\n`);
 
+  const allLaunches = [
+    ['es', runSpanishFirstRun],
+    ['en', runEnglishMultiSite],
+    ['tofu', runCertificatePinning],
+    ['mgmt', runManagementAccess],
+    ['caps', runManagementCapabilities],
+    ['groups', runApGroupManagement],
+    ['nets', runManagedNetworks],
+    ['netedit', runNetworkEditing],
+    ['bind', runBindingEditing],
+    ['a11y', runAccessibility],
+  ];
+  const only = (process.env.OMADA_SMOKE_ONLY ?? '').split(',').map((label) => label.trim()).filter((label) => label !== '');
+  const selected = only.length === 0 ? allLaunches : allLaunches.filter(([label]) => only.includes(label));
+  if (only.length > 0) {
+    expectedLaunches = selected.length;
+    console.log(`PARTIAL RUN (OMADA_SMOKE_ONLY): ${selected.map(([label]) => label).join(', ')}\n`);
+  }
+
   try {
-    for (const [label, runLaunch] of [
-      ['es', runSpanishFirstRun],
-      ['en', runEnglishMultiSite],
-      ['tofu', runCertificatePinning],
-      ['mgmt', runManagementAccess],
-      ['caps', runManagementCapabilities],
-      ['groups', runApGroupManagement],
-      ['nets', runManagedNetworks],
-      ['netedit', runNetworkEditing],
-      ['bind', runBindingEditing],
-    ]) {
+    for (const [label, runLaunch] of selected) {
       try {
         await runLaunch(electronInfo);
       } catch (error) {

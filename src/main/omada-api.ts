@@ -10,6 +10,7 @@ import {
   validateWlanGroups
 } from './omada-validators';
 import { OmadaTransport, parseOmadaResponse, ResponseHeaders } from './omada-transport';
+import { isSensitiveKey, redactErrorMessage } from './redact';
 
 // This module never imports Electron: all HTTP goes through the injected
 // OmadaTransport (production: createNetTransport() from net-transport.ts), so the
@@ -38,6 +39,15 @@ const AUTH_ERROR_CODES = new Set<number>([-1200]);
 const SITES_PAGE_SIZE = 100;
 const MAX_SITE_PAGES = 50;
 
+// Session credentials remembered for scrubbing (sessionSecrets()): at most
+// this many, the oldest dropped first (each login adds a CSRF token and
+// usually a session cookie)
+const MAX_HELD_SECRETS = 32;
+// A cookie whose name is not sensitive (isSensitiveKey(): TPOMADA_SESSIONID
+// is) is scrubbed by value only from this length on: a shorter value is no
+// credential, and scrubbing it ("en", "1") would mangle every diagnostic
+const MIN_SCRUBBED_COOKIE_LENGTH = 8;
+
 /**
  * Omada Controller API Client
  * Handles authentication and communication with TP-Link Omada Controller
@@ -58,6 +68,11 @@ export class OmadaController {
   private availableSites: SiteInfo[] = [];
   private csrfToken: string | null = null;
   private cookies: CookieJar = new CookieJar();
+  // Every session credential this client has held — the CSRF tokens and the
+  // cookie values (see MIN_SCRUBBED_COOKIE_LENGTH) — newest last, at most
+  // MAX_HELD_SECRETS. Kept after a logout or a failed re-login cleared the
+  // session: a failure reported afterwards can still echo one
+  private heldSecrets: string[] = [];
   // Shared in-flight re-login: concurrent session-expired requests all
   // await this single promise instead of starting competing logins
   private reloginPromise: Promise<void> | null = null;
@@ -118,6 +133,7 @@ export class OmadaController {
       }
 
       this.csrfToken = loginResponse.result.token;
+      this.rememberSessionSecrets();
 
       // Step 3: Load the authorized sites (newer controllers don't expose
       // "Default" — sites are addressed by generated ids)
@@ -139,7 +155,7 @@ export class OmadaController {
 
       return { siteSelected: this.siteId !== null, sites: this.availableSites };
     } catch (error) {
-      console.error('Connection error:', error);
+      console.error('Connection error:', this.redactedMessage(error));
       throw error;
     }
   } // End of function connect()
@@ -188,6 +204,56 @@ export class OmadaController {
   } // End of function selectSite()
 
   /**
+   * Every credential this client's requests carry or carried, for scrubbing
+   * by value from a failure before it is logged, rethrown or shown (a
+   * controller message or an error page can echo one bare, where no key
+   * names it): the login password, the Cookie header sent now, and every
+   * CSRF token and cookie value held so far (heldSecrets — also the ones a
+   * logout or a failed re-login has cleared since).
+   * @returns {string[]} The secret values (none empty).
+   */
+  sessionSecrets(): string[] {
+    const secrets = [this.password, this.cookies.toHeader(), ...this.heldSecrets];
+    return secrets.filter((secret) => secret.length > 0);
+  }
+
+  /**
+   * Adds the session credentials held now — the CSRF token and the cookie
+   * values worth scrubbing (a sensitive name, or MIN_SCRUBBED_COOKIE_LENGTH
+   * characters) — to heldSecrets, each once; the oldest are dropped beyond
+   * MAX_HELD_SECRETS.
+   */
+  private rememberSessionSecrets(): void {
+    const current = this.cookies
+      .entries()
+      .filter(([name, value]) => isSensitiveKey(name) || value.length >= MIN_SCRUBBED_COOKIE_LENGTH)
+      .map(([, value]) => value);
+    if (this.csrfToken) {
+      current.push(this.csrfToken);
+    }
+    for (const secret of current) {
+      if (secret.length > 0 && !this.heldSecrets.includes(secret)) {
+        this.heldSecrets.push(secret);
+      }
+    }
+    if (this.heldSecrets.length > MAX_HELD_SECRETS) {
+      this.heldSecrets.splice(0, this.heldSecrets.length - MAX_HELD_SECRETS);
+    }
+  } // End of function rememberSessionSecrets()
+
+  /**
+   * The redacted message of a failure, for this client's log lines: the
+   * central redactor (redact.ts) with every session credential
+   * (sessionSecrets()) scrubbed by value as well (a failure can quote a
+   * controller message or a response excerpt).
+   * @param {unknown} error - The thrown value.
+   * @returns {string} The redacted message.
+   */
+  private redactedMessage(error: unknown): string {
+    return redactErrorMessage(error, this.sessionSecrets());
+  }
+
+  /**
    * Log out from the controller (best-effort) and clear all local session
    * state (cookies, CSRF token, site id). Network errors are swallowed:
    * logout is a courtesy to the server, not a requirement.
@@ -198,7 +264,7 @@ export class OmadaController {
         await this.rawRequest(`/${this.omadacId}/api/v2/logout`, 'POST');
       } catch (error) {
         // Best-effort: the server-side session will expire on its own
-        console.warn('Logout request failed:', error);
+        console.warn('Logout request failed:', this.redactedMessage(error));
       }
     }
     this.clearSessionState();
@@ -363,7 +429,7 @@ export class OmadaController {
       groups = joined.groups;
     } else {
       // Pre-6.3 (or unknown) controller without a usable setting/wlans
-      console.warn('Group list (setting/wlans) unavailable; using the groups setting/ssids reports:', listOutcome.reason);
+      console.warn('Group list (setting/wlans) unavailable; using the groups setting/ssids reports:', this.redactedMessage(listOutcome.reason));
       groups = ssidOutcome.value;
     }
 
@@ -536,6 +602,7 @@ export class OmadaController {
     }
 
     this.csrfToken = loginResponse.result.token;
+    this.rememberSessionSecrets();
   } // End of function relogin()
 
   /**
@@ -581,6 +648,7 @@ export class OmadaController {
       const setCookie = responseHeaders['set-cookie'];
       if (setCookie) {
         this.cookies.merge(setCookie);
+        this.rememberSessionSecrets();
       }
     };
 
@@ -589,6 +657,7 @@ export class OmadaController {
       mergeResponseCookies
     );
 
-    return parseOmadaResponse<T>(response.statusCode, response.body);
+    // An error excerpt is scrubbed of the session credentials before its cut
+    return parseOmadaResponse<T>(response.statusCode, response.body, this.sessionSecrets());
   } // End of function rawRequest()
 } // End of class OmadaController

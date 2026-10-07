@@ -22,6 +22,7 @@ import { loadManagedGroups, resetManagedGroups } from './managed-groups';
 import { loadManagedNetworks, resetManagedNetworks } from './managed-networks';
 import { beginCapabilityCheck, loadManagementCapabilities } from './management';
 import { isAmbiguousGroup } from './move-plan';
+import { isAnyModalOpen } from './modal-focus';
 import { renderInventoryViews, resetInventoryViews } from './navigation';
 import { renderNetworksView } from './networks-view';
 import { renderNotices } from './notices';
@@ -92,11 +93,17 @@ function connectionErrorMessage(result: { error?: string; detail?: string }): st
  * management capabilities on screen are dropped at once (a reconnect, e.g.
  * after a settings save): main closes the installed session's management
  * side as the attempt starts and the new session runs its own checks, so
- * no AP-group write action outlives the old verdict.
+ * no AP-group write action outlives the old verdict. Started from the
+ * Connect button, the attempt gives focus back to it once it is enabled
+ * again (restoreConnectFocus()).
  * @returns {Promise<void>}
  */
 export async function connect(): Promise<void> {
   if (isOperationInProgress()) return;
+  // Disabling the Connect button below drops its focus; remember that it
+  // started the attempt (spec §4.7: focus returns to the opener once the
+  // certificate or site dialog it may open has closed)
+  const fromConnectButton = document.activeElement === connectBtn;
   invalidateSession();
   beginCapabilityCheck();
   // This connection's session generation: every post-await UI commit below
@@ -141,9 +148,29 @@ export async function connect(): Promise<void> {
       if (state.lastUpdatedAt === null) {
         renderContentViews();
       }
+      restoreConnectFocus(fromConnectButton);
     }
   }
 } // End of function connect()
+
+/**
+ * Gives focus back to the Connect button after an attempt it started, once
+ * the button is enabled again: disabling it dropped its focus to the page,
+ * and the certificate and site dialogs restore focus to their opener — that
+ * disabled button — when they close, which cannot take it. Focus counts as
+ * lost on the page itself, or still inside a dialog that just closed (an
+ * inert subtree: the browser only moves it out at its next update). Focus
+ * that went somewhere else meanwhile (a dialog still open, a control the
+ * user picked) is left alone.
+ * @param {boolean} fromConnectButton - The Connect button started the attempt.
+ */
+function restoreConnectFocus(fromConnectButton: boolean): void {
+  if (!fromConnectButton || isAnyModalOpen()) return;
+  const active = document.activeElement;
+  if (active === null || active === document.body || active.closest('[inert]') !== null) {
+    connectBtn.focus();
+  }
+} // End of function restoreConnectFocus()
 
 /**
  * Handles one OMADA_CONNECT result inside connect(): success commits the
@@ -472,6 +499,12 @@ export async function disconnect(): Promise<void> {
   if (isOperationInProgress()) return;
   state.isDisconnecting = true;
   invalidateSession();
+  // The session nonce goes with the old generation at once (phase 20a): a
+  // nonce-bound call started while the disconnect is awaited (e.g. "Test
+  // management access" in Settings while a certificate reset closes the
+  // session) must not pair the new generation with the old session and have
+  // its reply accepted; clearData() drops the rest below
+  state.sessionNonce = null;
   // This disconnect's session generation (see the finally block below)
   const generation = state.sessionGeneration;
   try {

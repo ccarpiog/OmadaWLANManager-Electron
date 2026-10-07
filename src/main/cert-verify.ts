@@ -28,6 +28,7 @@ import {
   decideCertificateError,
   normalizeHostname
 } from './cert-pinning';
+import { redactErrorMessage } from './redact';
 
 /**
  * Where the verification hooks read their trust inputs from (index.ts: the
@@ -124,7 +125,7 @@ export function installCertificateVerifyProc(targetSession: Session, source: Cer
       decision = evaluateCertificate(source, request.hostname, request.verificationResult, request.certificate);
     } catch (error) {
       // Never let an unexpected error accept anything: keep Chromium's verdict
-      console.error('Certificate verification error:', error);
+      console.error('Certificate verification error:', redactErrorMessage(error));
       decision = { action: 'default' };
     }
     callback(verifyProcResult(decision));
@@ -225,7 +226,7 @@ export class ControllerTlsSessions {
     try {
       await previous.closeAllConnections();
     } catch (error) {
-      console.warn('Could not close the previous controller session\'s connections:', error);
+      console.warn('Could not close the previous controller session\'s connections:', redactErrorMessage(error));
     }
   } // End of function reset()
 

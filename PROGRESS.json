@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "updated": "2026-10-07T10:42:52Z",
+ "updated": "2026-10-07T11:48:45Z",
  "plan": "todo.md",
  "goal": "Add AP-group and Wi-Fi network management for Omada 6.3 to the Electron app, then remote controllers through the TP-Link cloud.",
  "phases": [
@@ -273,9 +273,25 @@
   {
    "id": "20",
    "title": "Integration, hardening and docs",
+   "status": "in_progress",
+   "risk": "routine",
+   "summary": "Integrates and hardens the features and writes the docs; split into 20a (audits and accessibility smoke) and 20b (docs and live-test checklist)."
+  },
+  {
+   "id": "20a",
+   "title": "IPC, redaction, race and accessibility audit",
+   "status": "done",
+   "risk": "high",
+   "summary": "Puts every IPC channel behind one sender-checked registrar, redacts errors and logs, fixes race and focus gaps and adds an accessibility smoke.",
+   "review": "docs/reviews/phase20a.md",
+   "narrative": "docs/progress-archive/phase-20a.md"
+  },
+  {
+   "id": "20b",
+   "title": "README, user guide and live-test checklist",
    "status": "queued",
    "risk": "routine",
-   "summary": "Integrates the features, hardens edge cases and writes the live-test checklist."
+   "summary": "Updates the README, adds a short user guide with es and en UI terms and writes the live-test checklist for the user."
   },
   {
    "id": "I-1",

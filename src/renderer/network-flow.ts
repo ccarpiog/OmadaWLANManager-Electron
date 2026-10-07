@@ -25,7 +25,10 @@
 //     passphrase for every WPA-Personal result), then a review of the
 //     changes; Cancel (or Escape) discards everything and nothing is sent
 //     until "Save changes";
-//   - Change password: the new passphrase twice;
+//   - Change password: the new passphrase twice, then a review naming the
+//     network, its scope and the effect, built from the same fresh read as
+//     the confirmations below (refused the same way; nothing is sent until
+//     "Change password" there);
 //   - Enable / Disable / Delete: a confirmation stating the impact (scope,
 //     bound groups), opened only after the internal data and the managed
 //     list were read again, built from that fresh read — refused with a
@@ -73,6 +76,7 @@ import {
   networkActions,
   networkFailureText,
   parseNetworkActionResult,
+  passwordReviewSummary,
   sameManagedNetwork,
   type EditPlan,
   type NetworkFailureInfo,
@@ -314,22 +318,24 @@ export async function reloadAfterWrite(generation: number): Promise<void> {
 } // End of function reloadAfterWrite()
 
 /**
- * Reads again, right before an Enable / Disable / Delete confirmation opens,
- * everything its impact summary is built from: the internal lists (the AP
- * groups and APs the scope is resolved against; a failed reload leaves them
- * stale), then the managed list (the network's scope and bound groups). The
- * confirmation opens only on that fresh read, with the network as it is
- * now: refused when the reload or the managed read failed (or a newer read
- * is still running), when management went off, or when the network changed
- * on the controller or is gone since it was shown — the re-rendered view
- * then shows it as it is, to be checked before trying again.
- * @param {'enable' | 'disable' | 'delete'} kind - The write.
- * @param {ManagedNetwork} shown - The network as the view showed it.
+ * Reads again, right before an Enable / Disable / Delete confirmation opens
+ * (or the Change password review is shown), everything its impact summary is
+ * built from: the internal lists (the AP groups and APs the scope is
+ * resolved against; a failed reload leaves them stale), then the managed
+ * list (the network's scope and bound groups). The confirmation opens only
+ * on that fresh read, with the network as it is now: refused when the
+ * reload or the managed read failed (or a newer read is still running), when
+ * management went off, or when the network changed on the controller, is
+ * gone or no longer offers the write (e.g. no longer WPA-Personal) since it
+ * was shown — the re-rendered view then shows it as it is, to be checked
+ * before trying again.
+ * @param {'password' | 'enable' | 'disable' | 'delete'} kind - The write.
+ * @param {ManagedNetwork} shown - The network as the view (or the flow's latest read) showed it.
  * @param {number} generation - The session generation of the flow.
  * @param {string} nonce - The session nonce of the flow.
  * @returns {Promise<FreshRead | null>} The fresh network or the refusal; null when the session changed meanwhile.
  */
-async function rereadForConfirmation(kind: 'enable' | 'disable' | 'delete', shown: ManagedNetwork, generation: number, nonce: string): Promise<FreshRead | null> {
+async function rereadForConfirmation(kind: 'password' | 'enable' | 'disable' | 'delete', shown: ManagedNetwork, generation: number, nonce: string): Promise<FreshRead | null> {
   /**
    * Tells whether the flow's session is gone (another generation or nonce).
    * @returns {boolean} True when it changed.
@@ -565,35 +571,76 @@ async function runEdit(flow: FlowContext, network: ManagedNetwork): Promise<Flow
 } // End of function runEdit()
 
 /**
- * Change password: the new passphrase twice → client-side check → one save
- * of the passphrase → reload.
+ * Change password: the new passphrase twice → client-side check → a fresh
+ * read (rereadForConfirmation(), like Enable / Disable / Delete) → the
+ * review naming the network, its scope and the effect, built from that read
+ * (spec §3: a passphrase change is confirmed; Back returns to the fields as
+ * typed, Cancel discards; focus on Cancel) → one save of the passphrase →
+ * reload. A refused read ends the flow with a toast (the read failed, or the
+ * network changed, is gone or is no longer WPA-Personal: the re-rendered
+ * view shows it as it is now); a refusal at the save brings the fields back
+ * with the reason.
  * @param {FlowContext} flow - The flow.
  * @param {ManagedNetwork} network - The network (WPA-Personal).
- * @returns {Promise<FlowDone | null>} The outcome, or null for a cancel / a session change.
+ * @returns {Promise<FlowDone | null>} The outcome, or null for a cancel / a refused read / a session change.
  */
 async function runPassword(flow: FlowContext, network: ManagedNetwork): Promise<FlowDone | null> {
+  const ctx = textContext();
+  // The network as the latest fresh read returned it: the review and the
+  // write act on it
+  let current = network;
+  // True while the review step is shown (the checked fields kept behind it)
+  let reviewing = false;
   for (;;) {
     const choice = await flow.dialog.next();
-    if (choice !== 'confirm' || isGone(flow)) return null;
-    const typed = flow.dialog.readPassphrase();
-    const refused = checkPassphrase(typed.passphrase, typed.confirmation);
-    if (refused !== null) {
-      showRefusal(flow, { error: refused, diagnostic: null });
+    if (choice === null || isGone(flow)) return null;
+    if (!reviewing) {
+      const typed = flow.dialog.readPassphrase();
+      const refused = checkPassphrase(typed.passphrase, typed.confirmation);
+      if (refused !== null) {
+        showRefusal(flow, { error: refused, diagnostic: null });
+        continue;
+      }
+      // The review states the scope of a fresh read only
+      flow.dialog.showBusy(t('bindingReading'));
+      const fresh = await rereadForConfirmation('password', current, flow.generation, flow.nonce);
+      if (fresh === null) return null;
+      if (!fresh.ok) {
+        showRefusalToast(fresh.failure);
+        return null;
+      }
+      current = fresh.network;
+      flow.network = current;
+      reviewing = true;
+      const scope = managedNetworkScope(current, state.wlanGroups, state.accessPoints);
+      flow.dialog.showReview(
+        t('networkPasswordReviewTitle'),
+        tFormat('networkPasswordReviewMessage', { name: displayName(current.name) }),
+        passwordReviewSummary(scope, ctx),
+        t('networkPasswordAction')
+      );
       continue;
     }
-    const request: NetworkPasswordRequest = { sessionNonce: flow.nonce, networkId: network.id, passphrase: typed.passphrase };
+    if (choice === 'back') {
+      reviewing = false;
+      flow.dialog.showForm();
+      continue;
+    }
+    const request: NetworkPasswordRequest = { sessionNonce: flow.nonce, networkId: current.id, passphrase: flow.dialog.readPassphrase().passphrase };
     const outcome = await guardedWrite(flow, 'networkChangingPassword', () => window.omadaAPI.changeNetworkPassword(request), 'password change');
     request.passphrase = '';
     if (outcome.kind === 'gone') return null;
     if (outcome.kind === 'refused') {
+      reviewing = false;
+      flow.dialog.showForm();
       showRefusal(flow, outcome.failure);
       continue;
     }
     flow.dialog.showBusy(t('refreshing'));
     await reloadAfterWrite(flow.generation);
     if (flow.generation !== state.sessionGeneration) return null;
-    return { kind: 'password', networkId: network.id, toast: tFormat(DONE_KEYS.password, { name: displayName(network.name) }), toastType: 'success' };
-  } // End of the dialog -> save -> reload loop
+    return { kind: 'password', networkId: current.id, toast: tFormat(DONE_KEYS.password, { name: displayName(current.name) }), toastType: 'success' };
+  } // End of the fields -> review -> save -> reload loop
 } // End of function runPassword()
 
 /**
@@ -694,7 +741,8 @@ function restoreFocus(done: FlowDone | null, opener: HTMLElement | null, openerI
  * opens: a toast says why and the view re-renders with the actions held
  * back. Enable / Disable / Delete first read the data again
  * (rereadForConfirmation()) and open their confirmation with the fresh
- * network and impact only — a refused read ends the flow with a toast. The
+ * network and impact only — a refused read ends the flow with a toast
+ * (Change password reads again the same way before its review). The
  * dialog (when it opened) always closes, the operation flag is released,
  * the view re-renders and focus returns to the page.
  * @param {NetworkDialogKind} kind - The write.

@@ -42,6 +42,7 @@ export interface Translations {
   emptyGroup: string;
   more: string;
   connectionSettings: string;
+  settingsDescription: string;
   controllerUrl: string;
   username: string;
   password: string;
@@ -458,6 +459,8 @@ export interface Translations {
   networkPasswordTitle: string;
   networkPasswordMessage: string;
   networkPasswordAction: string;
+  networkPasswordReviewTitle: string;
+  networkPasswordReviewMessage: string;
   networkEnableTitle: string;
   networkEnableMessage: string;
   networkEnableAction: string;
@@ -620,6 +623,7 @@ export const translations: Record<Language, Translations> = {
     emptyGroup: 'Sin redes Wi-Fi — silencia estos AP',
     more: 'más',
     connectionSettings: 'Ajustes de conexión',
+    settingsDescription: 'La conexión con el controlador, el idioma y el acceso de gestión opcional. No se guarda nada hasta que pulses Guardar.',
     controllerUrl: 'URL del controlador',
     username: 'Usuario',
     password: 'Contraseña',
@@ -977,6 +981,8 @@ export const translations: Record<Language, Translations> = {
     networkPasswordTitle: 'Cambiar la contraseña',
     networkPasswordMessage: 'Escribe la nueva contraseña de "{name}". Los dispositivos tendrán que usarla para conectarse de nuevo. La contraseña actual nunca se muestra.',
     networkPasswordAction: 'Cambiar contraseña',
+    networkPasswordReviewTitle: 'Confirmar el cambio de contraseña',
+    networkPasswordReviewMessage: '¿Cambiar la contraseña de "{name}"? Los dispositivos tendrán que usar la nueva para conectarse de nuevo, en todo su alcance:',
     networkEnableTitle: 'Activar la red',
     networkEnableMessage: '¿Activar "{name}"? Empezará a emitirse en su alcance:',
     networkEnableAction: 'Activar red',
@@ -1127,6 +1133,7 @@ export const translations: Record<Language, Translations> = {
     emptyGroup: 'No Wi-Fi networks — silences these APs',
     more: 'more',
     connectionSettings: 'Connection settings',
+    settingsDescription: 'The controller connection, the language and the optional management access. Nothing is saved until you press Save.',
     controllerUrl: 'Controller URL',
     username: 'Username',
     password: 'Password',
@@ -1484,6 +1491,8 @@ export const translations: Record<Language, Translations> = {
     networkPasswordTitle: 'Change the password',
     networkPasswordMessage: 'Type the new password of "{name}". Devices will need it to join again. The current password is never shown.',
     networkPasswordAction: 'Change password',
+    networkPasswordReviewTitle: 'Confirm the password change',
+    networkPasswordReviewMessage: 'Change the password of "{name}"? Devices will need the new one to join again, on its whole scope:',
     networkEnableTitle: 'Enable the network',
     networkEnableMessage: 'Enable "{name}"? It will start broadcasting on its scope:',
     networkEnableAction: 'Enable network',

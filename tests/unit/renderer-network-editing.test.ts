@@ -42,6 +42,7 @@ import {
   findCreatedNetworkId,
   impactNote,
   impactRows,
+  passwordReviewSummary,
   initialEditDraft,
   isEditableSecurity,
   isNetworkOperationError,
@@ -660,6 +661,28 @@ describe('impact summary and scope text', () => {
       { kind: 'scope', label: 'Scope', value: '0 groups · No APs' },
       { kind: 'groups', label: 'AP groups', value: 'None' },
     ]);
+  });
+
+  test('passwordReviewSummary() (phase 20a): the password change is confirmed with the network\'s scope, its groups, the passphrase row (never the value) and the scope note', () => {
+    const bound = managedNetworkScope(network({ apGroupIds: [G2, G1] }), groups, aps);
+    assert.deepEqual(passwordReviewSummary(bound, ctx('es')), {
+      rows: [
+        { kind: 'scope', label: 'Alcance', value: '2 grupos · 3 AP' },
+        { kind: 'groups', label: 'Grupos de AP', value: 'Default, zGrupo B' },
+        { kind: 'passphrase', label: translations.es.networkPassphraseLabel, value: 'La que has escrito (no se muestra)' },
+      ],
+      notes: [],
+    });
+    const all = managedNetworkScope(network({ scope: 'allAccessPoints' }), groups, aps);
+    assert.deepEqual(passwordReviewSummary(all, ctx('en')), {
+      rows: [
+        { kind: 'scope', label: 'Scope', value: 'All access points' },
+        { kind: 'passphrase', label: translations.en.networkPassphraseLabel, value: 'The one you typed (not shown)' },
+      ],
+      notes: ['This includes the access points added later.'],
+    });
+    assert.equal(formatMessage(translations.en.networkPasswordReviewMessage, { name: 'Casa' }), 'Change the password of "Casa"? Devices will need the new one to join again, on its whole scope:');
+    assert.match(translations.es.networkPasswordReviewMessage, /^¿Cambiar la contraseña de "\{name\}"\?/);
   });
 
   test('scopeSummaryText(): exact, a lower bound with its reasons, unknown', () => {

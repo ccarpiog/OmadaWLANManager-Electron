@@ -880,6 +880,22 @@ export function impactRows(scope: ManagedScope, ctx: TextContext): SummaryRow[] 
 } // End of function impactRows()
 
 /**
+ * The review of a password change (spec §3: a passphrase change is a
+ * destructive action, confirmed with the objects and the effect named): the
+ * network's scope rows (impactRows()), then the passphrase row ("The one you
+ * typed (not shown)" — never the value), and the scope note (impactNote()).
+ * @param {ManagedScope} scope - The network's resolved scope.
+ * @param {TextContext} ctx - The translator.
+ * @returns {{ rows: SummaryRow[]; notes: string[] }} The review's rows and notes.
+ */
+export function passwordReviewSummary(scope: ManagedScope, ctx: TextContext): { rows: SummaryRow[]; notes: string[] } {
+  const rows = impactRows(scope, ctx);
+  rows.push({ kind: 'passphrase', label: ctx.tr('networkPassphraseLabel'), value: ctx.tr('networkReviewPassphraseValue') });
+  const note = impactNote(scope, ctx);
+  return { rows, notes: note === null ? [] : [note] };
+} // End of function passwordReviewSummary()
+
+/**
  * The note under an impact summary: "All access points" includes the ones
  * added later; an unknown scope may affect any access point (never
  * guessed); none for a scope bound to AP groups.

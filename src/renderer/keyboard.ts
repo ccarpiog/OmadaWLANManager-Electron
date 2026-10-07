@@ -15,7 +15,9 @@
 // handler skips it. The move, AP group, Wi-Fi network, "Broadcast on" (whose
 // own search clears first), site-selection and certificate dialogs close
 // themselves on Escape through their own listeners (their pending promises
-// must settle through their cancel paths); the settings modal is closed here.
+// must settle through their cancel paths); the settings modal is closed here,
+// after an inline confirmation open inside it (reset the trusted
+// certificate, remove management access) was cancelled by an earlier Escape.
 // ============================================================================
 
 import { closeApDetails } from './ap-details';
@@ -26,7 +28,7 @@ import { clearGroupSearch, closeGroupDetailPane } from './groups-view';
 import { isSinglePane } from './layout';
 import { isAnyModalOpen } from './modal-focus';
 import { clearNetworkSearch, closeNetworkDetailPane } from './networks-view';
-import { closeSettings } from './settings-modal';
+import { cancelSettingsInlineConfirm, closeSettings } from './settings-modal';
 import { state } from './state';
 import { accessPointsPane, escapeAction, isFindShortcut, masterDetailPane } from './view-state';
 
@@ -114,11 +116,14 @@ function exitEditMode(): void {
 }
 
 /**
- * Closes the top dialog on Escape. Only the settings modal is closed here:
- * the move, AP group, Wi-Fi network, "Broadcast on", site-selection and
- * certificate dialogs close themselves through their own Escape listeners.
+ * Closes the top dialog on Escape. Only the settings modal is handled here
+ * (an open inline confirmation inside it is cancelled first, Settings
+ * staying open: cancelSettingsInlineConfirm()); the move, AP group, Wi-Fi
+ * network, "Broadcast on", site-selection and certificate dialogs close
+ * themselves through their own Escape listeners.
  */
 function closeTopDialog(): void {
+  if (cancelSettingsInlineConfirm()) return;
   closeSettings();
 }
 

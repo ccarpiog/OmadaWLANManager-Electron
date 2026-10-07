@@ -104,12 +104,16 @@ export interface TransportLimits {
  * to ERROR_BODY_EXCERPT_CHARS characters, so the cut can never split a secret
  * away from the key that identifies it (a prefix of redacted text is still
  * redacted). The body is already capped at MAX_RESPONSE_BYTES and the scan is
- * linear, so redacting all of it stays cheap on this error-only path.
+ * linear, so redacting all of it stays cheap on this error-only path. The
+ * caller's live credentials are scrubbed by value before the cut too, so a
+ * bare one straddling the excerpt boundary leaves no prefix behind.
  * @param {string} body - Raw response body.
+ * @param {readonly (string | null | undefined)[]} [knownSecrets] - Secret
+ *   values to scrub as well (OmadaController.sessionSecrets()).
  * @returns {string} The excerpt.
  */
-export function errorBodyExcerpt(body: string): string {
-  return redactText(body).slice(0, ERROR_BODY_EXCERPT_CHARS);
+export function errorBodyExcerpt(body: string, knownSecrets: readonly (string | null | undefined)[] = []): string {
+  return redactText(body, knownSecrets).slice(0, ERROR_BODY_EXCERPT_CHARS);
 }
 
 /**
@@ -119,17 +123,19 @@ export function errorBodyExcerpt(body: string): string {
  * same way.
  * @param {number} statusCode - HTTP status code of the response.
  * @param {string} body - Raw response body.
+ * @param {readonly (string | null | undefined)[]} [knownSecrets] - Secret
+ *   values to scrub from the excerpt (errorBodyExcerpt()).
  * @returns {OmadaApiResponse<T>} The parsed Omada API response.
  * @throws {Error} "HTTP <status>: <excerpt>" or "Invalid JSON response: <excerpt>".
  */
-export function parseOmadaResponse<T>(statusCode: number, body: string): OmadaApiResponse<T> {
+export function parseOmadaResponse<T>(statusCode: number, body: string, knownSecrets: readonly (string | null | undefined)[] = []): OmadaApiResponse<T> {
   if (statusCode < 200 || statusCode >= 300) {
-    throw new Error(`HTTP ${statusCode}: ${errorBodyExcerpt(body)}`);
+    throw new Error(`HTTP ${statusCode}: ${errorBodyExcerpt(body, knownSecrets)}`);
   }
   try {
     return JSON.parse(body) as OmadaApiResponse<T>;
   } catch {
-    throw new Error(`Invalid JSON response: ${errorBodyExcerpt(body)}`);
+    throw new Error(`Invalid JSON response: ${errorBodyExcerpt(body, knownSecrets)}`);
   }
 } // End of function parseOmadaResponse()
 

@@ -57,6 +57,9 @@ export function createFocusTrap(modal: HTMLElement): (e: KeyboardEvent) => void 
   }; // End of the returned keydown handler
 } // End of function createFocusTrap()
 
+// Every modal overlay of the app
+const MODALS: readonly HTMLElement[] = [settingsModal, moveModal, groupModal, networkModal, bindingModal, siteModal, certModal];
+
 /**
  * Tells whether any modal (settings, move, AP group, Wi-Fi network,
  * "Broadcast on", site selection, certificate) is open. Modals never stack: each opens only while the
@@ -64,27 +67,26 @@ export function createFocusTrap(modal: HTMLElement): (e: KeyboardEvent) => void 
  * @returns {boolean} True while a modal is open.
  */
 export function isAnyModalOpen(): boolean {
-  return (
-    settingsModal.classList.contains('visible') ||
-    moveModal.classList.contains('visible') ||
-    groupModal.classList.contains('visible') ||
-    networkModal.classList.contains('visible') ||
-    bindingModal.classList.contains('visible') ||
-    siteModal.classList.contains('visible') ||
-    certModal.classList.contains('visible')
-  );
+  return MODALS.some(modal => modal.classList.contains('visible'));
 }
 
 /**
  * Syncs the inert state of the background app container with modal
  * visibility: while any modal is open, the background is inert — its
  * controls can be neither Tab-focused nor clicked (Chromium has supported
- * the inert attribute natively since version 102). This complements the Tab
- * focus trap and the opener-focus restoration. Call after every modal open/close
- * transition; on close, call it BEFORE refocusing the opener (focus cannot
+ * the inert attribute natively since version 102). Every closed modal is
+ * inert too (phase 20a): its overlay stays painted while it fades out
+ * (styles.css transitions `visibility` on close), and without this its
+ * controls would stay focusable behind the next dialog for that moment.
+ * This complements the Tab focus trap and the opener-focus restoration.
+ * Call after every modal open/close transition — on open, BEFORE focusing
+ * inside the modal; on close, BEFORE refocusing the opener (focus cannot
  * enter an inert subtree).
  */
 export function updateBackgroundInert(): void {
+  for (const modal of MODALS) {
+    modal.toggleAttribute('inert', !modal.classList.contains('visible'));
+  }
   if (isAnyModalOpen()) {
     appContainer.setAttribute('inert', '');
   } else {

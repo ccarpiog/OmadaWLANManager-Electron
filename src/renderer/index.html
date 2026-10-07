@@ -25,7 +25,7 @@
       </div>
       <div class="status-section">
         <span class="status-indicator" id="statusIndicator"></span>
-        <span class="status-text" id="statusText"></span>
+        <span class="status-text" id="statusText" role="status"></span>
         <span class="status-meta last-updated" id="lastUpdated" hidden></span>
         <span class="status-meta controller-version" id="controllerVersion" hidden></span>
       </div>
@@ -285,7 +285,7 @@
   </div>
 
   <!-- Settings Modal -->
-  <div class="modal-overlay" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalHeading">
+  <div class="modal-overlay" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalHeading" aria-describedby="settingsModalMessage">
     <div class="modal">
       <div class="modal-header">
         <h2 id="settingsModalHeading"></h2>
@@ -297,6 +297,7 @@
         </button>
       </div>
       <div class="modal-body">
+        <p class="settings-modal-message" id="settingsModalMessage"></p>
         <div class="form-group">
           <label for="urlInput"></label>
           <input type="url" id="urlInput" placeholder="https://192.168.1.1:8043">
@@ -481,7 +482,7 @@
 
   <!-- Site Selection Modal (multi-site controllers: the user picks which
        site to manage; site-modal.ts fills the list with one button per site) -->
-  <div class="modal-overlay" id="siteModal" role="dialog" aria-modal="true" aria-labelledby="siteModalHeading">
+  <div class="modal-overlay" id="siteModal" role="dialog" aria-modal="true" aria-labelledby="siteModalHeading" aria-describedby="siteModalMessage">
     <div class="modal modal-sm">
       <div class="modal-header">
         <h2 id="siteModalHeading"></h2>

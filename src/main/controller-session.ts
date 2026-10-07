@@ -7,6 +7,11 @@
 // group model and the management capabilities. ConnectionManager
 // (connection-manager.ts) installs, detaches and closes sessions like any
 // ManagedController; index.ts only shape-checks payloads and calls in here.
+// A failure of the internal client leaves the session only sanitized
+// (#internalCall()): a new Error with the redacted message, every credential
+// the client holds or held (password, CSRF tokens, session-cookie values)
+// scrubbed by value — so neither the connect result's detail nor an IPC
+// rejection nor a log line can carry one a controller message echoed bare.
 //
 // Capability checks (spec §2.2) run in the background when a session becomes
 // the installed one (activate()) — so they never delay or fail the connect
@@ -163,7 +168,7 @@ import { bindingRefusalReply, checkBindingRequest, checkBindingScope, networkBin
 import { ConnectOutcome, OmadaController } from './omada-api';
 import type { OmadaTransport } from './omada-transport';
 import { OpenApiApGroupList, OpenApiClient, OpenApiClientOptions, OpenApiError, OpenApiSsidWriteDetail, PagedList } from './openapi-client';
-import { redactText } from './redact';
+import { redactErrorMessage, redactText } from './redact';
 import { MAX_MANAGED_NETWORKS, OpenApiSsid, OpenApiSsidBindings, OpenApiSsidDetail, toManagedNetwork } from './wifi-network-model';
 import {
   buildCreateSsidBody,
@@ -684,7 +689,28 @@ export class ControllerSession implements ManagedController {
    * @returns {Promise<ConnectOutcome>} The connect outcome.
    */
   connect(preferredSiteId?: string): Promise<ConnectOutcome> {
-    return this.#internal.connect(preferredSiteId);
+    return this.#internalCall(() => this.#internal.connect(preferredSiteId));
+  }
+
+  /**
+   * Runs one internal-client call; a failure leaves the session only as a
+   * new Error carrying the redacted message, with every credential the
+   * internal client holds or held (OmadaController.sessionSecrets(): the
+   * password, the CSRF tokens, the session-cookie values) scrubbed by value
+   * — never the original error, its stack or another property. It reaches
+   * the connect result's detail, the IPC rejection the renderer gets and the
+   * log lines, and a controller message can echo a credential bare.
+   * @template T The call's result.
+   * @param {() => Promise<T>} call - The internal-client call.
+   * @returns {Promise<T>} Its result.
+   * @throws {Error} The sanitized failure.
+   */
+  async #internalCall<T>(call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (error) {
+      throw new Error(redactErrorMessage(error, this.#internal.sessionSecrets()));
+    }
   }
 
   /**
@@ -761,7 +787,7 @@ export class ControllerSession implements ManagedController {
    * @returns {Promise<AccessPoint[]>} The access points, sorted by name.
    */
   getAccessPoints(): Promise<AccessPoint[]> {
-    return this.#internal.getAccessPoints();
+    return this.#internalCall(() => this.#internal.getAccessPoints());
   }
 
   /**
@@ -769,7 +795,7 @@ export class ControllerSession implements ManagedController {
    * @returns {Promise<GroupListing>} The groups, version and group model.
    */
   getWlanGroups(): Promise<GroupListing> {
-    return this.#internal.getWlanGroups();
+    return this.#internalCall(() => this.#internal.getWlanGroups());
   }
 
   /**
@@ -779,7 +805,7 @@ export class ControllerSession implements ManagedController {
    * @returns {Promise<boolean>} True when the controller accepted it.
    */
   setApWlanGroup(mac: string, wlanId: string): Promise<boolean> {
-    return this.#internal.setApWlanGroup(mac, wlanId);
+    return this.#internalCall(() => this.#internal.setApWlanGroup(mac, wlanId));
   }
 
   /**

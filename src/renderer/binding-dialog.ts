@@ -40,6 +40,7 @@ import {
   cancelBindingBtn,
   confirmBindingBtn,
 } from './elements';
+import { handleListArrowKeydown, shownListItems } from './dom-helpers';
 import { t, tFormat } from './i18n';
 import { apCountOrUnknown, displayName } from './inventory-ui';
 import { createFocusTrap, updateBackgroundInert } from './modal-focus';
@@ -433,6 +434,14 @@ export function openBindingDialog(content: BindingDialogContent): BindingDialog 
     refreshPreview();
   };
 
+  /**
+   * Arrows move through the shown group checkboxes (spec §4.7).
+   * @param {KeyboardEvent} e - The keydown event.
+   */
+  const handleListKeydown = (e: KeyboardEvent): void => {
+    handleListArrowKeydown(e, shownListItems(editor.list, 'input[type="checkbox"]'));
+  };
+
   /** The search changed: the list and the preview follow. */
   const handleSearchInput = (): void => {
     refreshPreview();
@@ -459,6 +468,7 @@ export function openBindingDialog(content: BindingDialogContent): BindingDialog 
   cancelBindingBtn.addEventListener('click', handleCancel);
   backBindingBtn.addEventListener('click', handleBack);
   editor.list.addEventListener('change', handleListChange);
+  editor.list.addEventListener('keydown', handleListKeydown);
   editor.search.addEventListener('input', handleSearchInput);
   document.addEventListener('keydown', handleKeydown);
   document.addEventListener('keydown', focusTrap);
@@ -597,6 +607,7 @@ export function openBindingDialog(content: BindingDialogContent): BindingDialog 
       cancelBindingBtn.removeEventListener('click', handleCancel);
       backBindingBtn.removeEventListener('click', handleBack);
       editor.list.removeEventListener('change', handleListChange);
+      editor.list.removeEventListener('keydown', handleListKeydown);
       editor.search.removeEventListener('input', handleSearchInput);
       document.removeEventListener('keydown', handleKeydown);
       document.removeEventListener('keydown', focusTrap);

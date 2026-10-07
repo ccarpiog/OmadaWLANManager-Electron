@@ -10,12 +10,14 @@ import {
   defaultConfig,
   managementAccessStatus,
   managementCredentialsOf,
+  parseStoredConfigText,
   SecretBox,
   secureSecretStorageAvailable,
   StoredConfig,
   toRendererConfig,
   validateStoredConfig
 } from './config-model';
+import { redactErrorMessage } from './redact';
 
 // Config file path. The format (encrypted password, URL-scoped credentials,
 // certificate pin — see StoredConfig in config-model.ts) is not compatible
@@ -101,7 +103,7 @@ function tightenPermissions(target: string, mode: number): void {
   try {
     fs.chmodSync(target, mode);
   } catch (error) {
-    console.warn(`Could not set permissions on ${target}:`, error);
+    console.warn(`Could not set permissions on ${target}:`, redactErrorMessage(error));
   }
 }
 
@@ -131,7 +133,7 @@ function migrateLegacyPassword(config: StoredConfig): void {
     writeConfigFile(config);
     console.log('Migrated legacy plaintext password to safeStorage encryption');
   } catch (error) {
-    console.error('Error migrating the plaintext password to safeStorage:', error);
+    console.error('Error migrating the plaintext password to safeStorage:', redactErrorMessage(error, [config.password]));
   }
 } // End of function migrateLegacyPassword()
 
@@ -149,14 +151,12 @@ function readConfigFromDisk(): StoredConfig {
     }
     data = fs.readFileSync(CONFIG_FILE, 'utf-8');
   } catch (error) {
-    console.error('Error reading config file:', error);
+    console.error('Error reading config file:', redactErrorMessage(error));
     return defaultConfig();
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(data);
-  } catch (error) {
-    console.warn('Config file contains invalid JSON; treating it as no config:', error);
+  // Unparseable JSON: "no config" (defaults), logged without quoting the file
+  const parsed = parseStoredConfigText(data);
+  if (parsed === null) {
     return defaultConfig();
   }
   const config = validateStoredConfig(parsed);
@@ -186,7 +186,7 @@ function persistConfig(newConfig: StoredConfig, what: string): boolean {
   try {
     writeConfigFile(newConfig);
   } catch (error) {
-    console.error(`Error saving ${what}:`, error);
+    console.error(`Error saving ${what}:`, redactErrorMessage(error));
     return false;
   }
   cachedConfig = newConfig;

@@ -8,6 +8,7 @@
 
 import type { ConfigSaveError, ConfigSavePayload, Language, ManagementAccessStatus, RendererConfig } from '../shared/types';
 import { CertificatePin, isValidCertificatePin, pinnedFingerprintFor } from './cert-pinning';
+import { redactErrorMessage } from './redact';
 import { isSameControllerUrl, normalizeControllerUrl } from './url';
 
 // Supported UI languages; anything else falls back to the default on load
@@ -177,6 +178,25 @@ export function defaultConfig(): StoredConfig {
 }
 
 /**
+ * Parses the text of the config file. Unparseable JSON is treated as "no
+ * config" (null) and logged by its error NAME only: V8's JSON.parse messages
+ * quote a slice of the input (e.g. `Unexpected token 'h', "{"password":
+ * hunter2"... is not valid JSON`), and the file holds the password (plaintext
+ * on a legacy or insecure-storage install) and the encrypted secrets.
+ * @param {string} text - The file content.
+ * @returns {unknown | null} The parsed value (validateStoredConfig() checks
+ *   it), or null when the text is not JSON.
+ */
+export function parseStoredConfigText(text: string): unknown | null {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    console.warn('Config file contains invalid JSON; treating it as no config:', error instanceof Error ? error.name : 'unknown error');
+    return null;
+  }
+} // End of function parseStoredConfigText()
+
+/**
  * Validates a parsed JSON value into a StoredConfig: every field must have the
  * expected type (unexpected types are dropped, not blindly cast) and the
  * language must be one of the supported values, else the default is used.
@@ -234,7 +254,7 @@ export function decryptStoredPassword(config: StoredConfig, box: SecretBox): str
     try {
       return box.decryptString(config.encryptedPassword);
     } catch (error) {
-      console.error('Error decrypting the stored password:', error);
+      console.error('Error decrypting the stored password:', redactErrorMessage(error));
       return '';
     }
   }
@@ -487,7 +507,7 @@ export function applyConfigSave(
       try {
         encryptedPassword = box.encryptString(payload.password);
       } catch (error) {
-        console.error('Error encrypting the password:', error);
+        console.error('Error encrypting the password:', redactErrorMessage(error, [payload.password]));
         return { ok: false, error: 'saveFailed' };
       }
     } else {

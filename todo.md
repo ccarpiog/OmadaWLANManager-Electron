@@ -318,3 +318,30 @@ and no use of the real `~/.omada-wlan-manager/` config** (design spec §1, D4).
 ### 🟢 4.13 Integration, hardening, docs & live-test checklist — phase 20
 - **What:** IPC and redaction audit, async-race review across views, accessibility/keyboard smoke at the three widths, README + a short user guide (es/en UI terms), and `docs/live-test-checklist.md` per spec §6 for the user's manual run on "EAP Carpio" with disposable resources.
 - **Acceptance:** build + tests + smoke exit 0; no secret strings in renderer/IPC/log fixtures; every destructive path confirmed; checklist covers every unknown in spec §5.
+- **Split (2026-10-07, before starting):** **20a** = IPC + redaction audit, async-race review across views, every destructive path confirmed, accessibility / keyboard smoke at the three widths (risk: high — it decides whether secrets or stale writes slip through); **20b** = README + short user guide (es / en UI terms) + `docs/live-test-checklist.md` per spec §6 (risk: routine).
+- **Done (20a):** audited per `docs/security-audit.md` (IPC table with `file:line` evidence, redaction inventory, async-flow table, destructive-path table, accessibility results, remaining risks).
+  - **Main:**
+    - Every IPC channel is registered through `handleTrusted()` (new pure `ipc-trust.ts`: the sender check before the handler, failures rethrown as redacted messages with the stored and the call's own secrets scrubbed, no double registration).
+    - The 8 older channels refuse extra arguments.
+    - The connect `detail` (shown in the UI) and every main log line that carried a raw error are redacted.
+    - A corrupt config file is logged by error name only, because V8's JSON error quotes the file (`parseStoredConfigText()`).
+    - Review fix: every internal-client failure leaves `ControllerSession` scrubbed of the live session credentials (CSRF tokens and session cookies, also cleared ones; `OmadaController.sessionSecrets()`), including the error excerpt before its cut.
+  - **Renderer:**
+    - Change password gets the destructive confirmation it lacked (network, scope, groups, passphrase row, focus on Cancel; 2 es/en keys).
+    - Review fix: the Change password review is built from a fresh re-read (`rereadForConfirmation()`, like Enable / Disable / Delete), refused with a toast when the network changed.
+    - Settings no longer opens over or under another dialog (`settingsBlocked()`).
+    - Escape in Settings cancels an inline confirmation first.
+    - `disconnect()` drops the session nonce together with the generation, so no stale Test reply is accepted.
+    - Focus returns to Connect after the certificate or site dialog.
+    - Closed dialogs are `inert`, so nothing is focusable during the fade-out.
+    - Arrow keys work in the site list and the AP-group checkbox lists of the network dialogs.
+    - The site dialog and Settings have descriptions (1 es/en key).
+    - `#statusText` is `role=status`.
+  - **Tests:**
+    - New `ipc-surface.test.ts`: the structural check of `index.ts` and the preload bridge, plus the registrar.
+    - New `redaction-audit.test.ts`: sentinel secrets through internal, Open API, token and write-refusal paths, plus a log lint over `src/main`.
+    - A new smoke launch `[a11y]` (18 checks, es + en: layout and Cmd/Ctrl+F at 1200/900/750/700×500, every dialog kind at 700×500 with its focus trapped and restored, destructive confirmations on Cancel, Escape order, live regions, list arrows, no stacking, the teardown race).
+    - `OMADA_SMOKE_ONLY` to run single launches.
+    - Each fix was verified to fail its test when reverted.
+  - **Totals:** `npm test` 1028, smoke 268, TLS probe 25.
+  - **Remaining (20b):** README and user guide, and `docs/live-test-checklist.md`.

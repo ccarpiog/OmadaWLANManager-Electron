@@ -32,7 +32,7 @@ import {
 import { setLanguage, t, type Translations } from './i18n';
 import { resetManagementTest } from './management';
 import { clientSecretAffordance, planManagementSave, type ClientSecretAffordance, type ManagementFormError } from './management-form';
-import { createFocusTrap, updateBackgroundInert } from './modal-focus';
+import { createFocusTrap, isAnyModalOpen, updateBackgroundInert } from './modal-focus';
 import { isOperationInProgress, state } from './state';
 import { showToast } from './toast';
 import { isSameControllerUrl, isValidFingerprint, validateControllerUrl } from './validation';
@@ -42,6 +42,28 @@ import { isSameControllerUrl, isValidFingerprint, validateControllerUrl } from '
 // "opening" flag live in state.ts (state.settingsOpener and
 // state.isSettingsOpening)
 const settingsFocusTrap = createFocusTrap(settingsModal);
+
+/**
+ * Tells whether Settings must stay closed now (phase 20a): a dialog is open
+ * (Settings itself included — dialogs never stack, modal-focus.ts), or an
+ * exclusive operation is in flight that opens a dialog of its own or changes
+ * the session — a connect (certificate / site dialogs), a disconnect, an AP
+ * move, an AP-group or Wi-Fi network write flow (whose dialog may open after
+ * a fresh read), a certificate reset or a save. A refresh does not block it.
+ * @returns {boolean} True while Settings must not open.
+ */
+function settingsBlocked(): boolean {
+  return (
+    isAnyModalOpen() ||
+    state.isConnecting ||
+    state.isDisconnecting ||
+    state.isSavingSettings ||
+    state.isApplyingChange ||
+    state.isManagingApGroup ||
+    state.isManagingNetwork ||
+    state.isResettingCertificate
+  );
+} // End of function settingsBlocked()
 
 /**
  * Opens the settings modal populated from the stored config. The password
@@ -58,10 +80,10 @@ const settingsFocusTrap = createFocusTrap(settingsModal);
  */
 export async function openSettings(): Promise<void> {
   // While a connection attempt is in flight the Settings button is disabled;
-  // this guard is the belt-and-braces for any other invocation path (a save
-  // mid-connect could otherwise start a competing attempt)
-  if (state.isConnecting) return;
-  if (state.isSettingsOpening || settingsModal.classList.contains('visible')) return;
+  // settingsBlocked() is the belt-and-braces for any other invocation path (a
+  // save mid-connect could otherwise start a competing attempt), and keeps
+  // Settings from stacking on another dialog
+  if (state.isSettingsOpening || settingsBlocked()) return;
   // Reserve the modal and remember the opener before any await: re-entry is
   // now a no-op, and the opener can never be a modal-internal element
   state.isSettingsOpening = true;
@@ -76,6 +98,14 @@ export async function openSettings(): Promise<void> {
     state.isSettingsOpening = false;
     state.settingsOpener = null;
     showToast(t('configLoadError'), 'error');
+    return;
+  }
+
+  // Another dialog opened, or a flow that opens one started, while the
+  // config loaded: Settings stays closed (dialogs never stack)
+  if (settingsBlocked()) {
+    state.isSettingsOpening = false;
+    state.settingsOpener = null;
     return;
   }
 
@@ -298,6 +328,26 @@ export function cancelCertificateReset(): void {
   hideCertificateResetConfirm();
   resetCertBtn.focus();
 }
+
+/**
+ * Escape inside Settings (keyboard.ts): an open inline confirmation (reset
+ * the trusted certificate, remove management access) is the top context, so
+ * Escape cancels it — focus back on the button that asked — and Settings
+ * stays open with what was typed; only the next Escape closes Settings.
+ * @returns {boolean} True when an inline confirmation was cancelled.
+ */
+export function cancelSettingsInlineConfirm(): boolean {
+  if (!settingsModal.classList.contains('visible') || state.isResettingCertificate || state.isSavingSettings) return false;
+  if (!certResetConfirm.hidden) {
+    cancelCertificateReset();
+    return true;
+  }
+  if (!managementRemoveConfirm.hidden) {
+    cancelManagementRemoval();
+    return true;
+  }
+  return false;
+} // End of function cancelSettingsInlineConfirm()
 
 /**
  * Confirm handler of the inline reset confirmation: closes a live session

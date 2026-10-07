@@ -491,7 +491,13 @@ export class ConnectionManager<C extends ManagedController> {
 
       return this.install(controller);
     } catch (error) {
-      console.error('Error connecting to the Omada controller:', error);
+      // The failure text can quote the controller (a login message, a
+      // redacted HTTP excerpt). A ControllerSession has already scrubbed the
+      // session's live credentials (CSRF tokens, session cookies) from it by
+      // value (#internalCall()); redacted again here, with this attempt's
+      // password scrubbed by value, before it reaches the log or the renderer
+      const detail = redactErrorMessage(error, [credentials.password]);
+      console.error('Error connecting to the Omada controller:', detail);
       // The login may have partially succeeded before the failure: log the
       // local controller out best-effort (it was never installed)
       this.releaseController(controller);
@@ -502,7 +508,6 @@ export class ConnectionManager<C extends ManagedController> {
       if (certificateResult) {
         return certificateResult;
       }
-      const detail = error instanceof Error ? error.message : String(error);
       return { success: false, error: 'connectError', detail };
     }
   } // End of function connect()

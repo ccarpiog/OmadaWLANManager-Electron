@@ -9,7 +9,9 @@
 //   edit     — the staged form (name, security, bands, and the re-typed
 //              passphrase twice whenever the result is WPA-Personal), then
 //              the review of the changes (Back / Cancel / Save);
-//   password — the new passphrase twice;
+//   password — the new passphrase twice, then (after a fresh read) the
+//              review naming the network and its scope (Back / Cancel /
+//              Change password);
 //   enable / disable / delete — the confirmation with its impact summary;
 //              it opens on Cancel, never on the confirming button.
 // Like the other modals: role="dialog" + aria-modal, the Tab focus trap and
@@ -19,7 +21,7 @@
 // the second (and later) click of a multi-click — a double-click on "Review
 // changes" shows the review and never also saves it — and a held Enter's
 // repeats are swallowed (they neither confirm nor activate the focused
-// button of the next step). While a
+// button of the next step). While a re-read before a review, a
 // write and the reload after it run, the dialog shows the progress
 // (role="status"), its controls are disabled and Escape is ignored; a
 // refusal — the client-side check or main's answer — is shown on the error
@@ -47,6 +49,7 @@ import {
   networkModalSummary,
   networkModalTitle,
 } from './elements';
+import { handleListArrowKeydown, shownListItems } from './dom-helpers';
 import { t } from './i18n';
 import { createFocusTrap, updateBackgroundInert } from './modal-focus';
 import type { SummaryRow } from './network-editing';
@@ -121,10 +124,10 @@ export interface NetworkDialog {
   readPassphrase(): { passphrase: string; confirmation: string };
   // Empties the two password fields (a write carrying them succeeded)
   clearPassphrase(): void;
-  // Edit: shows the review step (the form hidden, kept): its title,
-  // message, rows and notes, Back visible, focus on Cancel
+  // Edit / Change password: shows the review step (the form hidden, kept):
+  // its title, message, rows and notes, Back visible, focus on Cancel
   showReview(title: string, message: string, summary: NetworkSummary, confirmLabel: string): void;
-  // Edit: back to the form step
+  // Edit / Change password: back to the form step
   showForm(): void;
   // Shows the progress of the write (or the reload after it)
   showBusy(text: string): void;
@@ -345,6 +348,11 @@ function buildForm(form: NetworkFormSpec): { blocks: HTMLElement[]; controls: Fo
     const fieldset = createFieldset('networkGroupsField', t('networkGroupsLegend'));
     const list = document.createElement('div');
     list.className = 'network-group-list';
+    // Arrows move through the group checkboxes (spec §4.7); the listener
+    // goes with the form, which is rebuilt per open
+    list.addEventListener('keydown', (e: KeyboardEvent) => {
+      handleListArrowKeydown(e, shownListItems(list, 'input[type="checkbox"]'));
+    });
     for (const option of form.groups.options) {
       const choice = createChoice('checkbox', 'networkGroup', option.id, option.name, false, option.meta);
       controls.groupInputs.push(choice.input);
@@ -653,9 +661,10 @@ export function openNetworkDialog(content: NetworkDialogContent): NetworkDialog 
     },
 
     /**
-     * Shows the review step of an edit: the form hidden (kept for Back), the
-     * review's title, message, rows and notes, Back visible and the saving
-     * label on the confirming button; focus on Cancel (spec §4.7).
+     * Shows the review step of an edit or a password change: the controls
+     * given back after a re-read's progress, the form hidden (kept for Back),
+     * the review's title, message, rows and notes, Back visible and the
+     * saving label on the confirming button; focus on Cancel (spec §4.7).
      * @param {string} title - The review's title.
      * @param {string} message - Its message.
      * @param {NetworkSummary} summary - The changes and notes.
@@ -663,6 +672,8 @@ export function openNetworkDialog(content: NetworkDialogContent): NetworkDialog 
      */
     showReview(title: string, message: string, summary: NetworkSummary, confirmLabel: string): void {
       if (closed) return;
+      setBusy(false);
+      networkModalStatus.textContent = '';
       setError(null, null);
       networkModalTitle.textContent = title;
       networkModalMessage.textContent = message;

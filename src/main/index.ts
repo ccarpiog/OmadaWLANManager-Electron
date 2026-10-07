@@ -43,10 +43,14 @@ import {
   parseNetworkEnableRequest,
   parseNetworkPasswordRequest,
   parseNetworkUpdateRequest,
+  requireNoExtraArguments,
   requireSessionNonce
 } from './ipc-guards';
+import { createTrustedIpcRegistrar } from './ipc-trust';
 import { createNetTransport } from './net-transport';
+import { redactErrorMessage } from './redact';
 import {
+  AccessPoint,
   ApGroupActionResult,
   CertificateActionResult,
   ConfigSavePayload,
@@ -179,16 +183,34 @@ function isTrustedIpcSender(event: IpcMainInvokeEvent): boolean {
 } // End of function isTrustedIpcSender()
 
 /**
- * Throws when an IPC call does not come from the app's own renderer frame.
- * Every ipcMain.handle callback calls this first. The message is not
- * user-facing: the renderer maps rejections to generic i18n error messages.
- * @param {IpcMainInvokeEvent} event - The IPC invoke event.
+ * The stored secrets a failing IPC handler's message is scrubbed of by value
+ * (ipc-trust.ts): the controller password and the Open API Client Secret.
+ * Read only on an error path; never throws.
+ * @returns {string[]} The secrets configured now (none when not configured
+ *   or unreadable).
  */
-function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
-  if (!isTrustedIpcSender(event)) {
-    throw new Error('IPC call rejected: untrusted sender frame');
+function storedSecrets(): string[] {
+  try {
+    const secrets = [getConnectionCredentials().password];
+    const management = getManagementCredentials();
+    if (management) {
+      secrets.push(management.clientSecret);
+    }
+    return secrets;
+  } catch {
+    return [];
   }
-}
+} // End of function storedSecrets()
+
+// assertTrustedIpcSender(): every invoke channel is registered through this
+// registrar (ipc-trust.ts), which runs isTrustedIpcSender() before the
+// handler body and lets a failure cross to the renderer (and into Electron's
+// "Error occurred in handler" log line) only as a redacted message, with the
+// stored secrets and the call's own secrets scrubbed by value.
+// tests/unit/ipc-surface.test.ts checks that index.ts registers every
+// IPC_CHANNELS channel through it exactly once and nothing through ipcMain
+// directly
+const handleTrusted = createTrustedIpcRegistrar<IpcMainInvokeEvent>(ipcMain, isTrustedIpcSender, storedSecrets).handle;
 
 /**
  * Runtime shape guard for the config-save payload arriving over IPC: it must
@@ -268,7 +290,7 @@ function createWindow(): void {
   // Load the renderer HTML; on failure, log and show the window so the
   // problem is visible instead of the app silently running with no window
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html')).catch((error) => {
-    console.error('Failed to load renderer HTML:', error);
+    console.error('Failed to load renderer HTML:', redactErrorMessage(error));
     mainWindow?.show();
   });
 
@@ -382,13 +404,15 @@ app.on('before-quit', (event) => {
 // IPC Handlers
 // ============================================================================
 
-// Every handler first verifies the sender frame is the app's own renderer
-// (assertTrustedIpcSender) and runtime-guards its payload before use.
+// Every handler is registered through handleTrusted(), which verifies the
+// sender frame is the app's own renderer before the handler runs and redacts
+// any failure; each handler then runtime-guards its arguments (types, formats,
+// lengths, no extra argument) before use.
 
 // Load configuration (sanitized: the renderer never receives the password or
 // the Client Secret, only the hasPassword / hasClientSecret flags)
-ipcMain.handle(IPC_CHANNELS.CONFIG_LOAD, async (event): Promise<RendererConfig> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.CONFIG_LOAD, async (_event, ...extra: unknown[]): Promise<RendererConfig> => {
+  requireNoExtraArguments(extra);
   return getRendererConfig();
 });
 
@@ -414,8 +438,8 @@ ipcMain.handle(IPC_CHANNELS.CONFIG_LOAD, async (event): Promise<RendererConfig> 
 // reconnects after every successful save, so the new session's checks are
 // the single run that recomputes the capabilities with the new credentials
 // (without a reconnect, the next capabilities or Test request runs them).
-ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (event, payload: unknown): Promise<ConfigSaveResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.CONFIG_SAVE, async (_event, payload: unknown, ...extra: unknown[]): Promise<ConfigSaveResult> => {
+  requireNoExtraArguments(extra);
   if (!isValidConfigSavePayload(payload)) {
     return { success: false, error: 'saveFailed' };
   }
@@ -423,7 +447,7 @@ ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (event, payload: unknown): Promis
   try {
     result = await connectionManager.applyConfigSave(() => saveConfig(payload));
   } catch (error) {
-    console.error('Unexpected error saving config:', error);
+    console.error('Unexpected error saving config:', redactErrorMessage(error, [payload.password, payload.clientSecret, ...storedSecrets()]));
     return { success: false, error: 'saveFailed' };
   }
   if (!result.success) {
@@ -447,8 +471,8 @@ ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, async (event, payload: unknown): Promis
 // A success carries the site name and the session nonce, and starts the
 // management capability checks in the background (ControllerSession
 // .activate()): they never delay or fail the connect.
-ipcMain.handle(IPC_CHANNELS.OMADA_CONNECT, async (event): Promise<ConnectionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.OMADA_CONNECT, async (_event, ...extra: unknown[]): Promise<ConnectionResult> => {
+  requireNoExtraArguments(extra);
   return connectionManager.connect();
 });
 
@@ -461,8 +485,8 @@ ipcMain.handle(IPC_CHANNELS.OMADA_CONNECT, async (event): Promise<ConnectionResu
 // certificate reset) superseded the record is rejected, so a delayed or
 // out-of-order selection can never install a controller or persist a site id
 // it does not own (ConnectionManager.selectSite()).
-ipcMain.handle(IPC_CHANNELS.OMADA_SELECT_SITE, async (event, siteId: unknown, nonce: unknown): Promise<ConnectionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.OMADA_SELECT_SITE, async (_event, siteId: unknown, nonce: unknown, ...extra: unknown[]): Promise<ConnectionResult> => {
+  requireNoExtraArguments(extra);
   if (typeof siteId !== 'string' || !SITE_ID_REGEX.test(siteId)) {
     throw new Error('IPC call rejected: invalid site id format');
   }
@@ -486,23 +510,23 @@ function requireController(): ControllerSession {
 }
 
 // Get access points
-ipcMain.handle(IPC_CHANNELS.OMADA_GET_APS, async (event) => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.OMADA_GET_APS, async (_event, ...extra: unknown[]): Promise<AccessPoint[]> => {
+  requireNoExtraArguments(extra);
   return requireController().getAccessPoints();
 });
 
 // Get the group listing: the groups APs can be assigned to (AP groups on
 // Omada 6.3+, WLAN groups before, empty groups included) plus the controller
 // version and group model they belong to (OmadaController.getWlanGroups())
-ipcMain.handle(IPC_CHANNELS.OMADA_GET_WLANS, async (event): Promise<GroupListing> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.OMADA_GET_WLANS, async (_event, ...extra: unknown[]): Promise<GroupListing> => {
+  requireNoExtraArguments(extra);
   return requireController().getWlanGroups();
 });
 
 // Set WLAN group for an AP. Both identifiers are format-checked before they
 // reach the API client (they end up interpolated into the request path/body)
-ipcMain.handle(IPC_CHANNELS.OMADA_SET_WLAN, async (event, mac: unknown, wlanId: unknown): Promise<boolean> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.OMADA_SET_WLAN, async (_event, mac: unknown, wlanId: unknown, ...extra: unknown[]): Promise<boolean> => {
+  requireNoExtraArguments(extra);
   if (typeof mac !== 'string' || !MAC_REGEX.test(mac)) {
     throw new Error('IPC call rejected: invalid MAC address format');
   }
@@ -521,8 +545,8 @@ ipcMain.handle(IPC_CHANNELS.OMADA_SET_WLAN, async (event, mac: unknown, wlanId: 
 //   selection — it acts only while the caller owns the CURRENT pending
 //   record, so a stale flow's cleanup can never log out a session that a
 //   newer connect installed or parked after superseding it.
-ipcMain.handle(IPC_CHANNELS.OMADA_DISCONNECT, async (event, nonce: unknown): Promise<void> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.OMADA_DISCONNECT, async (_event, nonce: unknown, ...extra: unknown[]): Promise<void> => {
+  requireNoExtraArguments(extra);
   if (nonce !== undefined && (typeof nonce !== 'string' || !NONCE_REGEX.test(nonce))) {
     throw new Error('IPC call rejected: invalid selection nonce format');
   }
@@ -539,8 +563,7 @@ ipcMain.handle(IPC_CHANNELS.OMADA_DISCONNECT, async (event, nonce: unknown): Pro
 // success the controller session is replaced so the renderer's immediate
 // reconnect is verified afresh against the new pin
 // (ConnectionManager.trustCertificate()).
-ipcMain.handle(IPC_CHANNELS.CERT_TRUST, async (event, nonce: unknown, ...extra: unknown[]): Promise<CertificateActionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.CERT_TRUST, async (_event, nonce: unknown, ...extra: unknown[]): Promise<CertificateActionResult> => {
   if (extra.length > 0) {
     throw new Error('IPC call rejected: unexpected arguments');
   }
@@ -560,8 +583,7 @@ ipcMain.handle(IPC_CHANNELS.CERT_TRUST, async (event, nonce: unknown, ...extra: 
 // replaced — so neither a controller, a cached acceptance nor a pooled
 // connection outlives the reset; the next connection is a first use again.
 // The reply carries connectionReset so the renderer drops its connected UI.
-ipcMain.handle(IPC_CHANNELS.CERT_RESET, async (event, ...extra: unknown[]): Promise<CertificateActionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.CERT_RESET, async (_event, ...extra: unknown[]): Promise<CertificateActionResult> => {
   if (extra.length > 0) {
     throw new Error('IPC call rejected: unexpected arguments');
   }
@@ -575,8 +597,7 @@ ipcMain.handle(IPC_CHANNELS.CERT_RESET, async (event, ...extra: unknown[]): Prom
 // closed) the answer is notConnected at once, and an answer for another
 // session — or for one replaced or closed while the checks ran — is
 // superseded (getSessionCapabilities()). Waits for the checks in flight.
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_CAPABILITIES, async (event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagementCapabilitiesResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_CAPABILITIES, async (_event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagementCapabilitiesResult> => {
   return getSessionCapabilities(connectionManager, requireSessionNonce(sessionNonce, extra));
 }); // End of the MANAGEMENT_CAPABILITIES handler
 
@@ -584,8 +605,7 @@ ipcMain.handle(IPC_CHANNELS.MANAGEMENT_CAPABILITIES, async (event, sessionNonce:
 // again with the configured credentials (stored, or session-only) and reports
 // the result, which also becomes the session's capabilities; same session
 // ownership as MANAGEMENT_CAPABILITIES (testManagementAccess()).
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_TEST, async (event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagementCapabilitiesResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_TEST, async (_event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagementCapabilitiesResult> => {
   return testManagementAccess(connectionManager, requireSessionNonce(sessionNonce, extra));
 }); // End of the MANAGEMENT_TEST handler
 
@@ -601,27 +621,23 @@ ipcMain.handle(IPC_CHANNELS.MANAGEMENT_TEST, async (event, sessionNonce: unknown
 
 // The site's AP groups with their per-band capacity (read; one argument: the
 // session nonce)
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_AP_GROUPS, async (event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagedApGroupsResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_AP_GROUPS, async (_event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagedApGroupsResult> => {
   return managedApGroupsReply(connectionManager, requireSessionNonce(sessionNonce, extra));
 }); // End of the MANAGEMENT_AP_GROUPS handler
 
 // Create an empty AP group ({sessionNonce, name})
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_AP_GROUP_CREATE, async (event, payload: unknown, ...extra: unknown[]): Promise<ApGroupActionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_AP_GROUP_CREATE, async (_event, payload: unknown, ...extra: unknown[]): Promise<ApGroupActionResult> => {
   return createApGroupReply(connectionManager, parseApGroupCreateRequest(payload, extra));
 }); // End of the MANAGEMENT_AP_GROUP_CREATE handler
 
 // Rename an AP group ({sessionNonce, apGroupId, name})
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_AP_GROUP_RENAME, async (event, payload: unknown, ...extra: unknown[]): Promise<ApGroupActionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_AP_GROUP_RENAME, async (_event, payload: unknown, ...extra: unknown[]): Promise<ApGroupActionResult> => {
   return renameApGroupReply(connectionManager, parseApGroupRenameRequest(payload, extra));
 }); // End of the MANAGEMENT_AP_GROUP_RENAME handler
 
 // Delete an AP group ({sessionNonce, apGroupId}) under the app's delete
 // policy, re-checked in main on fresh data right before the DELETE
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_AP_GROUP_DELETE, async (event, payload: unknown, ...extra: unknown[]): Promise<ApGroupActionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_AP_GROUP_DELETE, async (_event, payload: unknown, ...extra: unknown[]): Promise<ApGroupActionResult> => {
   return deleteApGroupReply(connectionManager, parseApGroupDeleteRequest(payload, extra));
 }); // End of the MANAGEMENT_AP_GROUP_DELETE handler
 
@@ -633,8 +649,7 @@ ipcMain.handle(IPC_CHANNELS.MANAGEMENT_AP_GROUP_DELETE, async (event, payload: u
 // read runs); 'managementUnavailable' unless Wi-Fi network management is on
 // (ControllerSession.listManagedNetworks()). The reply is the allowlisted DTO
 // — never a passphrase or another secret — with codes-only diagnostics.
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORKS, async (event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagedNetworksResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_NETWORKS, async (_event, sessionNonce: unknown, ...extra: unknown[]): Promise<ManagedNetworksResult> => {
   return managedNetworksReply(connectionManager, requireSessionNonce(sessionNonce, extra));
 }); // End of the MANAGEMENT_NETWORKS handler
 
@@ -653,33 +668,28 @@ ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORKS, async (event, sessionNonce: unk
 
 // Create a network, disabled ({sessionNonce, name, security, bands,
 // apGroupIds} + passphrase when typed)
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_CREATE, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_NETWORK_CREATE, async (_event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
   return createNetworkReply(connectionManager, parseNetworkCreateRequest(payload, extra));
 }); // End of the MANAGEMENT_NETWORK_CREATE handler
 
 // Save the edited basic settings ({sessionNonce, networkId} + the edited
 // fields among name, security, bands, passphrase)
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_UPDATE, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_NETWORK_UPDATE, async (_event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
   return updateNetworkReply(connectionManager, parseNetworkUpdateRequest(payload, extra));
 }); // End of the MANAGEMENT_NETWORK_UPDATE handler
 
 // Change the passphrase of a WPA-Personal network ({sessionNonce, networkId, passphrase})
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_PASSWORD, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_NETWORK_PASSWORD, async (_event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
   return changeNetworkPasswordReply(connectionManager, parseNetworkPasswordRequest(payload, extra));
 }); // End of the MANAGEMENT_NETWORK_PASSWORD handler
 
 // Enable or disable a network ({sessionNonce, networkId, enabled})
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_ENABLE, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_NETWORK_ENABLE, async (_event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
   return setNetworkEnabledReply(connectionManager, parseNetworkEnableRequest(payload, extra));
 }); // End of the MANAGEMENT_NETWORK_ENABLE handler
 
 // Delete a network ({sessionNonce, networkId})
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_DELETE, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_NETWORK_DELETE, async (_event, payload: unknown, ...extra: unknown[]): Promise<NetworkActionResult> => {
   return deleteNetworkReply(connectionManager, parseNetworkDeleteRequest(payload, extra));
 }); // End of the MANAGEMENT_NETWORK_DELETE handler
 
@@ -689,7 +699,6 @@ ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_DELETE, async (event, payload: un
 // most 256 deduplicated 24-hex ids, no other key), then the installed session
 // named by the nonce, which plans the change on fresh data — never a binding
 // PATCH for an "All access points" or unknown-scope network
-ipcMain.handle(IPC_CHANNELS.MANAGEMENT_NETWORK_BINDINGS, async (event, payload: unknown, ...extra: unknown[]): Promise<NetworkBindingsResult> => {
-  assertTrustedIpcSender(event);
+handleTrusted(IPC_CHANNELS.MANAGEMENT_NETWORK_BINDINGS, async (_event, payload: unknown, ...extra: unknown[]): Promise<NetworkBindingsResult> => {
   return updateNetworkBindingsReply(connectionManager, parseNetworkBindingsRequest(payload, extra));
 }); // End of the MANAGEMENT_NETWORK_BINDINGS handler

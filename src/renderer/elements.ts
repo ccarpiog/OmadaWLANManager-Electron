@@ -114,6 +114,7 @@ export const destinationPanelTitle = document.getElementById('destinationPanelTi
 // Settings Modal
 export const settingsModal = document.getElementById('settingsModal') as HTMLElement;
 export const settingsModalTitle = settingsModal.querySelector('.modal-header h2') as HTMLElement;
+export const settingsModalMessage = document.getElementById('settingsModalMessage') as HTMLElement;
 export const closeSettingsBtn = document.getElementById('closeSettingsBtn') as HTMLButtonElement;
 export const cancelSettingsBtn = document.getElementById('cancelSettingsBtn') as HTMLButtonElement;
 export const saveSettingsBtn = document.getElementById('saveSettingsBtn') as HTMLButtonElement;

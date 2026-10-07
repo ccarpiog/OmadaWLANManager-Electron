@@ -55,6 +55,7 @@ import {
   retryFailedBtn,
   saveSettingsBtn,
   settingsBtn,
+  settingsModalMessage,
   settingsModalTitle,
   siteModalMessage,
   siteModalTitle,
@@ -117,6 +118,7 @@ export function applyTranslations() {
 
   // Settings modal
   settingsModalTitle.textContent = t('connectionSettings');
+  settingsModalMessage.textContent = t('settingsDescription');
   labelUrl.textContent = t('controllerUrl');
   labelUsername.textContent = t('username');
   labelPassword.textContent = t('password');
