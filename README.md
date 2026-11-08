@@ -535,3 +535,22 @@ omada-electron/
 ## License
 
 MIT
+
+
+## Developer ID certificate renewal (November 2026)
+
+macOS releases now select the G2 certificate by its exact SHA-1 fingerprint,
+`D90FF6C655C831F11CC50642E4EF8675905EAF79` (team `CXVKS8ZNCD`, expires December 8, 2027).
+The old certificate may remain in the keychain; it is never a fallback for a new release.
+The selection policy is in `scripts/lib/developer-id.sh`.
+
+For a subsequent renewal, set `DEVELOPER_ID_SHA1` to the complete new fingerprint,
+install its matching private key and certificate, and update any Developer ID provisioning
+profiles to contain that certificate. The scripts reject missing, malformed, wrong-team,
+or wrong-type identities. Update the default fingerprint and expiry after verification.
+The legacy `Certificates.p12` backup predates G2; restore only a backup verified to contain
+the selected identity. Do not commit private keys or certificate backups.
+
+Run `bash scripts/test-developer-id.sh` for identity-selection and output-certificate checks.
+
+`package:mac` and host-default packaging on macOS require the selected G2 identity. Windows/Linux targets bypass the macOS keychain. Run `npm run test:signing` for routing regressions as well.

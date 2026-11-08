@@ -14,10 +14,11 @@
     "test": "node scripts/run-unit-tests.mjs",
     "smoke": "npm run build && node tests/smoke/run-smoke.mjs",
     "tls-probe": "npm run build && node tests/tls-probe/run-tls-probe.mjs",
-    "package": "npm run build && electron-builder",
-    "package:mac": "npm run build && electron-builder --mac",
-    "package:win": "npm run build && electron-builder --win",
-    "package:linux": "npm run build && electron-builder --linux"
+    "package": "npm run build && node scripts/electron-builder.cjs",
+    "package:mac": "npm run build && node scripts/electron-builder.cjs --mac",
+    "package:win": "npm run build && node scripts/electron-builder.cjs --win",
+    "package:linux": "npm run build && node scripts/electron-builder.cjs --linux",
+    "test:signing": "bash scripts/test-developer-id.sh && node scripts/test-electron-signing.cjs"
   },
   "keywords": [
     "omada",
